@@ -1,0 +1,71 @@
+kind: DaemonSet
+apiVersion: apps/v1
+metadata:
+  name: {{ include "eks-node-monitoring-agent.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "eks-node-monitoring-agent.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "eks-node-monitoring-agent.selectorLabels" . | nindent 6 }}
+  updateStrategy:
+  {{- toYaml .Values.updateStrategy | nindent 4 }}
+  template:
+    metadata:
+      labels:
+        {{- include "eks-node-monitoring-agent.labels" . | nindent 8 }}
+    spec:
+      {{- with .Values.nodeAgent.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeAgent.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      nodeSelector:
+        kubernetes.io/os: linux
+        {{- with .Values.nodeAgent.nodeSelector }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      priorityClassName: {{ .Values.nodeAgent.priorityClassName | default "system-node-critical" }}
+      serviceAccountName: {{ template "eks-node-monitoring-agent.serviceAccountName" . }}
+      hostNetwork: true
+      hostPID: true
+      containers:
+        - name: {{ .Chart.Name }}
+          image: {{ template "eks-node-monitoring-agent.image" . }}
+          imagePullPolicy: {{ .Values.nodeAgent.image.pullPolicy }}
+          args:
+            - --probe-address=:8002
+            - --metrics-address=:8003
+            {{- with .Values.nodeAgent.additionalArgs }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          env:
+            - name: HOST_ROOT
+              value: /host
+            - name: MY_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8002
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 8 }}
+          {{- end }}
+          {{- with .Values.nodeAgent.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            {{- toYaml .Values.nodeAgent.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: host-root
+              mountPath: /host
+      volumes:
+        - name: host-root
+          hostPath:
+            path: /

@@ -1,11 +1,8 @@
-## My Project
+# EKS Node Monitoring Agent
 
-TODO: Fill this README out!
+## Installation
 
-Be sure to:
-
-* Change the title in this README
-* Edit your repository description on GitHub
+Refer to [README.md in `charts`](./charts/eks-node-monitoring-agent/README.md) for Helm installation instructions.
 
 ## Security
 

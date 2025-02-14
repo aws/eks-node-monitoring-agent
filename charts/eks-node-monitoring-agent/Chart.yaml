@@ -1,0 +1,11 @@
+apiVersion: v2
+name: eks-node-monitoring-agent
+version: 1.0.2
+appVersion: 1.0.2
+description: A Helm chart for eks-node-montoring-agent
+icon: https://raw.githubusercontent.com/aws/eks-charts/master/docs/logo/aws.png
+home: https://github.com/aws/eks-node-monitoring-agent
+sources:
+  - https://github.com/aws/eks-node-monitoring-agent
+keywords:
+  - eks

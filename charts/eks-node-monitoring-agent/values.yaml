@@ -1,0 +1,126 @@
+# Default values for eks-node-monitoring-agent
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# -- Docker registry pull secrets
+imagePullSecrets: []
+# -- A name override for the chart
+nameOverride: "eks-node-monitoring-agent"
+# -- A fullname override for the chart
+fullnameOverride: "eks-node-monitoring-agent"
+
+serviceAccount:
+  # Specifies whether a service account should be created
+  create: true
+  # The name of the service account to use.
+  # If not set and create is true, a name is generated using the fullname template
+  name:
+  annotations: {}
+
+nodeAgent:
+  image:
+    # -- Image tag for the eks-node-monitoring-agent
+    tag: v1.0.2-eksbuild.2
+    # -- ECR repository domain for the eks-node-monitoring-agent
+    domain: amazonaws.com
+    # -- ECR repository region for the eks-node-monitoring-agent
+    region: us-west-2
+    # -- ECR repository endpoint for the eks-node-monitoring-agent
+    endpoint: ecr
+    # -- ECR repository account number for the eks-node-monitoring-agent
+    account: "602401143452"
+    # -- Container pull policyfor the eks-node-monitoring-agent
+    pullPolicy: IfNotPresent
+  # -- List of addittional container arguments for the eks-node-monitoring-agent
+  additionalArgs: []
+  # -- Map of pod affinities for the eks-node-monitoring-agent
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+              # Don't schedule on special compute types
+            - key: eks.amazonaws.com/compute-type
+              operator: NotIn
+              values:
+                - fargate
+                - auto
+                - hybrid
+              # Don't schedule on hyperpod nodes
+            - key: sagemaker.amazonaws.com/compute-type
+              operator: NotIn
+              values:
+                - hyperpod
+              # Be explicit about supported archs
+            - key: kubernetes.io/arch
+              operator: In
+              values:
+                - amd64
+                - arm64
+  # -- Container resources for the eks-node-monitoring-agent
+  resources:
+    requests:
+      cpu: 10m
+      memory: 30Mi
+    limits:
+      cpu: 250m
+      memory: 100Mi
+  # -- Container Security context for the eks-node-monitoring-agent
+  securityContext:
+    privileged: true
+    capabilities:
+      add:
+        - NET_ADMIN
+  # -- Deployment tolerations for the eks-node-monitoring-agent
+  tolerations:
+    - operator: Exists
+
+dcgmAgent:
+  image:
+    # -- Image tag for the dcgm-exporter
+    tag: 3.3.7-3.5.0-ubuntu22.04
+    # -- ECR repository domain for the dcgm-exporter
+    domain: amazonaws.com
+    # -- ECR repository region for the dcgm-exporter
+    region: us-west-2
+    # -- ECR repository endpoint for the dcgm-exporter
+    endpoint: ecr
+    # -- ECR repository account number for the dcgm-exporter
+    account: "602401143452"
+    # -- Container pull policy for the dcgm-exporter
+    pullPolicy: IfNotPresent
+  # -- Map of dcgm pod affinities
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+            # Only schedule on NVIDIA GPU nodes
+          - key: node.kubernetes.io/instance-type
+            operator: In
+            values: [g3.16xlarge, g3.4xlarge, g3.8xlarge, g3s.xlarge, g4dn.12xlarge, g4dn.16xlarge, g4dn.2xlarge, g4dn.4xlarge, g4dn.8xlarge, g4dn.metal, g4dn.xlarge, g5.12xlarge, g5.16xlarge, g5.24xlarge, g5.2xlarge, g5.48xlarge, g5.4xlarge, g5.8xlarge, g5.xlarge, g6.12xlarge, g6.16xlarge, g6.24xlarge, g6.2xlarge, g6.48xlarge, g6.4xlarge, g6.8xlarge, g6.xlarge, g6e.12xlarge, g6e.16xlarge, g6e.24xlarge, g6e.2xlarge, g6e.48xlarge, g6e.4xlarge, g6e.8xlarge, g6e.xlarge, gr6.4xlarge, gr6.8xlarge, p2.16xlarge, p2.8xlarge, p2.xlarge, p3.16xlarge, p3.2xlarge, p3.8xlarge, p4d.24xlarge, p5.48xlarge, p5e.48xlarge]
+            # Don't schedule on special compute types
+          - key: eks.amazonaws.com/compute-type
+            operator: NotIn
+            values:
+              - fargate
+              - auto
+              - hybrid
+            # Don't schedule on hyperpod nodes
+          - key: sagemaker.amazonaws.com/compute-type
+            operator: NotIn
+            values:
+              - hyperpod
+            # Only schedule on amd64 nodes
+          - key: kubernetes.io/arch
+            operator: In
+            values:
+              - amd64
+  # -- Container resources for the dcgm deployment
+  resources: {}
+
+# -- Update strategy for all daemon sets
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: "10%"
