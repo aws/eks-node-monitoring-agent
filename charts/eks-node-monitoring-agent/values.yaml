@@ -20,7 +20,7 @@ serviceAccount:
 nodeAgent:
   image:
     # -- Image tag for the eks-node-monitoring-agent
-    tag: v1.0.2-eksbuild.2
+    tag: v1.1.0-eksbuild.1
     # -- ECR repository domain for the eks-node-monitoring-agent
     domain: amazonaws.com
     # -- ECR repository region for the eks-node-monitoring-agent
