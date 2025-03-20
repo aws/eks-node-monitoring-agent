@@ -25,9 +25,10 @@ helm uninstall eks-node-monitoring-agent --namespace kube-system
 
 The following table lists the configurable parameters for this chart and their default values.
 
+<!-- table:start -->
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| dcgmAgent.affinity | object | (see [`values.yaml`](./values.yaml)) | Map of dcgm pod affinities |
+| dcgmAgent.affinity | object | see [`values.yaml`](./values.yaml) | Map of dcgm pod affinities |
 | dcgmAgent.image.account | string | `"602401143452"` | ECR repository account number for the dcgm-exporter |
 | dcgmAgent.image.domain | string | `"amazonaws.com"` | ECR repository domain for the dcgm-exporter |
 | dcgmAgent.image.endpoint | string | `"ecr"` | ECR repository endpoint for the dcgm-exporter |
@@ -39,17 +40,18 @@ The following table lists the configurable parameters for this chart and their d
 | imagePullSecrets | list | `[]` | Docker registry pull secrets |
 | nameOverride | string | `"eks-node-monitoring-agent"` | A name override for the chart |
 | nodeAgent.additionalArgs | list | `[]` | List of addittional container arguments for the eks-node-monitoring-agent |
-| nodeAgent.affinity | object | (see [`values.yaml`](./values.yaml)) | Map of pod affinities for the eks-node-monitoring-agent |
+| nodeAgent.affinity | object | see [`values.yaml`](./values.yaml) | Map of pod affinities for the eks-node-monitoring-agent |
 | nodeAgent.image.account | string | `"602401143452"` | ECR repository account number for the eks-node-monitoring-agent |
 | nodeAgent.image.domain | string | `"amazonaws.com"` | ECR repository domain for the eks-node-monitoring-agent |
 | nodeAgent.image.endpoint | string | `"ecr"` | ECR repository endpoint for the eks-node-monitoring-agent |
 | nodeAgent.image.pullPolicy | string | `"IfNotPresent"` | Container pull policyfor the eks-node-monitoring-agent |
 | nodeAgent.image.region | string | `"us-west-2"` | ECR repository region for the eks-node-monitoring-agent |
-| nodeAgent.image.tag | string | `"v1.0.2-eksbuild.2"` | Image tag for the eks-node-monitoring-agent |
+| nodeAgent.image.tag | string | `"v1.1.0-eksbuild.1"` | Image tag for the eks-node-monitoring-agent |
 | nodeAgent.resources | object | `{"limits":{"cpu":"250m","memory":"100Mi"},"requests":{"cpu":"10m","memory":"30Mi"}}` | Container resources for the eks-node-monitoring-agent |
 | nodeAgent.securityContext | object | `{"capabilities":{"add":["NET_ADMIN"]},"privileged":true}` | Container Security context for the eks-node-monitoring-agent |
 | nodeAgent.tolerations | list | `[{"operator":"Exists"}]` | Deployment tolerations for the eks-node-monitoring-agent |
 | updateStrategy | object | `{"rollingUpdate":{"maxUnavailable":"10%"},"type":"RollingUpdate"}` | Update strategy for all daemon sets |
+<!-- table:end -->
 
 Specify each parameter using the `--set key=value[,key=value]` argument to `helm install` or provide a YAML file
 containing the values for the above parameters.
