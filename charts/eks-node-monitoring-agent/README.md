@@ -10,6 +10,15 @@ This chart installs the [`eks-node-monitoring-agent`](https://github.com/aws/eks
 ## Installing the Chart
 
 ```shell
+# using the github chart repository
+helm repo add eks-node-monitoring-agent https://aws.github.io/eks-node-monitoring-agent
+helm install eks-node-monitoring-agent eks-node-monitoring-agent/eks-node-monitoring-agent --namespace kube-system
+```
+
+**OR**
+
+```shell
+# using the chart sources
 git clone https://github.com/aws/eks-node-monitoring-agent.git
 cd eks-node-monitoring-agent
 helm install eks-node-monitoring-agent ./charts/eks-node-monitoring-agent --namespace kube-system
