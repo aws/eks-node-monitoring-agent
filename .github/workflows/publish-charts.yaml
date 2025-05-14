@@ -1,0 +1,13 @@
+name: "[CI] Publish Charts"
+on:
+  push:
+    branches:
+      - main
+jobs:
+  publish-charts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "Setup Helm"
+        uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # 4.3.0
+      - name: "Publish Charts"
+        run: hack/publish-charts.sh
