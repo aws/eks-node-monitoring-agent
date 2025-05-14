@@ -22,6 +22,9 @@ spec:
       {{- with .Values.dcgmAgent.affinity }}
       affinity: {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .Values.dcgmAgent.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
       nodeSelector:
         kubernetes.io/os: linux
         {{- with .Values.dcgmAgent.nodeSelector }}

@@ -118,6 +118,8 @@ dcgmAgent:
               - amd64
   # -- Container resources for the dcgm deployment
   resources: {}
+  # -- Deployment tolerations for the dcgm
+  tolerations: []
 
 # -- Update strategy for all daemon sets
 updateStrategy:
