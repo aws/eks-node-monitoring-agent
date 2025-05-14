@@ -6,10 +6,12 @@ on:
 jobs:
   publish-charts:
     runs-on: ubuntu-latest
+    if: github.repository == 'aws/eks-node-monitoring-agent'
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+      - name: "Checkout"
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
-          ref: 'main'
+          fetch-depth: 0
       - name: "Setup Helm"
         uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # 4.3.0
       - name: "Publish Charts"
