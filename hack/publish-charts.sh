@@ -26,7 +26,11 @@ if ! ls ${STAGING_DIR}/*.tgz; then
 fi
 
 git checkout gh-pages
-mv ${STAGING_DIR}/*.tgz .
+
+if [ "$(realpath ${STAGING_DIR})" != "$(realpath .)" ]; then
+    mv ${STAGING_DIR}/*.tgz .
+fi
+
 helm repo index . --url ${CHART_URL}
 git add index.yaml *.tgz
 git commit -m "Publish charts ${VERSION}"
