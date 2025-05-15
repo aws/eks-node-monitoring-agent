@@ -34,7 +34,6 @@ helm uninstall eks-node-monitoring-agent --namespace kube-system
 
 The following table lists the configurable parameters for this chart and their default values.
 
-<!-- table:start -->
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | dcgmAgent.affinity | object | see [`values.yaml`](./values.yaml) | Map of dcgm pod affinities |
@@ -61,7 +60,6 @@ The following table lists the configurable parameters for this chart and their d
 | nodeAgent.securityContext | object | `{"capabilities":{"add":["NET_ADMIN"]},"privileged":true}` | Container Security context for the eks-node-monitoring-agent |
 | nodeAgent.tolerations | list | `[{"operator":"Exists"}]` | Deployment tolerations for the eks-node-monitoring-agent |
 | updateStrategy | object | `{"rollingUpdate":{"maxUnavailable":"10%"},"type":"RollingUpdate"}` | Update strategy for all daemon sets |
-<!-- table:end -->
 
 Specify each parameter using the `--set key=value[,key=value]` argument to `helm install` or provide a YAML file
 containing the values for the above parameters.
