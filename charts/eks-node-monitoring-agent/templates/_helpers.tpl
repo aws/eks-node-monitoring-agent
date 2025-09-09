@@ -68,7 +68,11 @@ Get the current dcgm-exporter image for a region.
 We use the dcgm-exporter image from the eks/observability.
 */}}
 {{- define "dcgm-exporter.image" -}}
+{{- if .Values.dcgmAgent.image.override }}
+{{- .Values.dcgmAgent.image.override }}
+{{- else }}
 {{- printf "%s.dkr.%s.%s.%s/eks/observability/dcgm-exporter:%s" .Values.dcgmAgent.image.account .Values.dcgmAgent.image.endpoint .Values.dcgmAgent.image.region .Values.dcgmAgent.image.domain .Values.dcgmAgent.image.tag -}}
+{{- end -}}
 {{- end -}}
 
 {{/*
