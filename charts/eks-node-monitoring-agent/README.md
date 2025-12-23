@@ -42,7 +42,7 @@ The following table lists the configurable parameters for this chart and their d
 | dcgmAgent.image.endpoint | string | `"ecr"` | ECR repository endpoint for the dcgm-exporter |
 | dcgmAgent.image.pullPolicy | string | `"IfNotPresent"` | Container pull policy for the dcgm-exporter |
 | dcgmAgent.image.region | string | `"us-west-2"` | ECR repository region for the dcgm-exporter |
-| dcgmAgent.image.tag | string | `"4.1.1-4.0.4-ubuntu22.04"` | Image tag for the dcgm-exporter |
+| dcgmAgent.image.tag | string | `"4.4.0-4.5.0-ubuntu22.04"` | Image tag for the dcgm-exporter |
 | dcgmAgent.resources | object | `{}` | Container resources for the dcgm deployment |
 | dcgmAgent.tolerations | list | `[]` | Deployment tolerations for the dcgm |
 | fullnameOverride | string | `"eks-node-monitoring-agent"` | A fullname override for the chart |
@@ -55,7 +55,7 @@ The following table lists the configurable parameters for this chart and their d
 | nodeAgent.image.endpoint | string | `"ecr"` | ECR repository endpoint for the eks-node-monitoring-agent |
 | nodeAgent.image.pullPolicy | string | `"IfNotPresent"` | Container pull policyfor the eks-node-monitoring-agent |
 | nodeAgent.image.region | string | `"us-west-2"` | ECR repository region for the eks-node-monitoring-agent |
-| nodeAgent.image.tag | string | `"v1.4.2-eksbuild.1"` | Image tag for the eks-node-monitoring-agent |
+| nodeAgent.image.tag | string | `"v1.4.3-eksbuild.2"` | Image tag for the eks-node-monitoring-agent |
 | nodeAgent.resources | object | `{"limits":{"cpu":"250m","memory":"100Mi"},"requests":{"cpu":"10m","memory":"30Mi"}}` | Container resources for the eks-node-monitoring-agent |
 | nodeAgent.securityContext | object | `{"capabilities":{"add":["NET_ADMIN"]},"privileged":true}` | Container Security context for the eks-node-monitoring-agent |
 | nodeAgent.tolerations | list | `[{"operator":"Exists"}]` | Deployment tolerations for the eks-node-monitoring-agent |
