@@ -78,7 +78,7 @@ nodeAgent:
 dcgmAgent:
   image:
     # -- Image tag for the dcgm-exporter
-    tag: 4.1.1-4.0.4-ubuntu22.04
+    tag: 4.4.0-4.5.0-ubuntu22.04
     # -- ECR repository domain for the dcgm-exporter
     domain: amazonaws.com
     # -- ECR repository region for the dcgm-exporter
@@ -98,7 +98,7 @@ dcgmAgent:
             # Only schedule on NVIDIA GPU nodes
           - key: node.kubernetes.io/instance-type
             operator: In
-            values: [g3.16xlarge, g3.4xlarge, g3.8xlarge, g3s.xlarge, g4dn.12xlarge, g4dn.16xlarge, g4dn.2xlarge, g4dn.4xlarge, g4dn.8xlarge, g4dn.metal, g4dn.xlarge, g5.12xlarge, g5.16xlarge, g5.24xlarge, g5.2xlarge, g5.48xlarge, g5.4xlarge, g5.8xlarge, g5.xlarge, g6.12xlarge, g6.16xlarge, g6.24xlarge, g6.2xlarge, g6.48xlarge, g6.4xlarge, g6.8xlarge, g6.xlarge, g6e.12xlarge, g6e.16xlarge, g6e.24xlarge, g6e.2xlarge, g6e.48xlarge, g6e.4xlarge, g6e.8xlarge, g6e.xlarge, gr6.4xlarge, gr6.8xlarge, p2.16xlarge, p2.8xlarge, p2.xlarge, p3.16xlarge, p3.2xlarge, p3.8xlarge, p4d.24xlarge, p5.48xlarge, p5e.48xlarge, p5en.48xlarge]
+            values: [g3.16xlarge, g3.4xlarge, g3.8xlarge, g3s.xlarge, g4dn.12xlarge, g4dn.16xlarge, g4dn.2xlarge, g4dn.4xlarge, g4dn.8xlarge, g4dn.metal, g4dn.xlarge, g5.12xlarge, g5.16xlarge, g5.24xlarge, g5.2xlarge, g5.48xlarge, g5.4xlarge, g5.8xlarge, g5g.16xlarge, g5g.2xlarge, g5g.4xlarge, g5g.8xlarge, g5g.metal, g5g.xlarge, g5.xlarge, g6.12xlarge, g6.16xlarge, g6.24xlarge, g6.2xlarge, g6.48xlarge, g6.4xlarge, g6.8xlarge, g6e.12xlarge, g6e.16xlarge, g6e.24xlarge, g6e.2xlarge, g6e.48xlarge, g6e.4xlarge, g6e.8xlarge, g6e.xlarge, g6f.2xlarge, g6f.4xlarge, g6f.large, g6f.xlarge, g6.xlarge, gr6.4xlarge, gr6.8xlarge, gr6f.4xlarge, p2.16xlarge, p2.8xlarge, p2.xlarge, p3.16xlarge, p3.2xlarge, p3.8xlarge, p3dn.24xlarge, p4d.24xlarge, p4de.24xlarge, p5.48xlarge, p5.4xlarge, p5e.48xlarge, p5en.48xlarge, p6-b200.48xlarge, p6-b300.48xlarge, p6e-gb200.36xlarge, p6e-gb300.36xlarge]
             # Don't schedule on special compute types
           - key: eks.amazonaws.com/compute-type
             operator: NotIn

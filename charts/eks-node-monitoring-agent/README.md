@@ -42,7 +42,7 @@ The following table lists the configurable parameters for this chart and their d
 | dcgmAgent.image.endpoint | string | `"ecr"` | ECR repository endpoint for the dcgm-exporter |
 | dcgmAgent.image.pullPolicy | string | `"IfNotPresent"` | Container pull policy for the dcgm-exporter |
 | dcgmAgent.image.region | string | `"us-west-2"` | ECR repository region for the dcgm-exporter |
-| dcgmAgent.image.tag | string | `"4.1.1-4.0.4-ubuntu22.04"` | Image tag for the dcgm-exporter |
+| dcgmAgent.image.tag | string | `"4.4.0-4.5.0-ubuntu22.04"` | Image tag for the dcgm-exporter |
 | dcgmAgent.resources | object | `{}` | Container resources for the dcgm deployment |
 | dcgmAgent.tolerations | list | `[]` | Deployment tolerations for the dcgm |
 | fullnameOverride | string | `"eks-node-monitoring-agent"` | A fullname override for the chart |
