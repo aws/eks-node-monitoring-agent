@@ -31,6 +31,10 @@ spec:
       serviceAccountName: {{ template "eks-node-monitoring-agent.serviceAccountName" . }}
       hostNetwork: true
       hostPID: true
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       containers:
         - name: {{ .Chart.Name }}
           image: {{ template "eks-node-monitoring-agent.image" . }}
@@ -52,10 +56,6 @@ spec:
             httpGet:
               path: /healthz
               port: 8002
-          {{- with .Values.imagePullSecrets }}
-          imagePullSecrets:
-            {{- toYaml . | nindent 8 }}
-          {{- end }}
           {{- with .Values.nodeAgent.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
