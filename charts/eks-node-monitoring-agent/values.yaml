@@ -74,6 +74,8 @@ nodeAgent:
   # -- Deployment tolerations for the eks-node-monitoring-agent
   tolerations:
     - operator: Exists
+  # -- Pod labels applied to the eks-node-monitoring-agent
+  podLabels: {}
 
 dcgmAgent:
   image:
@@ -120,6 +122,8 @@ dcgmAgent:
   resources: {}
   # -- Deployment tolerations for the dcgm
   tolerations: []
+  # -- Pod labels applied to the dcgm exporter
+  podLabels: {}
 
 # -- Update strategy for all daemon sets
 updateStrategy:
