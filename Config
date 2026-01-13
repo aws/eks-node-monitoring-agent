@@ -1,0 +1,27 @@
+package.Eks-node-monitoring-agent = {
+    interfaces = (1.0);
+
+    deploy = {
+        map = (default, "-gopath/**");
+    };
+
+    build-system = bgo-wrap-make;
+
+    build-tools = {
+        1.0 = {
+            BrazilMakeGo = 3.0;
+            GoLang = 1.x;
+        };
+    };
+
+    dependencies = {
+        1.0 = {
+        };
+    };
+
+    runtime-dependencies = {
+        1.0 = {
+        };
+    };
+
+};
