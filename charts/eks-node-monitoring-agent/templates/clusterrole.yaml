@@ -1,0 +1,24 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "eks-node-monitoring-agent.fullname" . }}
+  labels:
+    {{- include "eks-node-monitoring-agent.labels" . | nindent 4 }}
+rules:
+  # monitoring permissions
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "watch", "list"]
+- apiGroups: [""]
+  resources: ["nodes/status"]
+  verbs: ["patch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+  # nodediagnostic permissions
+- apiGroups: ["eks.amazonaws.com"]
+  resources: ["nodediagnostics"]
+  verbs: ["get", "watch", "list"]
+- apiGroups: ["eks.amazonaws.com"]
+  resources: ["nodediagnostics/status"]
+  verbs: ["patch"]

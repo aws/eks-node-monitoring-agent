@@ -1,0 +1,48 @@
+kind: DaemonSet
+apiVersion: apps/v1
+metadata:
+  name: dcgm-server
+  namespace: {{ .Release.Namespace }}
+  labels:
+    k8s-app: dcgm-server
+    version: v1
+spec:
+  selector:
+    matchLabels:
+      k8s-app: dcgm-server
+      version: v1
+  updateStrategy:
+  {{- toYaml .Values.updateStrategy | nindent 4 }}
+  template:
+    metadata:
+      labels:
+        k8s-app: dcgm-server
+        version: v1
+    spec:
+      {{- with .Values.dcgmAgent.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.dcgmAgent.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      nodeSelector:
+        kubernetes.io/os: linux
+        {{- with .Values.dcgmAgent.nodeSelector }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      priorityClassName: {{ .Values.priorityClassName | default "system-node-critical" }}
+      containers:
+        - name: {{ .Chart.Name }}-dcgm
+          image: {{ template "dcgm-exporter.image" . }}
+          imagePullPolicy: {{ .Values.dcgmAgent.image.pullPolicy }}
+          command: ["/bin/sh"]
+          args: ["-c", "nv-hostengine -n -b ALL || true; sleep infinity"]
+          {{- with .Values.dcgmAgent.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          ports:
+          - containerPort: 5555
+            hostPort: 5555
+          securityContext:
+            privileged: true

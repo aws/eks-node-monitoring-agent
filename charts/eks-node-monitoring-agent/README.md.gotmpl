@@ -1,0 +1,40 @@
+# EKS Node Monitoring Agent
+
+This chart installs the [`eks-node-monitoring-agent`](https://github.com/aws/eks-node-monitoring-agent).
+
+## Prerequisites
+
+- Kubernetes v{?} running on AWS
+- Helm v3
+
+## Installing the Chart
+
+```shell
+# using the github chart repository
+helm repo add eks-node-monitoring-agent https://aws.github.io/eks-node-monitoring-agent
+helm install eks-node-monitoring-agent eks-node-monitoring-agent/eks-node-monitoring-agent --namespace kube-system
+```
+
+**OR**
+
+```shell
+# using the chart sources
+git clone https://github.com/aws/eks-node-monitoring-agent.git
+cd eks-node-monitoring-agent
+helm install eks-node-monitoring-agent ./charts/eks-node-monitoring-agent --namespace kube-system
+```
+
+To uninstall:
+
+```shell
+helm uninstall eks-node-monitoring-agent --namespace kube-system
+```
+
+## Configuration
+
+The following table lists the configurable parameters for this chart and their default values.
+
+{{ template "chart.valuesTable" . }}
+
+Specify each parameter using the `--set key=value[,key=value]` argument to `helm install` or provide a YAML file
+containing the values for the above parameters.
