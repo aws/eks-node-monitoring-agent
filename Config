@@ -5,10 +5,12 @@ package.Eks-node-monitoring-agent = {
         map = (default, "-gopath/**");
     };
 
-    build-system = make;
+    build-system = bgo-wrap-make;
 
     build-tools = {
         1.0 = {
+            BrazilMakeGo = 3.0;
+            GoLang = 1.x;
         };
     };
 
