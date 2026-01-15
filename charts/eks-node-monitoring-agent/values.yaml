@@ -57,6 +57,8 @@ nodeAgent:
               values:
                 - amd64
                 - arm64
+  # -- Container environment for the eks-node-monitoring-agent
+  env: {}
   # -- Container resources for the eks-node-monitoring-agent
   resources:
     requests:
