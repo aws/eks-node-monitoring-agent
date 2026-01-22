@@ -3,6 +3,7 @@ package kernel
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -32,13 +33,34 @@ func (m *mockObserver) Broadcast(source, message string) {
 }
 
 type mockManager struct {
-	err error
-	obs *mockObserver
-	res chan monitor.Condition
+	err       error
+	obs       *mockObserver
+	res       chan monitor.Condition
+	observers map[string]*mockObserver
 }
 
-func (m *mockManager) Subscribe(resource.Type, []resource.Part) (<-chan string, error) {
-	return m.obs.Subscribe(), m.err
+func (m *mockManager) Subscribe(rType resource.Type, rParts []resource.Part) (<-chan string, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	// Create a unique key for this subscription
+	key := string(rType)
+	for _, part := range rParts {
+		key += "-" + string(part)
+	}
+
+	// Return existing observer or create new one
+	if m.observers == nil {
+		m.observers = make(map[string]*mockObserver)
+	}
+	if obs, exists := m.observers[key]; exists {
+		return obs.Subscribe(), nil
+	}
+
+	// Create new observer for this subscription
+	obs := newMockObserver()
+	m.observers[key] = obs
+	return obs.Subscribe(), nil
 }
 
 func (m *mockManager) Notify(ctx context.Context, condition monitor.Condition) error {
@@ -48,28 +70,41 @@ func (m *mockManager) Notify(ctx context.Context, condition monitor.Condition) e
 
 func TestKernelMonitor(t *testing.T) {
 	for _, testCase := range []struct {
-		log    string
-		reason string
+		log          string
+		reason       string
+		resourceType resource.Type
+		resourcePart string
 		monitor.Severity
 	}{
-		{"[Mon Jan 1 12:34:56 2022] BUG: something bad happened", "KernelBug", monitor.SeverityWarning},
-		{"watchdog: BUG: soft lockup - CPU#6 stuck for 23s! [VM Thread:4054]", "SoftLockup", monitor.SeverityWarning},
-		{`.*fork/exec.*resource temporarily unavailable`, "ForkFailedOutOfPIDs", monitor.SeverityFatal},
-		{"failed to create new OS thread (foo; errno=11)", "ForkFailedOutOfPIDs", monitor.SeverityFatal},
-		{"[   32.298491][  T896] kexec[896]: segfault at 0 ip 0000000000000000 sp 00007ffeaf0ff420 error 14 in dash[561ac3c57000+4000]", "AppCrash", monitor.SeverityWarning},
-		{"task foo:123 blocked for more than 20s", "AppBlocked", monitor.SeverityWarning},
-		{"nf_conntrack: nf_conntrack: table full, dropping packet", "ConntrackExceededKernel", monitor.SeverityWarning},
+		{"[Mon Jan 1 12:34:56 2022] BUG: something bad happened", "KernelBug", resource.ResourceTypeDmesg, "", monitor.SeverityWarning},
+		{"watchdog: BUG: soft lockup - CPU#6 stuck for 23s! [VM Thread:4054]", "SoftLockup", resource.ResourceTypeDmesg, "", monitor.SeverityWarning},
+		{`.*fork/exec.*resource temporarily unavailable`, "ForkFailedOutOfPIDs", resource.ResourceTypeJournal, "kubelet", monitor.SeverityFatal},
+		{"failed to create new OS thread (foo; errno=11)", "ForkFailedOutOfPIDs", resource.ResourceTypeJournal, "kubelet", monitor.SeverityFatal},
+		{"[   32.298491][  T896] kexec[896]: segfault at 0 ip 0000000000000000 sp 00007ffeaf0ff420 error 14 in dash[561ac3c57000+4000]", "AppCrash", resource.ResourceTypeDmesg, "", monitor.SeverityWarning},
+		{"task foo:123 blocked for more than 20s", "AppBlocked", resource.ResourceTypeDmesg, "", monitor.SeverityWarning},
+		{"nf_conntrack: nf_conntrack: table full, dropping packet", "ConntrackExceededKernel", resource.ResourceTypeDmesg, "", monitor.SeverityWarning},
 	} {
 		t.Run(testCase.log, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 			defer cancel()
 			kernelMonitor := &KernelMonitor{}
 			mockManager := mockManager{
-				obs: newMockObserver(),
 				res: make(chan monitor.Condition, 5),
 			}
 			kernelMonitor.Register(ctx, &mockManager)
-			mockManager.obs.Broadcast("mock", testCase.log)
+			// Give goroutines time to start
+			time.Sleep(10 * time.Millisecond)
+
+			// Get the correct observer for this resource type
+			key := string(testCase.resourceType)
+			if testCase.resourcePart != "" {
+				key += "-" + testCase.resourcePart
+			}
+			obs := mockManager.observers[key]
+			if obs == nil {
+				t.Fatalf("observer not found for key: %s", key)
+			}
+			obs.Broadcast("mock", testCase.log)
 			select {
 			case <-ctx.Done():
 				t.Fatal(ctx.Err())
@@ -85,12 +120,27 @@ func TestKernelMonitor(t *testing.T) {
 		defer cancel()
 		mon := &KernelMonitor{}
 		mockManager := mockManager{
-			obs: newMockObserver(),
 			res: make(chan monitor.Condition, 5),
 		}
 		mon.Register(ctx, &mockManager)
-		mockManager.obs.Broadcast("mock", "Sep 17 21:44:01 dev-dsk CROND[13867]: (root) CMD (/usr/hostidentity/bin/hostidentity_generate_aea_jwt.pl)")
-		mockManager.obs.Broadcast("mock", "Sep 17 21:44:01 dev-dsk CROND[13867]: (root) CMD (/usr/hostidentity/bin/hostidentity_generate_aea_jwt.pl)")
+		// Give goroutines time to start
+		time.Sleep(10 * time.Millisecond)
+
+		// Get the cron file observer
+		// The key will be "file-/host/var/log/cron.log" or similar
+		var cronObs *mockObserver
+		for key, obs := range mockManager.observers {
+			if strings.Contains(key, "file") && strings.Contains(key, "cron") {
+				cronObs = obs
+				break
+			}
+		}
+		if cronObs == nil {
+			t.Fatal("cron observer not found")
+		}
+
+		cronObs.Broadcast("mock", "Sep 17 21:44:01 dev-dsk CROND[13867]: (root) CMD (/usr/hostidentity/bin/hostidentity_generate_aea_jwt.pl)")
+		cronObs.Broadcast("mock", "Sep 17 21:44:01 dev-dsk CROND[13867]: (root) CMD (/usr/hostidentity/bin/hostidentity_generate_aea_jwt.pl)")
 		select {
 		case <-ctx.Done():
 			t.Fatal(ctx.Err())
@@ -105,7 +155,7 @@ func TestKernelMonitor(t *testing.T) {
 		defer cancel()
 		mon := &KernelMonitor{}
 		mockError := fmt.Errorf("mock error")
-		mockManager := &mockManager{err: mockError, obs: newMockObserver()}
+		mockManager := &mockManager{err: mockError}
 		actualError := mon.Register(ctx, mockManager)
 		assert.EqualError(t, actualError, mockError.Error())
 	})
