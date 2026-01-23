@@ -81,8 +81,8 @@ func (m *StorageMonitor) Register(ctx context.Context, mgr monitor.Manager) erro
 	for _, handler := range []interface{ Start(context.Context) error }{
 		util.NewChannelHandler(m.handleVarLogMessages, var_log_messages),
 		util.NewChannelHandler(m.handleKubeletLogs, kubelet_logs),
-		util.NewChannelHandler(func(time.Time) error { return m.handleXFS() }, util.TimeTickWithJitter(10*time.Minute)),
-		util.NewChannelHandler(func(time.Time) error { return m.handleIODelays() }, util.TimeTickWithJitter(10*time.Minute)),
+		util.NewChannelHandler(func(time.Time) error { return m.handleXFS() }, util.TimeTickWithJitterContext(ctx, 10*time.Minute)),
+		util.NewChannelHandler(func(time.Time) error { return m.handleIODelays() }, util.TimeTickWithJitterContext(ctx, 10*time.Minute)),
 	} {
 		go handler.Start(ctx)
 	}
@@ -90,7 +90,7 @@ func (m *StorageMonitor) Register(ctx context.Context, mgr monitor.Manager) erro
 	// Periodic cache cleanup to trigger lazy TTL expiration
 	// This prevents unbounded growth from dead processes that are never accessed again
 	go func() {
-		for range util.TimeTickWithJitter(IODelayCacheDefaultExpirationTime) {
+		for range util.TimeTickWithJitterContext(ctx, IODelayCacheDefaultExpirationTime) {
 			m.delayCache.List()
 		}
 	}()
@@ -98,21 +98,15 @@ func (m *StorageMonitor) Register(ctx context.Context, mgr monitor.Manager) erro
 	// EBS NVMe throttling monitoring (runs on all nodes with NVMe devices)
 	ebsSystem := ebs.NewEBSSystem()
 	go func() {
-		ticker := util.TimeTickWithJitter(10 * time.Minute)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker:
-				conditions, err := ebsSystem.NVMeThrottles(ctx)
-				if err != nil {
-					m.log.Error(err, "failed to check EBS NVMe throttles")
-					continue
-				}
-				for _, condition := range conditions {
-					if err := m.manager.Notify(ctx, condition); err != nil {
-						m.log.Error(err, "failed to notify EBS condition")
-					}
+		for range util.TimeTickWithJitterContext(ctx, 10*time.Minute) {
+			conditions, err := ebsSystem.NVMeThrottles(ctx)
+			if err != nil {
+				m.log.Error(err, "failed to check EBS NVMe throttles")
+				continue
+			}
+			for _, condition := range conditions {
+				if err := m.manager.Notify(ctx, condition); err != nil {
+					m.log.Error(err, "failed to notify EBS condition")
 				}
 			}
 		}

@@ -79,11 +79,11 @@ func (m *runtimeMonitor) Register(ctx context.Context, mgr monitor.Manager) erro
 		go handler.Start(ctx)
 	}
 
-	containerdHandler := util.NewChannelHandler(func(time.Time) error { return m.handleContainerd() }, util.TimeTickWithJitter(containerdDeprecationInterval))
+	containerdHandler := util.NewChannelHandler(func(time.Time) error { return m.handleContainerd() }, util.TimeTickWithJitterContext(ctx, containerdDeprecationInterval))
 	go containerdHandler.Start(ctx)
 
 	if !slices.Contains(rtCtx.Tags(), config.Bottlerocket) {
-		handler := util.NewChannelHandler(func(time.Time) error { return m.handleSystemdServices() }, util.TimeTickWithJitter(5*time.Minute))
+		handler := util.NewChannelHandler(func(time.Time) error { return m.handleSystemdServices() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute))
 		go handler.Start(ctx)
 	}
 

@@ -2,9 +2,14 @@ package util
 
 import (
 	"context"
+	"sync"
 
 	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+)
+
+const (
+	channelHandlerQueueSize = 1000
 )
 
 // creates a sequential workqueue, which prevents race conditions when trying to
@@ -16,35 +21,59 @@ func NewChannelHandlerGroup[T any]() *channelHandlerGroup[T] {
 
 type channelHandlerGroup[T any] struct{}
 
-// Start kicks off a background goroutines to queue logs to the main sink, then
+// Start kicks off background goroutines to queue logs to the main sink, then
 // blocks on a loop to continuously poll the sink. This ensures that no two jobs
-// from the group can execute concurrently.
+// from the group can execute concurrently. All goroutines exit when ctx is cancelled.
 func (sh *channelHandlerGroup[T]) Start(ctx context.Context, channelHandlers ...*channelHandler[T]) error {
-	log := log.FromContext(ctx)
+	logger := log.FromContext(ctx)
 
 	type logItem struct {
 		Log     T
 		Handler func(T) error
 	}
 
-	queue := make(chan logItem, 1000)
+	queue := make(chan logItem, channelHandlerQueueSize)
 
+	var wg sync.WaitGroup
 	for _, chHandler := range channelHandlers {
-		// handlers should not block eachother
+		wg.Add(1)
 		go func() {
-			for log := range chHandler.channel {
-				queue <- logItem{Log: log, Handler: chHandler.handler}
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case item, ok := <-chHandler.channel:
+					if !ok {
+						return
+					}
+					select {
+					case <-ctx.Done():
+						return
+					case queue <- logItem{Log: item, Handler: chHandler.handler}:
+					default:
+						logger.Info("channel handler queue full, dropping item")
+					}
+				}
 			}
 		}()
 	}
+
+	go func() {
+		wg.Wait()
+		close(queue)
+	}()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return nil
-		case job := <-queue:
+		case job, ok := <-queue:
+			if !ok {
+				return nil
+			}
 			if err := job.Handler(job.Log); err != nil {
-				log.Error(err, "error in channel handler")
+				logger.Error(err, "error in channel handler")
 			}
 		}
 	}
@@ -67,7 +96,10 @@ func (ch *channelHandler[T]) Start(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case msg := <-ch.channel:
+		case msg, ok := <-ch.channel:
+			if !ok {
+				return nil
+			}
 			if err := ch.handler(msg); err != nil {
 				log.FromContext(ctx).Error(err, "error in channel handler")
 			}

@@ -60,10 +60,10 @@ func (m *KernelMonitor) Register(ctx context.Context, mgr monitor.Manager) error
 		util.NewChannelHandler(m.handleDmesg, dmesg),
 		util.NewChannelHandler(m.handleKubelet, kubelet_log),
 		util.NewChannelHandler(makeCron(m).handle, cron_log),
-		util.NewChannelHandler(func(time.Time) error { return m.handlePids() }, util.TimeTickWithJitter(5*time.Minute)),
-		util.NewChannelHandler(func(time.Time) error { return m.handleZombies() }, util.TimeTickWithJitter(5*time.Minute)),
-		util.NewChannelHandler(func(time.Time) error { return m.handleOpenedFiles() }, util.TimeTickWithJitter(5*time.Minute)),
-		util.NewChannelHandler(func(time.Time) error { return m.handleEnvironment() }, util.TimeTickWithJitter(5*time.Minute)),
+		util.NewChannelHandler(func(time.Time) error { return m.handlePids() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
+		util.NewChannelHandler(func(time.Time) error { return m.handleZombies() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
+		util.NewChannelHandler(func(time.Time) error { return m.handleOpenedFiles() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
+		util.NewChannelHandler(func(time.Time) error { return m.handleEnvironment() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 	} {
 		go handler.Start(ctx)
 	}
