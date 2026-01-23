@@ -26,6 +26,9 @@ import (
 
 	// Import monitor packages to trigger auto-registration via init()
 	_ "golang.a2z.com/Eks-node-monitoring-agent/monitors/kernel"
+	_ "golang.a2z.com/Eks-node-monitoring-agent/monitors/storage"
+	// Import monitors that require explicit registration (can't use init())
+	"golang.a2z.com/Eks-node-monitoring-agent/monitors/runtime"
 	// Import observer packages to register observers
 	_ "golang.a2z.com/Eks-node-monitoring-agent/pkg/observer"
 )
@@ -78,6 +81,24 @@ func run() error {
 		return err
 	}
 
+	// Create node template for Kubernetes integration
+	nodeTemplate := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: hostname}}
+
+	// Get Kubernetes client and event recorder
+	kubeClient := mgr.GetClient()
+	eventRecorder := mgr.GetEventRecorderFor("eks-node-monitoring-agent")
+
+	// Register runtime monitor plugin manually (requires node and kubeClient dependencies)
+	// Unlike kernel and storage monitors which auto-register via init(), the runtime monitor
+	// needs access to the node object and Kubernetes client for EKS Auto mode manifest
+	// deprecation tracking. These dependencies are only available after the controller
+	// manager is created, so we register it explicitly here.
+	runtimePlugin := runtime.NewPlugin(nodeTemplate.DeepCopy(), kubeClient)
+	if err := registry.ValidateAndRegister(runtimePlugin); err != nil {
+		logger.Error(err, "failed to register runtime monitor plugin")
+		return err
+	}
+
 	// Get all registered monitors from the global plugin registry
 	// Monitors are auto-registered via init() functions when their packages are imported
 	allMonitors := registry.GlobalRegistry().AllMonitors()
@@ -92,13 +113,6 @@ func run() error {
 		logger.Info("monitor available", "name", mon.Name())
 	}
 
-	// Create node template for Kubernetes integration
-	nodeTemplate := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: hostname}}
-
-	// Get Kubernetes client and event recorder
-	kubeClient := mgr.GetClient()
-	eventRecorder := mgr.GetEventRecorderFor("eks-node-monitoring-agent")
-
 	// Build condition configs for node exporter
 	// Map each monitor to a Kubernetes node condition type
 	conditionConfigs := make(map[corev1.NodeConditionType]manager.NodeConditionConfig)
@@ -106,7 +120,14 @@ func run() error {
 		ReadyReason:  "KernelIsReady",
 		ReadyMessage: "Monitoring for the Kernel system is active",
 	}
-	// Add more condition types as more monitors are extracted
+	conditionConfigs[corev1.NodeConditionType("StorageReady")] = manager.NodeConditionConfig{
+		ReadyReason:  "DiskIsReady",
+		ReadyMessage: "Monitoring for the Disk system is active",
+	}
+	conditionConfigs[corev1.NodeConditionType("ContainerRuntimeReady")] = manager.NodeConditionConfig{
+		ReadyReason:  "ContainerRuntimeIsReady",
+		ReadyMessage: "Monitoring for the ContainerRuntime system is active",
+	}
 
 	// Initialize node exporter
 	logger.Info("initializing node exporter")
@@ -126,12 +147,22 @@ func run() error {
 	for _, mon := range allMonitors {
 		monCtx := log.IntoContext(ctx, logger.WithValues("monitor", mon.Name()))
 		// Map monitor name to condition type
-		conditionType := "KernelReady" // For now, all monitors use KernelReady
+		var conditionType string
+		switch mon.Name() {
+		case "kernel":
+			conditionType = "KernelReady"
+		case "storage":
+			conditionType = "StorageReady"
+		case "container-runtime":
+			conditionType = "ContainerRuntimeReady"
+		default:
+			conditionType = "KernelReady" // Default fallback
+		}
 		if err := monitorMgr.Register(monCtx, mon, conditionType); err != nil {
 			logger.Error(err, "failed to register monitor", "name", mon.Name())
 			return err
 		}
-		logger.Info("registered monitor with manager", "name", mon.Name())
+		logger.Info("registered monitor with manager", "name", mon.Name(), "conditionType", conditionType)
 	}
 
 	// Add monitoring manager as a runnable to the controller manager
