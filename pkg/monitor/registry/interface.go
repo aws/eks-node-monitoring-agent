@@ -1,7 +1,7 @@
 package registry
 
 import (
-	"golang.a2z.com/Eks-node-monitoring-agent/monitor"
+	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
 

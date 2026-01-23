@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"golang.a2z.com/Eks-node-monitoring-agent/monitor"
-	"golang.a2z.com/Eks-node-monitoring-agent/monitor/resource"
+	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
+	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor/resource"
 	"golang.a2z.com/Eks-node-monitoring-agent/pkg/observer"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )

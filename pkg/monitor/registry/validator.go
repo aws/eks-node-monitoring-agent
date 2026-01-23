@@ -3,7 +3,7 @@ package registry
 import (
 	"fmt"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/monitor"
+	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
 )
 
 // ValidatePlugin validates a plugin before registration

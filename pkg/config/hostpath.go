@@ -20,3 +20,12 @@ func HostRoot() string {
 func ToHostPath(path string) string {
 	return filepath.Join(HostRoot(), path)
 }
+
+// Common paths
+var (
+	SystemMessagesPath = ToHostPath("/var/log/messages")
+	PodLogsDirPath     = ToHostPath("/var/log/pods/")
+	PCIDevicesPath     = ToHostPath("/proc/bus/pci/devices")
+	CRIEndpoint        = "unix://" + ToHostPath("/run/containerd/containerd.sock")
+	IPAMDLogPath       = ToHostPath("/var/log/aws-routed-eni/ipamd.log")
+)

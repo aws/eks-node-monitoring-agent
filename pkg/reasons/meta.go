@@ -3,7 +3,7 @@ package reasons
 import (
 	"fmt"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/monitor"
+	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
 )
 
 type ReasonMeta struct {

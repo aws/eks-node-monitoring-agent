@@ -3,7 +3,7 @@ package util
 import (
 	"context"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/monitor"
+	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 

@@ -25,7 +25,7 @@ import (
 	"golang.a2z.com/Eks-node-monitoring-agent/pkg/monitor/registry"
 
 	// Import monitor packages to trigger auto-registration via init()
-	_ "golang.a2z.com/Eks-node-monitoring-agent/pkg/monitors/kernel"
+	_ "golang.a2z.com/Eks-node-monitoring-agent/monitors/kernel"
 	// Import observer packages to register observers
 	_ "golang.a2z.com/Eks-node-monitoring-agent/pkg/observer"
 )

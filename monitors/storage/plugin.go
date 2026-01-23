@@ -1,0 +1,15 @@
+package storage
+
+import (
+	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
+	"golang.a2z.com/Eks-node-monitoring-agent/pkg/monitor/framework"
+	"golang.a2z.com/Eks-node-monitoring-agent/pkg/monitor/registry"
+)
+
+func init() {
+	// Auto-register storage monitor plugin on package import
+	plugin := framework.NewPlugin("storage-monitor", []monitor.Monitor{
+		NewStorageMonitor(),
+	})
+	registry.MustRegister(plugin)
+}

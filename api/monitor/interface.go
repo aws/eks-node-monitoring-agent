@@ -3,7 +3,7 @@ package monitor
 import (
 	"context"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/monitor/resource"
+	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor/resource"
 )
 
 // Monitor defines the resources that a user wishes to subscribe to, and a top

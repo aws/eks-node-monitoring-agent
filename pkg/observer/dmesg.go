@@ -3,7 +3,7 @@ package observer
 import (
 	"fmt"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/monitor/resource"
+	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor/resource"
 	"golang.a2z.com/Eks-node-monitoring-agent/pkg/config"
 )
 

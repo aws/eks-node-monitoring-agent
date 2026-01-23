@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"golang.a2z.com/Eks-node-monitoring-agent/monitor"
-	"golang.a2z.com/Eks-node-monitoring-agent/monitor/resource"
+	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
+	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor/resource"
 	"golang.a2z.com/Eks-node-monitoring-agent/pkg/config"
 	"golang.a2z.com/Eks-node-monitoring-agent/pkg/osext"
 	"golang.a2z.com/Eks-node-monitoring-agent/pkg/reasons"

@@ -3,7 +3,7 @@ package manager
 import (
 	"context"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/monitor"
+	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
 )
 
 // Exporter handles propagating conditions from monitors to external systems

@@ -9,8 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/monitor"
-	"golang.a2z.com/Eks-node-monitoring-agent/monitor/resource"
+	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
+	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor/resource"
 )
 
 // mockObserver provides a simple channel-based observer for testing
