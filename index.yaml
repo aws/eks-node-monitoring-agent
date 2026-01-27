@@ -2,8 +2,23 @@ apiVersion: v1
 entries:
   eks-node-monitoring-agent:
   - apiVersion: v2
+    appVersion: 1.5.0
+    created: "2026-01-27T18:59:33.065056958Z"
+    description: A Helm chart for eks-node-montoring-agent
+    digest: 86b0f5b2040c233cdebed3437614e56febe79f14f0fcb9a631aabd0d4f694c80
+    home: https://github.com/aws/eks-node-monitoring-agent
+    icon: https://raw.githubusercontent.com/aws/eks-charts/master/docs/logo/aws.png
+    keywords:
+    - eks
+    name: eks-node-monitoring-agent
+    sources:
+    - https://github.com/aws/eks-node-monitoring-agent
+    urls:
+    - https://aws.github.io/eks-node-monitoring-agent/eks-node-monitoring-agent-1.5.0.tgz
+    version: 1.5.0
+  - apiVersion: v2
     appVersion: 1.4.3
-    created: "2026-01-27T18:54:35.222871015Z"
+    created: "2026-01-27T18:59:33.064470204Z"
     description: A Helm chart for eks-node-montoring-agent
     digest: 9f0270874cdcf2afd4c7fe0933f73bf2421e29f63d851916c004a7f754d36ced
     home: https://github.com/aws/eks-node-monitoring-agent
@@ -18,7 +33,7 @@ entries:
     version: 1.4.3
   - apiVersion: v2
     appVersion: 1.4.2
-    created: "2026-01-27T18:54:35.22223711Z"
+    created: "2026-01-27T18:59:33.063857411Z"
     description: A Helm chart for eks-node-montoring-agent
     digest: 9e73db59546dceb03c5677527511dc1e09d7970913b5690abc22fca47f28ab03
     home: https://github.com/aws/eks-node-monitoring-agent
@@ -33,7 +48,7 @@ entries:
     version: 1.4.2
   - apiVersion: v2
     appVersion: 1.4.0
-    created: "2026-01-27T18:54:35.221575934Z"
+    created: "2026-01-27T18:59:33.063289172Z"
     description: A Helm chart for eks-node-montoring-agent
     digest: efee792c3f2d2268e4d5f387ec6a815b0ea96ac3b0be5574d3d54960f701b35a
     home: https://github.com/aws/eks-node-monitoring-agent
@@ -48,7 +63,7 @@ entries:
     version: 1.4.0
   - apiVersion: v2
     appVersion: 1.3.0
-    created: "2026-01-27T18:54:35.220099136Z"
+    created: "2026-01-27T18:59:33.062727295Z"
     description: A Helm chart for eks-node-montoring-agent
     digest: 74ff17e41a69cb9a6d79ef4e51215b5b1c11734d0f6e4f77905b9f1fbcb189e3
     home: https://github.com/aws/eks-node-monitoring-agent
@@ -63,7 +78,7 @@ entries:
     version: 1.3.1
   - apiVersion: v2
     appVersion: 1.2.0
-    created: "2026-01-27T18:54:35.219516477Z"
+    created: "2026-01-27T18:59:33.062062595Z"
     description: A Helm chart for eks-node-montoring-agent
     digest: 3e73c2240177abf9f6b24adb33c82fd09704e471852c32ee3c322f2c505db6e4
     home: https://github.com/aws/eks-node-monitoring-agent
@@ -78,7 +93,7 @@ entries:
     version: 1.3.0
   - apiVersion: v2
     appVersion: 1.2.0
-    created: "2026-01-27T18:54:35.218976157Z"
+    created: "2026-01-27T18:59:33.06145389Z"
     description: A Helm chart for eks-node-montoring-agent
     digest: 13e0b8cd5791f95ca682ea75ab8e7562a5a24e2fada61b0203b4de17fda0651a
     home: https://github.com/aws/eks-node-monitoring-agent
@@ -91,4 +106,4 @@ entries:
     urls:
     - https://aws.github.io/eks-node-monitoring-agent/eks-node-monitoring-agent-1.2.0.tgz
     version: 1.2.0
-generated: "2026-01-27T18:54:35.21825033Z"
+generated: "2026-01-27T18:59:33.060759767Z"
