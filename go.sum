@@ -1,5 +1,7 @@
 github.com/Microsoft/go-winio v0.6.2 h1:F2VQgta7ecxGYO8k3ZZz3RS8fVIXVxONVUPlNERoyfY=
 github.com/Microsoft/go-winio v0.6.2/go.mod h1:yd8OoFMLzJbo9gZq8j5qaps8bJ9aShtEA8Ipt1oGCvU=
+github.com/NVIDIA/go-dcgm v0.0.0-20260109231451-70002c42dbcf h1:Rs13/bkgZPv4azSpEmMByOYXIiTHf/+kagc2JIIlX30=
+github.com/NVIDIA/go-dcgm v0.0.0-20260109231451-70002c42dbcf/go.mod h1:cA0Bv7+JtAd8sqCCZizhAQjj4+Z47x/d8KD60iYBT+g=
 github.com/Pallinder/go-randomdata v1.2.0 h1:DZ41wBchNRb/0GfsePLiSwb0PHZmT67XY00lCDlaYPg=
 github.com/Pallinder/go-randomdata v1.2.0/go.mod h1:yHmJgulpD2Nfrm0cR9tI/+oAgRqCQQixsA8HyRZfV9Y=
 github.com/aws/amazon-vpc-cni-k8s v1.21.1 h1:Af378/Q7SYCF+/QCL0cyHPdJaoNGaheSpCCMzpVC1O0=
@@ -10,6 +12,8 @@ github.com/awslabs/operatorpkg v0.0.0-20240528181656-9b0b0334ce13 h1:/YLCG24AEN2
 github.com/awslabs/operatorpkg v0.0.0-20240528181656-9b0b0334ce13/go.mod h1:OR0NDOTl6XUXKgcksUab5d7mCnpaZf7Ko4eWEbheJTY=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
+github.com/bits-and-blooms/bitset v1.22.0 h1:Tquv9S8+SGaS3EhyA+up3FXzmkhxPGjQQCkcs2uw7w4=
+github.com/bits-and-blooms/bitset v1.22.0/go.mod h1:7hO7Gc7Pp1vODcmWvKMRA9BNmbv6a/7QIWpPxHddWR8=
 github.com/cespare/xxhash/v2 v2.3.0 h1:UL815xU9SqsFlibzuggzjXhog7bL6oX9BbNZnL2UFvs=
 github.com/cespare/xxhash/v2 v2.3.0/go.mod h1:VGX0DQ3Q6kWi7AoAeZDth3/j3BFtOZR5XLFGgcrjCOs=
 github.com/containerd/containerd v1.7.30 h1:/2vezDpLDVGGmkUXmlNPLCCNKHJ5BbC5tJB5JNzQhqE=

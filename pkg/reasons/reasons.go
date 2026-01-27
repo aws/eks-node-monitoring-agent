@@ -1,7 +1,6 @@
 package reasons
 
 // Core monitor reasons for open-source monitors
-// Proprietary reasons (Nvidia, Neuron) remain in internal package
 
 var (
 	// reasons for the ContainerRuntimeReady condition.
@@ -214,6 +213,65 @@ var (
 
 	// reasons for the AcceleratedHardwareReady condition.
 
+	// NVIDIA GPU monitoring reasons
+	DCGMDiagnosticFailure = ReasonMeta{
+		template:        "DCGMDiagnosticFailure",
+		defaultSeverity: "Fatal",
+	}
+	DCGMError = ReasonMeta{
+		template:        "DCGMError",
+		defaultSeverity: "Fatal",
+	}
+	DCGMFieldError = ReasonMeta{
+		template:        "DCGMFieldError%d",
+		defaultSeverity: "Warning",
+	}
+	DCGMHealthCode = ReasonMeta{
+		template:        "DCGMHealthCode%d",
+		defaultSeverity: "Warning",
+	}
+	NvidiaDeviceCountMismatch = ReasonMeta{
+		template:        "NvidiaDeviceCountMismatch",
+		defaultSeverity: "Warning",
+	}
+	NvidiaDoubleBitError = ReasonMeta{
+		template:        "NvidiaDoubleBitError",
+		defaultSeverity: "Fatal",
+	}
+	NvidiaNCCLError = ReasonMeta{
+		template:        "NvidiaNCCLError",
+		defaultSeverity: "Warning",
+	}
+	NvidiaNVLinkError = ReasonMeta{
+		template:        "NvidiaNVLinkError",
+		defaultSeverity: "Fatal",
+	}
+	NvidiaPCIeError = ReasonMeta{
+		template:        "NvidiaPCIeError",
+		defaultSeverity: "Warning",
+	}
+	NvidiaPageRetirement = ReasonMeta{
+		template:        "NvidiaPageRetirement",
+		defaultSeverity: "Warning",
+	}
+	NvidiaPowerError = ReasonMeta{
+		template:        "NvidiaPowerError",
+		defaultSeverity: "Warning",
+	}
+	NvidiaThermalError = ReasonMeta{
+		template:        "NvidiaThermalError",
+		defaultSeverity: "Warning",
+	}
+	NvidiaXIDError = ReasonMeta{
+		template:        "NvidiaXID%dError",
+		defaultSeverity: "Fatal",
+	}
+	NvidiaXIDWarning = ReasonMeta{
+		template:        "NvidiaXID%dWarning",
+		defaultSeverity: "Warning",
+	}
+
+	// AWS Neuron monitoring reasons
 	NeuronDMAError = ReasonMeta{
 		template:        "NeuronDMAError",
 		defaultSeverity: "Fatal",

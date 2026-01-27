@@ -3,6 +3,7 @@ module golang.a2z.com/Eks-node-monitoring-agent
 go 1.25.5
 
 require (
+	github.com/NVIDIA/go-dcgm v0.0.0-20260109231451-70002c42dbcf
 	github.com/aws/amazon-vpc-cni-k8s v1.21.1
 	github.com/awslabs/operatorpkg v0.0.0-20240528181656-9b0b0334ce13
 	github.com/containerd/containerd v1.7.30
@@ -27,6 +28,7 @@ require (
 require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
+	github.com/bits-and-blooms/bitset v1.22.0 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/containernetworking/plugins v1.5.1 // indirect
 	github.com/coreos/go-iptables v0.8.0 // indirect

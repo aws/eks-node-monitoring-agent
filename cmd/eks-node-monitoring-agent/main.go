@@ -28,6 +28,7 @@ import (
 	_ "golang.a2z.com/Eks-node-monitoring-agent/monitors/kernel"
 	_ "golang.a2z.com/Eks-node-monitoring-agent/monitors/networking"
 	_ "golang.a2z.com/Eks-node-monitoring-agent/monitors/neuron"
+	_ "golang.a2z.com/Eks-node-monitoring-agent/monitors/nvidia"
 	_ "golang.a2z.com/Eks-node-monitoring-agent/monitors/storage"
 	// Import monitors that require explicit registration (can't use init())
 	"golang.a2z.com/Eks-node-monitoring-agent/monitors/runtime"
@@ -138,6 +139,10 @@ func run() error {
 		ReadyReason:  "NeuronAcceleratedHardwareIsReady",
 		ReadyMessage: "Monitoring for the Neuron AcceleratedHardware system is active",
 	}
+	conditionConfigs[corev1.NodeConditionType("NvidiaGPUReady")] = manager.NodeConditionConfig{
+		ReadyReason:  "NvidiaGPUIsReady",
+		ReadyMessage: "Monitoring for the Nvidia GPU system is active",
+	}
 
 	// Initialize node exporter
 	logger.Info("initializing node exporter")
@@ -169,6 +174,8 @@ func run() error {
 			conditionType = "NetworkingReady"
 		case "neuron":
 			conditionType = "AcceleratedHardwareReady"
+		case "nvidia":
+			conditionType = "NvidiaGPUReady"
 		default:
 			conditionType = "KernelReady" // Default fallback
 		}
