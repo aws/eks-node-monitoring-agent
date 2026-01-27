@@ -211,4 +211,23 @@ var (
 		template:        "XFSSmallAverageClusterSize",
 		defaultSeverity: "Warning",
 	}
+
+	// reasons for the AcceleratedHardwareReady condition.
+
+	NeuronDMAError = ReasonMeta{
+		template:        "NeuronDMAError",
+		defaultSeverity: "Fatal",
+	}
+	NeuronHBMUncorrectableError = ReasonMeta{
+		template:        "NeuronHBMUncorrectableError",
+		defaultSeverity: "Fatal",
+	}
+	NeuronNCUncorrectableError = ReasonMeta{
+		template:        "NeuronNCUncorrectableError",
+		defaultSeverity: "Fatal",
+	}
+	NeuronSRAMUncorrectableError = ReasonMeta{
+		template:        "NeuronSRAMUncorrectableError",
+		defaultSeverity: "Fatal",
+	}
 )

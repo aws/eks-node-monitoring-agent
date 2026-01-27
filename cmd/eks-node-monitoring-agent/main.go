@@ -27,6 +27,7 @@ import (
 	// Import monitor packages to trigger auto-registration via init()
 	_ "golang.a2z.com/Eks-node-monitoring-agent/monitors/kernel"
 	_ "golang.a2z.com/Eks-node-monitoring-agent/monitors/networking"
+	_ "golang.a2z.com/Eks-node-monitoring-agent/monitors/neuron"
 	_ "golang.a2z.com/Eks-node-monitoring-agent/monitors/storage"
 	// Import monitors that require explicit registration (can't use init())
 	"golang.a2z.com/Eks-node-monitoring-agent/monitors/runtime"
@@ -133,6 +134,10 @@ func run() error {
 		ReadyReason:  "NetworkingIsReady",
 		ReadyMessage: "Monitoring for the Networking system is active",
 	}
+	conditionConfigs[corev1.NodeConditionType("AcceleratedHardwareReady")] = manager.NodeConditionConfig{
+		ReadyReason:  "NeuronAcceleratedHardwareIsReady",
+		ReadyMessage: "Monitoring for the Neuron AcceleratedHardware system is active",
+	}
 
 	// Initialize node exporter
 	logger.Info("initializing node exporter")
@@ -162,6 +167,8 @@ func run() error {
 			conditionType = "ContainerRuntimeReady"
 		case "networking":
 			conditionType = "NetworkingReady"
+		case "neuron":
+			conditionType = "AcceleratedHardwareReady"
 		default:
 			conditionType = "KernelReady" // Default fallback
 		}
