@@ -1,0 +1,68 @@
+name: "[CI] Create Release"
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'charts/eks-node-monitoring-agent/Chart.yaml'
+      - 'charts/eks-node-monitoring-agent/values.yaml'
+  workflow_dispatch:
+    inputs:
+      release_commit:
+        description: 'Git commit SHA to create release from (leave empty for current HEAD)'
+        required: false
+        default: ''
+permissions:
+  contents: write
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    if: github.repository == 'aws/eks-node-monitoring-agent'
+    steps:
+      - name: "Check commit message"
+        if: github.event_name == 'push'
+        run: |
+          COMMIT_MSG=$(cat <<'EOF'
+          ${{ github.event.head_commit.message }}
+          EOF
+          )
+          if ! echo "${COMMIT_MSG}" | grep -qE '^ci: add [0-9]+\.[0-9]+\.[0-9]+ release'; then
+            echo "Skipping: commit message does not match 'ci: add <version> release' pattern"
+            exit 1
+          fi
+      - name: "Checkout"
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.release_commit || github.sha }}
+      - name: "Get versions"
+        id: versions
+        run: |
+          # Get image tag from values.yaml (e.g., v1.5.0-eksbuild.1)
+          IMAGE_TAG=$(grep -A1 'nodeAgent:' charts/eks-node-monitoring-agent/values.yaml | grep -A10 'image:' | grep 'tag:' | head -1 | awk '{print $2}')
+          DCGM_TAG=$(grep -A1 'dcgmAgent:' charts/eks-node-monitoring-agent/values.yaml | grep -A10 'image:' | grep 'tag:' | head -1 | awk '{print $2}')
+          echo "image_tag=${IMAGE_TAG}" >> $GITHUB_OUTPUT
+          echo "dcgm_tag=${DCGM_TAG}" >> $GITHUB_OUTPUT
+          echo "Node agent image tag: ${IMAGE_TAG}"
+          echo "DCGM agent image tag: ${DCGM_TAG}"
+      - name: "Check if tag exists"
+        id: check_tag
+        run: |
+          if git rev-parse "${{ steps.versions.outputs.image_tag }}" >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+      - name: "Create release"
+        if: steps.check_tag.outputs.exists == 'false'
+        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2.2.1
+        with:
+          tag_name: ${{ steps.versions.outputs.image_tag }}
+          name: ${{ steps.versions.outputs.image_tag }}
+          body: |
+            ## Image Versions
+
+            | Component | Version |
+            |-----------|---------|
+            | eks-node-monitoring-agent | `${{ steps.versions.outputs.image_tag }}` |
+            | dcgm-exporter | `${{ steps.versions.outputs.dcgm_tag }}` |
