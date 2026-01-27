@@ -64,7 +64,7 @@ nodeAgent:
       memory: 30Mi
     limits:
       cpu: 250m
-      memory: 100Mi
+      memory: 200Mi
   # -- Container Security context for the eks-node-monitoring-agent
   securityContext:
     privileged: true
