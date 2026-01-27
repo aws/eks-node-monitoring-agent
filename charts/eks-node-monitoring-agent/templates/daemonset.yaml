@@ -15,6 +15,9 @@ spec:
     metadata:
       labels:
         {{- include "eks-node-monitoring-agent.labels" . | nindent 8 }}
+        {{- with .Values.nodeAgent.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
       {{- with .Values.nodeAgent.affinity }}
       affinity: {{- toYaml . | nindent 8 }}
