@@ -109,6 +109,7 @@ const (
 	Bottlerocket = "bottlerocket"
 	EKSAuto      = "eks-auto"
 	Hybrid       = "hybrid"
+	UbuntuDistro = "ubuntu"
 )
 
 // Accelerated hardware types

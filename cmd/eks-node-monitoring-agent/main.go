@@ -26,6 +26,7 @@ import (
 
 	// Import monitor packages to trigger auto-registration via init()
 	_ "golang.a2z.com/Eks-node-monitoring-agent/monitors/kernel"
+	_ "golang.a2z.com/Eks-node-monitoring-agent/monitors/networking"
 	_ "golang.a2z.com/Eks-node-monitoring-agent/monitors/storage"
 	// Import monitors that require explicit registration (can't use init())
 	"golang.a2z.com/Eks-node-monitoring-agent/monitors/runtime"
@@ -128,6 +129,10 @@ func run() error {
 		ReadyReason:  "ContainerRuntimeIsReady",
 		ReadyMessage: "Monitoring for the ContainerRuntime system is active",
 	}
+	conditionConfigs[corev1.NodeConditionType("NetworkingReady")] = manager.NodeConditionConfig{
+		ReadyReason:  "NetworkingIsReady",
+		ReadyMessage: "Monitoring for the Networking system is active",
+	}
 
 	// Initialize node exporter
 	logger.Info("initializing node exporter")
@@ -155,6 +160,8 @@ func run() error {
 			conditionType = "StorageReady"
 		case "container-runtime":
 			conditionType = "ContainerRuntimeReady"
+		case "networking":
+			conditionType = "NetworkingReady"
 		default:
 			conditionType = "KernelReady" // Default fallback
 		}
