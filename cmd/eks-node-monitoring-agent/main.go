@@ -21,6 +21,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"golang.a2z.com/Eks-node-monitoring-agent/api/v1alpha1"
+	"golang.a2z.com/Eks-node-monitoring-agent/pkg/conditions"
+	"golang.a2z.com/Eks-node-monitoring-agent/pkg/config"
 	"golang.a2z.com/Eks-node-monitoring-agent/pkg/manager"
 	"golang.a2z.com/Eks-node-monitoring-agent/pkg/monitor/registry"
 
@@ -119,29 +121,38 @@ func run() error {
 	// Build condition configs for node exporter
 	// Map each monitor to a Kubernetes node condition type
 	conditionConfigs := make(map[corev1.NodeConditionType]manager.NodeConditionConfig)
-	conditionConfigs[corev1.NodeConditionType("KernelReady")] = manager.NodeConditionConfig{
+	conditionConfigs[conditions.KernelReady] = manager.NodeConditionConfig{
 		ReadyReason:  "KernelIsReady",
 		ReadyMessage: "Monitoring for the Kernel system is active",
 	}
-	conditionConfigs[corev1.NodeConditionType("StorageReady")] = manager.NodeConditionConfig{
+	conditionConfigs[conditions.StorageReady] = manager.NodeConditionConfig{
 		ReadyReason:  "DiskIsReady",
 		ReadyMessage: "Monitoring for the Disk system is active",
 	}
-	conditionConfigs[corev1.NodeConditionType("ContainerRuntimeReady")] = manager.NodeConditionConfig{
+	conditionConfigs[conditions.ContainerRuntimeReady] = manager.NodeConditionConfig{
 		ReadyReason:  "ContainerRuntimeIsReady",
 		ReadyMessage: "Monitoring for the ContainerRuntime system is active",
 	}
-	conditionConfigs[corev1.NodeConditionType("NetworkingReady")] = manager.NodeConditionConfig{
+	conditionConfigs[conditions.NetworkingReady] = manager.NodeConditionConfig{
 		ReadyReason:  "NetworkingIsReady",
 		ReadyMessage: "Monitoring for the Networking system is active",
 	}
-	conditionConfigs[corev1.NodeConditionType("AcceleratedHardwareReady")] = manager.NodeConditionConfig{
-		ReadyReason:  "NeuronAcceleratedHardwareIsReady",
-		ReadyMessage: "Monitoring for the Neuron AcceleratedHardware system is active",
-	}
-	conditionConfigs[corev1.NodeConditionType("NvidiaGPUReady")] = manager.NodeConditionConfig{
-		ReadyReason:  "NvidiaGPUIsReady",
-		ReadyMessage: "Monitoring for the Nvidia GPU system is active",
+	
+	// Add config for accelerated hardware based on runtime detection
+	// Note: Both Neuron and Nvidia monitors are always registered via init(),
+	// but we only configure the condition for the hardware that's actually present
+	runtimeContext := config.GetRuntimeContext()
+	switch runtimeContext.AcceleratedHardware() {
+	case config.AcceleratedHardwareNvidia:
+		conditionConfigs[conditions.AcceleratedHardwareReady] = manager.NodeConditionConfig{
+			ReadyReason:  "NvidiaGPUIsReady",
+			ReadyMessage: "Monitoring for the Nvidia GPU system is active",
+		}
+	case config.AcceleratedHardwareNeuron:
+		conditionConfigs[conditions.AcceleratedHardwareReady] = manager.NodeConditionConfig{
+			ReadyReason:  "NeuronAcceleratedHardwareIsReady",
+			ReadyMessage: "Monitoring for the Neuron AcceleratedHardware system is active",
+		}
 	}
 
 	// Initialize node exporter
@@ -162,22 +173,22 @@ func run() error {
 	for _, mon := range allMonitors {
 		monCtx := log.IntoContext(ctx, logger.WithValues("monitor", mon.Name()))
 		// Map monitor name to condition type
-		var conditionType string
+		var conditionType corev1.NodeConditionType
 		switch mon.Name() {
 		case "kernel":
-			conditionType = "KernelReady"
+			conditionType = conditions.KernelReady
 		case "storage":
-			conditionType = "StorageReady"
+			conditionType = conditions.StorageReady
 		case "container-runtime":
-			conditionType = "ContainerRuntimeReady"
+			conditionType = conditions.ContainerRuntimeReady
 		case "networking":
-			conditionType = "NetworkingReady"
+			conditionType = conditions.NetworkingReady
 		case "neuron":
-			conditionType = "AcceleratedHardwareReady"
+			conditionType = conditions.AcceleratedHardwareReady
 		case "nvidia":
-			conditionType = "NvidiaGPUReady"
+			conditionType = conditions.AcceleratedHardwareReady
 		default:
-			conditionType = "KernelReady" // Default fallback
+			conditionType = conditions.KernelReady // Default fallback
 		}
 		if err := monitorMgr.Register(monCtx, mon, conditionType); err != nil {
 			logger.Error(err, "failed to register monitor", "name", mon.Name())

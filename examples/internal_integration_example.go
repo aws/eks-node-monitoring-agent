@@ -7,8 +7,11 @@ package examples
 import (
 	"context"
 
+	corev1 "k8s.io/api/core/v1"
+
 	"golang.a2z.com/Eks-node-monitoring-agent/api"
 	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
+	"golang.a2z.com/Eks-node-monitoring-agent/pkg/conditions"
 	"golang.a2z.com/Eks-node-monitoring-agent/pkg/monitor/framework"
 	"golang.a2z.com/Eks-node-monitoring-agent/pkg/monitor/registry"
 )
@@ -123,7 +126,7 @@ func InternalPackageIntegrationComplete(ctx context.Context) error {
 
 // ConditionMapping maps monitor names to their condition configurations
 type ConditionMapping struct {
-	ConditionType string
+	ConditionType corev1.NodeConditionType
 	ReadyReason   string
 	ReadyMessage  string
 }
@@ -133,32 +136,32 @@ type ConditionMapping struct {
 func getConditionMappings() map[string]ConditionMapping {
 	return map[string]ConditionMapping{
 		"runtime": {
-			ConditionType: "ContainerRuntimeReady",
+			ConditionType: conditions.ContainerRuntimeReady,
 			ReadyReason:   "ContainerRuntimeIsReady",
 			ReadyMessage:  "Monitoring for the ContainerRuntime system is active",
 		},
 		"storage": {
-			ConditionType: "StorageReady",
+			ConditionType: conditions.StorageReady,
 			ReadyReason:   "DiskIsReady",
 			ReadyMessage:  "Monitoring for the Disk system is active",
 		},
 		"networking": {
-			ConditionType: "NetworkingReady",
+			ConditionType: conditions.NetworkingReady,
 			ReadyReason:   "NetworkingIsReady",
 			ReadyMessage:  "Monitoring for the Networking system is active",
 		},
 		"kernel": {
-			ConditionType: "KernelReady",
+			ConditionType: conditions.KernelReady,
 			ReadyReason:   "KernelIsReady",
 			ReadyMessage:  "Monitoring for the Kernel system is active",
 		},
 		"nvidia": {
-			ConditionType: "AcceleratedHardwareReady",
+			ConditionType: conditions.AcceleratedHardwareReady,
 			ReadyReason:   "NvidiaAcceleratedHardwareIsReady",
 			ReadyMessage:  "Monitoring for the Nvidia AcceleratedHardware system is active",
 		},
 		"neuron": {
-			ConditionType: "AcceleratedHardwareReady",
+			ConditionType: conditions.AcceleratedHardwareReady,
 			ReadyReason:   "NeuronAcceleratedHardwareIsReady",
 			ReadyMessage:  "Monitoring for the Neuron AcceleratedHardware system is active",
 		},

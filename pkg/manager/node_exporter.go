@@ -94,39 +94,38 @@ type nodeExporter struct {
 }
 
 // Info records an event for the specified condition.
-func (e *nodeExporter) Info(ctx context.Context, c monitor.Condition, conditionType string) error {
-	e.recorder.Event(e.nodeRef, corev1.EventTypeNormal, conditionType, fmt.Sprintf("%s: %s", c.Reason, c.Message))
+func (e *nodeExporter) Info(ctx context.Context, c monitor.Condition, conditionType corev1.NodeConditionType) error {
+	e.recorder.Event(e.nodeRef, corev1.EventTypeNormal, string(conditionType), fmt.Sprintf("%s: %s", c.Reason, c.Message))
 	return nil
 }
 
 // Warning records an event for the specified condition.
-func (e *nodeExporter) Warning(ctx context.Context, c monitor.Condition, conditionType string) error {
-	e.recorder.Event(e.nodeRef, corev1.EventTypeWarning, conditionType, fmt.Sprintf("%s: %s", c.Reason, c.Message))
+func (e *nodeExporter) Warning(ctx context.Context, c monitor.Condition, conditionType corev1.NodeConditionType) error {
+	e.recorder.Event(e.nodeRef, corev1.EventTypeWarning, string(conditionType), fmt.Sprintf("%s: %s", c.Reason, c.Message))
 	return nil
 }
 
 // Fatal updates the local state for the specified managed condition.
 // The condition will be reported in the Node.Status.Conditions periodically.
-func (e *nodeExporter) Fatal(ctx context.Context, monitorCondition monitor.Condition, conditionType string) error {
+func (e *nodeExporter) Fatal(ctx context.Context, monitorCondition monitor.Condition, conditionType corev1.NodeConditionType) error {
 	e.managedConditionsLock.Lock()
 	defer e.managedConditionsLock.Unlock()
 	now := metav1.Now()
-	nodeConditionType := corev1.NodeConditionType(conditionType)
 	newCondition := corev1.NodeCondition{
-		Type:               corev1.NodeConditionType(conditionType),
+		Type:               conditionType,
 		Reason:             monitorCondition.Reason,
 		Message:            monitorCondition.Message,
 		Status:             corev1.ConditionFalse,
 		LastTransitionTime: now,
 		LastHeartbeatTime:  now,
 	}
-	if oldCondition, ok := e.managedConditions[nodeConditionType]; ok {
+	if oldCondition, ok := e.managedConditions[conditionType]; ok {
 		// if the reason AND message have not changed, use the old transition time
 		if oldCondition.Reason == newCondition.Reason && oldCondition.Message == newCondition.Message {
 			newCondition.LastTransitionTime = oldCondition.LastTransitionTime
 		}
 	}
-	e.managedConditions[nodeConditionType] = newCondition
+	e.managedConditions[conditionType] = newCondition
 	e.managedConditionsDirty = true
 	return nil
 }

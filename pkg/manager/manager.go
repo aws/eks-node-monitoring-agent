@@ -6,17 +6,19 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	corev1 "k8s.io/api/core/v1"
+	"sigs.k8s.io/controller-runtime/pkg/log"
+
 	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
 	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor/resource"
 	"golang.a2z.com/Eks-node-monitoring-agent/pkg/observer"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 // MonitorManager manages the lifecycle of monitors and routes their notifications
 type MonitorManager struct {
 	nodeName          string
 	monitors          map[string]monitor.Monitor
-	conditionTypeMap  map[string]string
+	conditionTypeMap  map[string]corev1.NodeConditionType
 	conditionCountMap map[string]int64
 	observers         map[string]observer.Observer
 	notifyChan        chan notification
@@ -33,7 +35,7 @@ func NewMonitorManager(nodeName string, exporter Exporter) *MonitorManager {
 	return &MonitorManager{
 		nodeName:          nodeName,
 		monitors:          make(map[string]monitor.Monitor),
-		conditionTypeMap:  make(map[string]string),
+		conditionTypeMap:  make(map[string]corev1.NodeConditionType),
 		conditionCountMap: make(map[string]int64),
 		observers:         make(map[string]observer.Observer),
 		notifyChan:        make(chan notification, 100),
@@ -42,7 +44,7 @@ func NewMonitorManager(nodeName string, exporter Exporter) *MonitorManager {
 }
 
 // Register registers a monitor with the manager
-func (m *MonitorManager) Register(ctx context.Context, mon monitor.Monitor, conditionType string) error {
+func (m *MonitorManager) Register(ctx context.Context, mon monitor.Monitor, conditionType corev1.NodeConditionType) error {
 	m.monitors[mon.Name()] = mon
 	m.conditionTypeMap[mon.Name()] = conditionType
 	return mon.Register(ctx, makeManagerWrapper(m, mon))
@@ -120,7 +122,7 @@ func (m *MonitorManager) exportCondition(ctx context.Context, monitorName string
 }
 
 // SendCondition sends a condition to the exporter based on severity
-func (m *MonitorManager) SendCondition(ctx context.Context, condition monitor.Condition, conditionType string) error {
+func (m *MonitorManager) SendCondition(ctx context.Context, condition monitor.Condition, conditionType corev1.NodeConditionType) error {
 	log.FromContext(ctx).Info("sending condition to exporter", "condition", condition, "conditionType", conditionType)
 	switch condition.Severity {
 	case monitor.SeverityInfo:
