@@ -1,0 +1,99 @@
+name: '[CI]'
+run-name: "${{ inputs.run_name }}"
+on:
+  workflow_call:
+    inputs:
+      git_sha:
+        required: true
+        type: string
+      run_name:
+        required: true
+        type: string
+      resource_id:
+        required: true
+        type: string
+      k8s_versions:
+        description: 'Kubernetes Versions (comma-separated, e.g., 1.30,1.31)'
+        required: false
+        type: string
+      arch:
+        description: 'Architecture (amd64 or arm64)'
+        default: "amd64"
+        required: false
+        type: string
+      instance_type:
+        description: 'EC2 Instance Type'
+        default: "t3.medium"
+        required: false
+        type: string
+      test_filter:
+        description: 'Test filter pattern (e.g., Test/DaemonSetReady)'
+        required: false
+        type: string
+      image:
+        description: 'NMA container image to deploy'
+        required: false
+        type: string
+    outputs:
+      ci_step_name_prefix:
+        description: "Prefix of job steps containing CI activities"
+        value: ${{ jobs.setup.outputs.ci_step_name_prefix }}
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      kubernetes_versions: ${{ steps.variables.outputs.kubernetes_versions }}
+      ci_step_name_prefix: ${{ steps.variables.outputs.ci_step_name_prefix }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+    - uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-region: ${{ secrets.AWS_REGION }}
+        role-to-assume: ${{ secrets.AWS_ROLE_ARN_CI }}
+    - id: variables
+      run: |
+        echo 'ci_step_name_prefix=CI:' >> $GITHUB_OUTPUT
+        if [ -z "${{ inputs.k8s_versions }}" ]; then
+          echo "kubernetes_versions=$(aws eks describe-cluster-versions | jq -c '.clusterVersions | map(.clusterVersion)')" >> $GITHUB_OUTPUT
+        else
+          echo "kubernetes_versions=$(jq -Rn --arg input '${{ inputs.k8s_versions }}' '($input | split(","))' | jq -c .)" >> $GITHUB_OUTPUT
+        fi
+
+  test:
+    runs-on: ubuntu-latest
+    name: ${{ matrix.k8s_version }}
+    needs:
+      - setup
+    permissions:
+      id-token: write
+      contents: read
+    strategy:
+      # don't bail out of all sub-tasks if one fails
+      fail-fast: false
+      matrix:
+        k8s_version: ${{ fromJson(needs.setup.outputs.kubernetes_versions) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.git_sha }}
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_CI }}
+          # 1 hour
+          role-duration-seconds: 3600
+      - name: "${{ needs.setup.outputs.ci_step_name_prefix }} Test"
+        id: test
+        uses: ./.github/actions/ci/kubetest2
+        with:
+          k8s_version: ${{ matrix.k8s_version }}
+          arch: ${{ inputs.arch }}
+          instance_type: ${{ inputs.instance_type }}
+          resource_id: ${{ inputs.resource_id }}
+          aws_region: ${{ secrets.AWS_REGION }}
+          log_bucket: ${{ secrets.CI_LOG_BUCKET }}
+          test_filter: ${{ inputs.test_filter }}
+          image: ${{ inputs.image }}
