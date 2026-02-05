@@ -1,0 +1,173 @@
+name: '[CI] Integration test / kubetest2'
+inputs:
+  k8s_version:
+    required: true
+    type: string
+  arch:
+    required: true
+    type: string
+  instance_type:
+    required: true
+    type: string
+  resource_id:
+    required: true
+    type: string
+  aws_region:
+    required: true
+    type: string
+  log_bucket:
+    required: true
+    type: string
+  image:
+    description: 'NMA container image to deploy (default: public ECR image)'
+    required: false
+    default: '602401143452.dkr.ecr.us-west-2.amazonaws.com/eks/eks-node-monitoring-agent:v1.5.1-eksbuild.1'
+  test_filter:
+    description: 'Test filter pattern (e.g., Test/DaemonSetReady)'
+    required: false
+    default: ''
+outputs:
+  test_passed:
+    description: 'Number of tests passed'
+    value: ${{ steps.e2e-test.outputs.passed }}
+  test_failed:
+    description: 'Number of tests failed'
+    value: ${{ steps.e2e-test.outputs.failed }}
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.22'
+        cache-dependency-path: e2e/go.sum
+
+    - id: resolve-ami
+      shell: bash
+      run: |
+        # Determine AMI type based on instance type
+        AMI_TYPE="standard"
+        if [[ "${{ inputs.instance_type }}" =~ ^(g4dn|g5|g5g|p3|p4d|p5)\. ]]; then
+          AMI_TYPE="nvidia"
+        fi
+        echo "ami_type=${AMI_TYPE}" >> $GITHUB_OUTPUT
+        
+        # Map arch input to SSM path format
+        SSM_ARCH="x86_64"
+        if [ "${{ inputs.arch }}" = "arm64" ]; then
+          SSM_ARCH="arm64"
+        fi
+        echo "ssm_arch=${SSM_ARCH}" >> $GITHUB_OUTPUT
+        
+        # Resolve AMI from SSM Parameter Store
+        AMI_ID=$(aws ssm get-parameter \
+          --name /aws/service/eks/optimized-ami/${{ inputs.k8s_version }}/amazon-linux-2023/${SSM_ARCH}/${AMI_TYPE}/recommended/image_id \
+          --region ${{ inputs.aws_region }} \
+          --query "Parameter.Value" \
+          --output text)
+        echo "ami_id=${AMI_ID}" >> $GITHUB_OUTPUT
+
+    - name: Generate e2e manifests
+      shell: bash
+      run: make update-e2e-manifests
+
+    - name: Build e2e test binary
+      shell: bash
+      run: make build-e2e
+
+    - name: Prepare e2e test script
+      id: prepare-test
+      shell: bash
+      run: |
+        # Create a test script that kubetest2 will execute
+        cat > /tmp/run-e2e-tests.sh << 'SCRIPT'
+        #!/bin/bash
+        
+        # Arguments passed by kubetest2
+        IMAGE="${1}"
+        TEST_FILTER="${2}"
+        E2E_BINARY="${3}"
+        OUTPUT_FILE="${4}"
+        
+        echo "Running e2e tests with image: ${IMAGE}"
+        echo "Test filter: ${TEST_FILTER:-<none>}"
+        echo "Output file: ${OUTPUT_FILE}"
+        
+        # Build test command
+        TEST_CMD="${E2E_BINARY} --test.v --test.timeout 30m --install=true --image=${IMAGE}"
+        
+        # Add filter if provided
+        if [ -n "${TEST_FILTER}" ]; then
+          TEST_CMD="${TEST_CMD} --test.run '${TEST_FILTER}'"
+        fi
+        
+        echo "Executing: ${TEST_CMD}"
+        # Run tests and capture output, preserving exit code
+        eval ${TEST_CMD} 2>&1 | tee "${OUTPUT_FILE}"
+        EXIT_CODE=${PIPESTATUS[0]}
+        
+        echo "Test exit code: ${EXIT_CODE}"
+        exit ${EXIT_CODE}
+        SCRIPT
+        chmod +x /tmp/run-e2e-tests.sh
+        
+        # Store absolute path to e2e binary and output file
+        echo "e2e_binary=$(pwd)/bin/e2e.test" >> $GITHUB_OUTPUT
+        echo "test_output=$(pwd)/test-output.txt" >> $GITHUB_OUTPUT
+
+    - id: kubetest2
+      shell: bash
+      run: |
+        export PATH=${PATH}:$(go env GOPATH)/bin
+        GOPROXY=direct
+        go install sigs.k8s.io/kubetest2/...@latest
+        go install github.com/aws/aws-k8s-tester/...@HEAD
+
+        set -o xtrace
+        
+        # Use default image if not provided
+        IMAGE="${{ inputs.image }}"
+        if [ -z "$IMAGE" ]; then
+          IMAGE="602401143452.dkr.ecr.us-west-2.amazonaws.com/eks/eks-node-monitoring-agent:v1.5.1-eksbuild.1"
+        fi
+
+        # Run kubetest2 with --up --down and --test=exec to run our e2e tests
+        # The cluster is created, tests run, then cluster is torn down automatically
+        kubetest2 eksapi \
+          --up \
+          --down \
+          --log-bucket=${{ inputs.log_bucket }} \
+          --kubernetes-version=${{ inputs.k8s_version }} \
+          --unmanaged-nodes \
+          --ami=${{ steps.resolve-ami.outputs.ami_id }} \
+          --region=${{ inputs.aws_region }} \
+          --user-data-format=nodeadm \
+          --test=exec \
+          -- \
+          /tmp/run-e2e-tests.sh \
+          "$IMAGE" \
+          "${{ inputs.test_filter }}" \
+          "${{ steps.prepare-test.outputs.e2e_binary }}" \
+          "${{ steps.prepare-test.outputs.test_output }}"
+
+    - name: Parse test results
+      id: e2e-test
+      if: always()
+      shell: bash
+      run: |
+        # Simple pass/fail based on kubetest2 outcome
+        if [ "${{ steps.kubetest2.outcome }}" = "success" ]; then
+          echo "passed=1" >> "$GITHUB_OUTPUT"
+          echo "failed=0" >> "$GITHUB_OUTPUT"
+        else
+          echo "passed=0" >> "$GITHUB_OUTPUT"
+          echo "failed=1" >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Upload test results artifact
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: test-results-${{ inputs.k8s_version }}
+        path: ${{ steps.prepare-test.outputs.test_output }}
+        if-no-files-found: ignore

@@ -1,0 +1,12 @@
+name: "Bot"
+description: "🤖 beep boop"
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/github-script@v7
+      with:
+        script: |
+          const crypto = require('crypto');
+          const uuid = crypto.randomUUID();
+          const bot = require('./.github/actions/bot/index.js');
+          await bot(core, github, context, uuid);
