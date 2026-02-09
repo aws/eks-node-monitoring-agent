@@ -22,17 +22,14 @@ inputs:
     description: 'NMA container image to deploy (default: extracted from charts/eks-node-monitoring-agent/values.yaml)'
     required: false
     default: ''
+  ami_type:
+    description: 'AMI type (standard or nvidia)'
+    required: false
+    default: 'standard'
   test_filter:
     description: 'Test filter pattern (e.g., Test/DaemonSetReady)'
     required: false
     default: ''
-outputs:
-  test_passed:
-    description: 'Number of tests passed'
-    value: ${{ steps.e2e-test.outputs.passed }}
-  test_failed:
-    description: 'Number of tests failed'
-    value: ${{ steps.e2e-test.outputs.failed }}
 runs:
   using: "composite"
   steps:
@@ -45,13 +42,6 @@ runs:
     - id: resolve-ami
       shell: bash
       run: |
-        # Determine AMI type based on instance type
-        AMI_TYPE="standard"
-        if [[ "${{ inputs.instance_type }}" =~ ^(g4dn|g5|g5g|p3|p4d|p5)\. ]]; then
-          AMI_TYPE="nvidia"
-        fi
-        echo "ami_type=${AMI_TYPE}" >> $GITHUB_OUTPUT
-        
         # Map arch input to SSM path format
         SSM_ARCH="x86_64"
         if [ "${{ inputs.arch }}" = "arm64" ]; then
@@ -61,7 +51,7 @@ runs:
         
         # Resolve AMI from SSM Parameter Store
         AMI_ID=$(aws ssm get-parameter \
-          --name /aws/service/eks/optimized-ami/${{ inputs.k8s_version }}/amazon-linux-2023/${SSM_ARCH}/${AMI_TYPE}/recommended/image_id \
+          --name /aws/service/eks/optimized-ami/${{ inputs.k8s_version }}/amazon-linux-2023/${SSM_ARCH}/${{ inputs.ami_type }}/recommended/image_id \
           --region ${{ inputs.aws_region }} \
           --query "Parameter.Value" \
           --output text)
@@ -87,11 +77,9 @@ runs:
         IMAGE="${1}"
         TEST_FILTER="${2}"
         E2E_BINARY="${3}"
-        OUTPUT_FILE="${4}"
         
         echo "Running e2e tests with image: ${IMAGE}"
         echo "Test filter: ${TEST_FILTER:-<none>}"
-        echo "Output file: ${OUTPUT_FILE}"
         
         # Build test command
         TEST_CMD="${E2E_BINARY} --test.v --test.timeout 30m --install=true --image=${IMAGE}"
@@ -102,18 +90,12 @@ runs:
         fi
         
         echo "Executing: ${TEST_CMD}"
-        # Run tests and capture output, preserving exit code
-        eval ${TEST_CMD} 2>&1 | tee "${OUTPUT_FILE}"
-        EXIT_CODE=${PIPESTATUS[0]}
-        
-        echo "Test exit code: ${EXIT_CODE}"
-        exit ${EXIT_CODE}
+        eval ${TEST_CMD}
         SCRIPT
         chmod +x /tmp/run-e2e-tests.sh
         
-        # Store absolute path to e2e binary and output file
+        # Store absolute path to e2e binary
         echo "e2e_binary=$(pwd)/bin/e2e.test" >> $GITHUB_OUTPUT
-        echo "test_output=$(pwd)/test-output.txt" >> $GITHUB_OUTPUT
 
     - id: kubetest2
       shell: bash
@@ -154,27 +136,4 @@ runs:
           /tmp/run-e2e-tests.sh \
           "$IMAGE" \
           "${{ inputs.test_filter }}" \
-          "${{ steps.prepare-test.outputs.e2e_binary }}" \
-          "${{ steps.prepare-test.outputs.test_output }}"
-
-    - name: Parse test results
-      id: e2e-test
-      if: always()
-      shell: bash
-      run: |
-        # Simple pass/fail based on kubetest2 outcome
-        if [ "${{ steps.kubetest2.outcome }}" = "success" ]; then
-          echo "passed=1" >> "$GITHUB_OUTPUT"
-          echo "failed=0" >> "$GITHUB_OUTPUT"
-        else
-          echo "passed=0" >> "$GITHUB_OUTPUT"
-          echo "failed=1" >> "$GITHUB_OUTPUT"
-        fi
-
-    - name: Upload test results artifact
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: test-results-${{ inputs.k8s_version }}
-        path: ${{ steps.prepare-test.outputs.test_output }}
-        if-no-files-found: ignore
+          "${{ steps.prepare-test.outputs.e2e_binary }}"

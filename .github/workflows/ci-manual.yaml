@@ -40,6 +40,11 @@ on:
         description: 'NMA container image to deploy'
         required: false
         type: string
+      ami_type:
+        description: 'AMI type (standard or nvidia or neuron)'
+        default: "standard"
+        required: false
+        type: string
 
 permissions:
   pull-requests: write
@@ -89,6 +94,7 @@ jobs:
       run_name: "ci(#${{ inputs.pr_number }}@${{ needs.setup.outputs.git_sha_short }}): ${{ inputs.uuid }}"
       test_filter: ${{ inputs.test_filter }}
       image: ${{ inputs.image }}
+      ami_type: ${{ inputs.ami_type }}
 
   notify-outcome:
     if: ${{ always() }}

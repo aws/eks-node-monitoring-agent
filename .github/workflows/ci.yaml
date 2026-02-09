@@ -34,6 +34,11 @@ on:
         description: 'NMA container image to deploy'
         required: false
         type: string
+      ami_type:
+        description: 'AMI type (standard or nvidia or neuron)'
+        default: "standard"
+        required: false
+        type: string
     outputs:
       ci_step_name_prefix:
         description: "Prefix of job steps containing CI activities"
@@ -97,3 +102,4 @@ jobs:
           log_bucket: ${{ secrets.CI_LOG_BUCKET }}
           test_filter: ${{ inputs.test_filter }}
           image: ${{ inputs.image }}
+          ami_type: ${{ inputs.ami_type }}
