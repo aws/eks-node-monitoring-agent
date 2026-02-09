@@ -146,12 +146,26 @@ class CICommand {
         this.comment_created_at = payload.comment.created_at;
         this.uuid = uuid;
         this.goal = "test";
-        // "test" goal is the default when no goal is specified
-        // "cancel" goal cancels the most recent CI run
-        if (args != null && args !== "") {
-            this.goal = args;
-        }
         this.goal_args = {};
+        
+        // Parse args - may contain goal and/or inline +workflow: arguments
+        if (args != null && args !== "") {
+            // Split on +workflow: to extract inline named arguments
+            const parts = args.split(/\s+(?=\+)/);
+            for (const part of parts) {
+                const trimmed = part.trim();
+                if (trimmed.startsWith("+")) {
+                    // This is a named argument like "+workflow:k8s_versions 1.34"
+                    const namedArg = parseNamedArguments(trimmed);
+                    if (namedArg) {
+                        this.goal_args[namedArg.name] = namedArg.args;
+                    }
+                } else if (trimmed !== "") {
+                    // This is the goal (e.g., "test" or "cancel")
+                    this.goal = trimmed;
+                }
+            }
+        }
     }
 
     addNamedArguments(name, args) {
