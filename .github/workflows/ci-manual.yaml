@@ -1,0 +1,185 @@
+name: '[CI] Manual'
+run-name: "#${{ inputs.pr_number }} - ${{ inputs.uuid }}"
+on:
+  workflow_dispatch:
+    inputs:
+      requester:
+        required: true
+        type: string
+      comment_url:
+        required: true
+        type: string
+      uuid:
+        required: true
+        type: string
+      pr_number:
+        required: true
+        type: string
+      git_sha:
+        required: true
+        type: string
+      k8s_versions:
+        description: 'Kubernetes Versions (comma-separated, e.g., 1.30,1.31)'
+        required: false
+        type: string
+      arch:
+        description: 'Architecture (amd64 or arm64)'
+        default: "amd64"
+        required: false
+        type: string
+      instance_type:
+        description: 'EC2 Instance Type'
+        default: "t3.medium"
+        required: false
+        type: string
+      test_filter:
+        description: 'Test filter pattern (e.g., Test/DaemonSetReady)'
+        required: false
+        type: string
+      image:
+        description: 'NMA container image to deploy'
+        required: false
+        type: string
+      ami_type:
+        description: 'AMI type (standard or nvidia or neuron)'
+        default: "standard"
+        required: false
+        type: string
+
+permissions:
+  pull-requests: write
+  issues: write
+  contents: read
+  id-token: write
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      git_sha_short: ${{ steps.variables.outputs.git_sha_short }}
+      workflow_run_url: ${{ steps.variables.outputs.workflow_run_url }}
+    steps:
+    - id: variables
+      run: |
+        echo "git_sha_short=$(echo ${{ inputs.git_sha }} | rev | cut -c-7 | rev)" >> $GITHUB_OUTPUT
+        echo "workflow_run_url=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_OUTPUT
+
+  notify-start:
+    runs-on: ubuntu-latest
+    needs:
+      - setup
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ inputs.pr_number }},
+              body: `@${{ inputs.requester }} roger [that](${{ inputs.comment_url }})! I've dispatched a [workflow](${{ needs.setup.outputs.workflow_run_url }}). 👍`
+            });
+
+  ci:
+    uses: ./.github/workflows/ci.yaml
+    needs:
+      - setup
+      - notify-start
+    secrets: inherit
+    with:
+      k8s_versions: ${{ inputs.k8s_versions }}
+      arch: ${{ inputs.arch }}
+      instance_type: ${{ inputs.instance_type }}
+      git_sha: ${{ inputs.git_sha }}
+      resource_id: "ci-${{ inputs.pr_number }}-${{ needs.setup.outputs.git_sha_short }}-${{ inputs.uuid }}"
+      run_name: "ci(#${{ inputs.pr_number }}@${{ needs.setup.outputs.git_sha_short }}): ${{ inputs.uuid }}"
+      test_filter: ${{ inputs.test_filter }}
+      image: ${{ inputs.image }}
+      ami_type: ${{ inputs.ami_type }}
+
+  notify-outcome:
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    needs:
+      - setup
+      - ci
+    steps:
+      - name: Post result comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data } = await github.rest.actions.listJobsForWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId
+            });
+            
+            const conclusionEmojis = {
+              "success": "✅",
+              "skipped": "⏭️",
+              "failure": "❌",
+              "cancelled": "🚮"
+            };
+            
+            // Config from inputs
+            const arch = "${{ inputs.arch }}" || "amd64";
+            const instanceType = "${{ inputs.instance_type }}" || "t3.medium";
+            const testFilter = "${{ inputs.test_filter }}";
+            
+            // Collect results by K8s version
+            const resultsByVersion = new Map();
+            
+            for (const job of data.jobs) {
+              // Look for jobs named "ci / k8sVersion"
+              if (/^ci \/ \d+\.\d+/.test(job.name)) {
+                const k8sVersion = job.name.substring("ci /".length).trim();
+                const jobConclusion = job.conclusion || "running";
+                const jobUrl = job.html_url;
+                
+                resultsByVersion.set(k8sVersion, {
+                  conclusion: jobConclusion,
+                  url: jobUrl
+                });
+              }
+            }
+            
+            let commentBody = `@${{ inputs.requester }} the [workflow](${{ needs.setup.outputs.workflow_run_url }}) that you [requested](${{ inputs.comment_url }}) has completed.\n\n`;
+            
+            if (resultsByVersion.size > 0) {
+              // Build markdown table
+              commentBody += `| K8s Version | Arch | Instance Type | Result | Details |\n`;
+              commentBody += `|-------------|------|---------------|--------|--------|\n`;
+              
+              const sortedVersions = [...resultsByVersion.keys()].sort();
+              for (const version of sortedVersions) {
+                const result = resultsByVersion.get(version);
+                const emoji = conclusionEmojis[result.conclusion] || "❓";
+                commentBody += `| ${version} | ${arch} | ${instanceType} | ${result.conclusion} ${emoji} | [logs](${result.url}) |\n`;
+              }
+              
+              // Add test filter info if provided
+              if (testFilter) {
+                commentBody += `\n**Test Filter:** \`${testFilter}\`\n`;
+              }
+              
+              // Add summary
+              const passed = [...resultsByVersion.values()].filter(r => r.conclusion === "success").length;
+              const failed = [...resultsByVersion.values()].filter(r => r.conclusion === "failure").length;
+              const total = resultsByVersion.size;
+              
+              if (failed > 0) {
+                commentBody += `\n⚠️ **${failed}/${total}** version(s) failed`;
+              } else {
+                commentBody += `\n🎉 **${passed}/${total}** version(s) passed`;
+              }
+            } else {
+              const overallConclusion = "${{ needs.ci.result }}";
+              const emoji = conclusionEmojis[overallConclusion] || "❓";
+              commentBody += `Result: ${overallConclusion} ${emoji}`;
+            }
+            
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: ${{ inputs.pr_number }},
+              body: commentBody
+            });
