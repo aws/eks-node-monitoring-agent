@@ -23,6 +23,7 @@ import (
 	"golang.a2z.com/Eks-node-monitoring-agent/api/v1alpha1"
 	"golang.a2z.com/Eks-node-monitoring-agent/pkg/conditions"
 	"golang.a2z.com/Eks-node-monitoring-agent/pkg/config"
+	"golang.a2z.com/Eks-node-monitoring-agent/pkg/controllers"
 	"golang.a2z.com/Eks-node-monitoring-agent/pkg/manager"
 	"golang.a2z.com/Eks-node-monitoring-agent/pkg/monitor/registry"
 
@@ -137,7 +138,7 @@ func run() error {
 		ReadyReason:  "NetworkingIsReady",
 		ReadyMessage: "Monitoring for the Networking system is active",
 	}
-	
+
 	// Add config for accelerated hardware based on runtime detection
 	// Note: Both Neuron and Nvidia monitors are always registered via init(),
 	// but we only configure the condition for the hardware that's actually present
@@ -200,6 +201,14 @@ func run() error {
 	// Add monitoring manager as a runnable to the controller manager
 	if err := mgr.Add(monitorMgr); err != nil {
 		logger.Error(err, "failed to add monitoring manager to controller")
+		return err
+	}
+
+	// Initialize and register NodeDiagnostic controller for log collection
+	logger.Info("initializing node diagnostic controller")
+	diagnosticController := controllers.NewNodeDiagnosticController(kubeClient, hostname, runtimeContext)
+	if err := diagnosticController.Register(ctx, mgr); err != nil {
+		logger.Error(err, "failed to register diagnostic controller")
 		return err
 	}
 
