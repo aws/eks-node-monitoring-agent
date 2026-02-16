@@ -94,12 +94,14 @@ help: ## Show this help message
 
 .PHONY: build
 build: generate fmt vet ## Build Go code
-	go build ./...
+	go build -o bin/eks-node-monitoring-agent ./cmd/eks-node-monitoring-agent
 
 .PHONY: test
-test: generate fmt vet ## Run tests
+test: generate fmt vet covignore ## Run tests
 	@echo "Running Go tests..."
-	go test ./... -cover -covermode=atomic
+	@# Only test packages that contain test files to avoid 'go: no such tool covdata'
+	@# errors from coverage instrumentation on packages without tests.
+	go test $$(go list ./... | while read pkg; do dir=$$(go list -f '{{.Dir}}' "$$pkg"); if ls "$$dir"/*_test.go >/dev/null 2>&1; then echo "$$pkg"; fi; done) -cover -covermode=atomic
 	@echo "Running Helm chart validation..."
 	@if command -v helm >/dev/null 2>&1; then \
 		$(MAKE) helm-lint; \
@@ -130,6 +132,10 @@ fmt: ## Format Go code
 .PHONY: vet
 vet: ## Run go vet
 	go vet ./...
+
+.PHONY: covignore
+covignore: ## Regenerate .covignore from source annotations
+	hack/gen-covignore.sh > .covignore
 
 .PHONY: clean
 clean: ## Clean build artifacts

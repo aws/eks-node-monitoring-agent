@@ -136,12 +136,12 @@ func (e *nodeExporter) Run(ctx context.Context) {
 	defer heartbeatTicker.Stop()
 	reportTicker := time.NewTicker(reportInterval)
 	defer reportTicker.Stop()
-	e.run(ctx, heartbeatTicker.C, reportTicker.C)
+	e.RunWithTickers(ctx, heartbeatTicker.C, reportTicker.C)
 }
 
-// run is a long-running loop that wakes up for heartbeat or report ticks, and terminates when the context is done.
+// RunWithTickers is a long-running loop that wakes up for heartbeat or report ticks, and terminates when the context is done.
 // The ticker channels are exposed directly for testing.
-func (e *nodeExporter) run(ctx context.Context, heartbeatTicker <-chan time.Time, reportTicker <-chan time.Time) {
+func (e *nodeExporter) RunWithTickers(ctx context.Context, heartbeatTicker <-chan time.Time, reportTicker <-chan time.Time) {
 	log.FromContext(ctx).Info("starting node exporter")
 	for {
 		select {

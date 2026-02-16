@@ -43,14 +43,29 @@ func NewNvidiaMonitor() *nvidiaMonitor {
 				dcgm.FeaturePolicyViolations,
 			},
 		}),
-		sysInfo: &sysInfo{},
+		sysInfo:  &sysInfo{},
+		tickFunc: util.TimeTickWithJitterContext,
 	}
 }
+
+// NewNvidiaMonitorWithDeps creates an nvidiaMonitor with injectable dependencies for testing.
+func NewNvidiaMonitorWithDeps(dcgmClient dcgm.DCGM, sys SysInfo, tickFunc TickFunc) *nvidiaMonitor {
+	return &nvidiaMonitor{
+		dcgmClient: dcgmClient,
+		sysInfo:    sys,
+		tickFunc:   tickFunc,
+	}
+}
+
+// TickFunc is a function that returns a channel that fires periodically.
+// It matches the signature of util.TimeTickWithJitterContext.
+type TickFunc func(ctx context.Context, d time.Duration) <-chan time.Time
 
 // nvidiaMonitor detects issues on nvidia GPUs
 type nvidiaMonitor struct {
 	dcgmClient dcgm.DCGM
 	sysInfo    SysInfo
+	tickFunc   TickFunc
 }
 
 func (m *nvidiaMonitor) Name() string {
@@ -74,7 +89,7 @@ func (m *nvidiaMonitor) Register(ctx context.Context, mgr monitor.Manager) error
 
 		// DCGM Reconcile - maintains connection to DCGM host
 		go func() {
-			for range util.TimeTickWithJitterContext(ctx, 30*time.Second) {
+			for range m.tickFunc(ctx, 30*time.Second) {
 				conditions, err := dcgmSystem.Reconcile(ctx)
 				if err != nil {
 					logger.Error(err, "failed to reconcile DCGM")
@@ -90,7 +105,7 @@ func (m *nvidiaMonitor) Register(ctx context.Context, mgr monitor.Manager) error
 
 		// DCGM Active Diagnostics
 		go func() {
-			for range util.TimeTickWithJitterContext(ctx, 5*time.Minute) {
+			for range m.tickFunc(ctx, 5*time.Minute) {
 				conditions, err := dcgmSystem.ActiveDiagnostic(ctx)
 				if err != nil {
 					logger.Error(err, "failed to run DCGM active diagnostics")
@@ -127,7 +142,7 @@ func (m *nvidiaMonitor) Register(ctx context.Context, mgr monitor.Manager) error
 
 		// DCGM Health Check
 		go func() {
-			for range util.TimeTickWithJitterContext(ctx, 5*time.Minute) {
+			for range m.tickFunc(ctx, 5*time.Minute) {
 				conditions, err := dcgmSystem.HealthCheck(ctx)
 				if err != nil {
 					logger.Error(err, "failed to run DCGM health check")
@@ -143,7 +158,7 @@ func (m *nvidiaMonitor) Register(ctx context.Context, mgr monitor.Manager) error
 
 		// DCGM Watch Fields
 		go func() {
-			for range util.TimeTickWithJitterContext(ctx, 5*time.Minute) {
+			for range m.tickFunc(ctx, 5*time.Minute) {
 				conditions, err := dcgmSystem.WatchFields(ctx)
 				if err != nil {
 					logger.Error(err, "failed to watch DCGM fields")
@@ -159,7 +174,7 @@ func (m *nvidiaMonitor) Register(ctx context.Context, mgr monitor.Manager) error
 
 		// DCGM Device Count
 		go func() {
-			for range util.TimeTickWithJitterContext(ctx, 5*time.Minute) {
+			for range m.tickFunc(ctx, 5*time.Minute) {
 				conditions, err := dcgmSystem.DeviceCount(ctx)
 				if err != nil {
 					logger.Error(err, "failed to check DCGM device count")
