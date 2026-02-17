@@ -43,10 +43,14 @@ The following table lists the configurable parameters for this chart and their d
 | dcgmAgent.image.pullPolicy | string | `"IfNotPresent"` | Container pull policy for the dcgm-exporter |
 | dcgmAgent.image.region | string | `"us-west-2"` | ECR repository region for the dcgm-exporter |
 | dcgmAgent.image.tag | string | `"4.5.2-4.8.1-ubuntu22.04"` | Image tag for the dcgm-exporter |
+| dcgmAgent.podAnnotations | object | `{}` | Pod annotations applied to the dcgm exporter |
 | dcgmAgent.podLabels | object | `{}` | Pod labels applied to the dcgm exporter |
 | dcgmAgent.resources | object | `{}` | Container resources for the dcgm deployment |
 | dcgmAgent.tolerations | list | `[]` | Deployment tolerations for the dcgm |
 | fullnameOverride | string | `"eks-node-monitoring-agent"` | A fullname override for the chart |
+| global | object | `{"podAnnotations":{},"podLabels":{}}` | Global values shared across components |
+| global.podAnnotations | object | `{}` | Annotations applied to eks-node-monitoring-agent and dcgm-exporter (can be overridden by component-specific annotations) |
+| global.podLabels | object | `{}` | Labels applied to eks-node-monitoring-agent and dcgm-exporter (can be overridden by component-specific labels) |
 | imagePullSecrets | list | `[]` | Docker registry pull secrets |
 | nameOverride | string | `"eks-node-monitoring-agent"` | A name override for the chart |
 | nodeAgent.additionalArgs | list | `[]` | List of addittional container arguments for the eks-node-monitoring-agent |
@@ -57,6 +61,7 @@ The following table lists the configurable parameters for this chart and their d
 | nodeAgent.image.pullPolicy | string | `"IfNotPresent"` | Container pull policyfor the eks-node-monitoring-agent |
 | nodeAgent.image.region | string | `"us-west-2"` | ECR repository region for the eks-node-monitoring-agent |
 | nodeAgent.image.tag | string | `"v1.5.1-eksbuild.1"` | Image tag for the eks-node-monitoring-agent |
+| nodeAgent.podAnnotations | object | `{}` | Pod annotations applied to the eks-node-monitoring-agent |
 | nodeAgent.podLabels | object | `{}` | Pod labels applied to the eks-node-monitoring-agent |
 | nodeAgent.resources | object | `{"limits":{"cpu":"250m","memory":"200Mi"},"requests":{"cpu":"10m","memory":"30Mi"}}` | Container resources for the eks-node-monitoring-agent |
 | nodeAgent.securityContext | object | `{"capabilities":{"add":["NET_ADMIN"]},"privileged":true}` | Container Security context for the eks-node-monitoring-agent |
