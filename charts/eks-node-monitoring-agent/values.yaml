@@ -2,6 +2,12 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
+
+# -- Global values shared across components
+global:
+  # -- Labels applied to eks-node-monitoring-agent and dcgm-exporter
+  podLabels: {}
+
 # -- Docker registry pull secrets
 imagePullSecrets: []
 # -- A name override for the chart
