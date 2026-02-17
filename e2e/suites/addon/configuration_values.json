@@ -1,0 +1,26 @@
+{
+    "monitoringAgent": {
+        "resources": {
+            "limits": {
+                "memory": "999Mi",
+                "cpu": "999m"
+            },
+            "requests": {
+                "memory": "999Mi",
+                "cpu": "999m"
+            }
+        }
+    },
+    "dcgmAgent": {
+        "resources": {
+            "limits": {
+                "memory": "999Mi",
+                "cpu": "999m"
+            },
+            "requests": {
+                "memory": "999Mi",
+                "cpu": "999m"
+            }
+        }
+    }
+}

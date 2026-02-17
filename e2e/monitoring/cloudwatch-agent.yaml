@@ -1,0 +1,46 @@
+---
+kind: DaemonSet
+apiVersion: apps/v1
+metadata:
+  name: cwagent-prometheus
+  namespace: amazon-cloudwatch
+spec:
+  selector:
+    matchLabels:
+      app: cwagent-prometheus
+  template:
+    metadata:
+      labels:
+        app: cwagent-prometheus
+    spec:
+      # host networking allows us to hit localhost to collect metrics as a
+      # daemonset
+      hostNetwork: true
+      containers:
+        - name: cloudwatch-agent
+          image: public.ecr.aws/cloudwatch-agent/cloudwatch-agent
+          imagePullPolicy: Always
+          env:
+            - name: RUN_WITH_IRSA
+              value: "True"
+          resources:
+            limits:
+              cpu:  1000m
+              memory: 1000Mi
+            requests:
+              cpu: 200m
+              memory: 200Mi
+          volumeMounts:
+            - name: prometheus-cwagentconfig
+              mountPath: /etc/cwagentconfig
+            - name: prometheus-config
+              mountPath: /etc/prometheusconfig
+      volumes:
+        - name: prometheus-cwagentconfig
+          configMap:
+            name: prometheus-cwagentconfig
+        - name: prometheus-config
+          configMap:
+            name: prometheus-config
+      terminationGracePeriodSeconds: 60
+      serviceAccountName: cwagent-prometheus

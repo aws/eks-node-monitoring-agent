@@ -22,6 +22,9 @@ IMAGE_TAG ?= latest
 # Docker build arguments
 GOBUILDARGS ?=
 
+# Multi-arch build platforms
+DOCKER_PLATFORMS ?= linux/amd64,linux/arm64
+
 # Compute IMAGE_URI based on whether registry is set
 ifdef IMAGE_REGISTRY
     IMAGE_URI ?= $(IMAGE_REGISTRY)/$(IMAGE_REPOSITORY):$(IMAGE_TAG)
@@ -79,13 +82,14 @@ help: ## Show this help message
 	@echo "  IMAGE_REPOSITORY    Image repository name (default: eks-node-monitoring-agent)"
 	@echo "  IMAGE_TAG           Image tag (default: latest)"
 	@echo "  GOBUILDARGS         Additional Go build arguments for Docker build"
+	@echo "  DOCKER_PLATFORMS    Platforms for multi-arch build (default: linux/amd64,linux/arm64)"
 	@echo "  NAMESPACE           Kubernetes namespace (default: kube-system)"
 	@echo "  HELM_EXTRA_FLAGS    Additional flags for helm commands"
 	@echo ""
 	@echo "Examples:"
-	@echo "  make docker-build IMAGE_TAG=v1.0.0"
-	@echo "  make docker-build GOBUILDARGS='-race'"
-	@echo "  make docker-push IMAGE_REGISTRY=ghcr.io/myorg"
+	@echo "  make docker-build IMAGE_REGISTRY=your-account.dkr.ecr.us-west-2.amazonaws.com"
+	@echo "  make docker-build IMAGE_REGISTRY=your-account.dkr.ecr.us-west-2.amazonaws.com IMAGE_TAG=v1.0.0"
+	@echo "  make docker-build IMAGE_REGISTRY=your-account.dkr.ecr.us-west-2.amazonaws.com GOBUILDARGS='-race'"
 	@echo "  make deploy HELM_EXTRA_FLAGS='--set nodeAgent.image.tag=v1.0.0'"
 
 # =============================================================================
@@ -201,25 +205,15 @@ generate-helm-docs: helm-docs
 # =============================================================================
 
 .PHONY: docker-build
-docker-build: ## Build Docker image locally
+docker-build: ## Build and push multi-arch Docker image (requires IMAGE_REGISTRY)
 	@if [ ! -f Dockerfile ]; then \
 		echo "Error: Dockerfile not found in repository root"; \
 		echo "Please ensure Dockerfile exists before building"; \
 		exit 1; \
 	fi
-	@echo "Building Docker image: $(IMAGE_URI)"
-	@if [ -n "$(GOBUILDARGS)" ]; then \
-		echo "Using custom build args: $(GOBUILDARGS)"; \
-		docker build --build-arg GOBUILDARGS="$(GOBUILDARGS)" -t $(IMAGE_URI) .; \
-	else \
-		docker build -t $(IMAGE_URI) .; \
-	fi
-
-.PHONY: docker-push
-docker-push: docker-build ## Push Docker image to registry
 	@if [ -z "$(IMAGE_REGISTRY)" ]; then \
-		echo "Error: IMAGE_REGISTRY is not set"; \
-		echo "Usage: make docker-push IMAGE_REGISTRY=your-registry.com"; \
+		echo "Error: IMAGE_REGISTRY is required (multi-arch images must be pushed to a registry)"; \
+		echo "Usage: make docker-build IMAGE_REGISTRY=your-registry.com"; \
 		exit 1; \
 	fi
 	@# Handle ECR authentication if registry looks like ECR
@@ -228,13 +222,16 @@ docker-push: docker-build ## Push Docker image to registry
 		REGION=$$(echo "$(IMAGE_REGISTRY)" | sed -n 's/.*\.ecr\.\([^.]*\)\.amazonaws\.com.*/\1/p'); \
 		aws ecr get-login-password --region $$REGION | docker login --username AWS --password-stdin $(IMAGE_REGISTRY) || \
 			(echo "ECR login failed. Ensure AWS credentials are configured." && exit 1); \
+		aws ecr describe-repositories --repository-names $(IMAGE_REPOSITORY) --region $$REGION >/dev/null 2>&1 || \
+			aws ecr create-repository --repository-name $(IMAGE_REPOSITORY) --region $$REGION; \
 	fi
-	@echo "Pushing Docker image: $(IMAGE_URI)"
-	docker push $(IMAGE_URI)
+	@echo "Building multi-arch Docker image: $(IMAGE_URI) ($(DOCKER_PLATFORMS))"
+	docker buildx build \
+		--platform $(DOCKER_PLATFORMS) \
+		--push \
+		$(if $(GOBUILDARGS),--build-arg GOBUILDARGS="$(GOBUILDARGS)") \
+		-t $(IMAGE_URI) .
 
-# =============================================================================
-# Deployment Targets
-# =============================================================================
 
 .PHONY: deploy
 deploy: ## Deploy to current Kubernetes cluster
@@ -272,6 +269,14 @@ uninstall: ## Remove deployment from current cluster
 	fi
 	helm template eks-node-monitoring-agent $(CHART_DIR) $(HELM_FLAGS) | kubectl delete -f - || true
 	@echo "Deployment removed"
+
+# =============================================================================
+# E2E Test Targets
+# =============================================================================
+
+.PHONY: e2e
+e2e: ## Build and run e2e tests against the current cluster context
+	go test -tags=e2e -v -timeout 60m ./e2e/ --install=true --image $(IMAGE_URI) $(ARGS)
 
 # =============================================================================
 # Release Target
