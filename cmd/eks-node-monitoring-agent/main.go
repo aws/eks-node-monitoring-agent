@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"slices"
 
 	"github.com/spf13/pflag"
 	zapraw "go.uber.org/zap"
@@ -14,7 +15,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	controllerruntime "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -45,6 +48,8 @@ var (
 	controllerPprofAddress       string
 	hostname                     string
 	verbosity                    int
+
+	legacyNodeRBAC bool
 )
 
 const (
@@ -73,6 +78,22 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
+	runtimeContext := config.GetRuntimeContext()
+	logger.V(2).Info("fetched runtime context", "value", runtimeContext)
+
+	// NOTE: this hack is needed when we are trying to use a dbus client
+	// connected to the host without having chroot onto the host root. Therefore
+	// its only necessary when the host root is not default.
+	if config.HostRoot() != "" {
+		// normally '/var/run/dbus/system_bus_socket' would be the correct path,
+		// but normally there is a symlink that maps /var/run -> /run. This is
+		// done with a relative path  -> ../run on Amazon Linux. but on
+		// bottlerocket this is the absolute path, which results in the
+		// container looking back it its own filesystem rather than the host's.
+		dbusAddress := "unix:path=" + config.ToHostPath("/run/dbus/system_bus_socket")
+		os.Setenv("DBUS_SYSTEM_BUS_ADDRESS", dbusAddress)
+	}
+
 	logger.Info("initializing controller manager")
 	mgr, err := controllerruntime.NewManager(controllerruntime.GetConfigOrDie(), controllerruntime.Options{
 		Logger:                 log.FromContext(ctx),
@@ -90,27 +111,53 @@ func run() error {
 	// Create node template for Kubernetes integration
 	nodeTemplate := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: hostname}}
 
-	// Get Kubernetes client and event recorder
-	kubeClient := mgr.GetClient()
-	eventRecorder := mgr.GetEventRecorderFor("eks-node-monitoring-agent")
+	monitorCfg := rest.CopyConfig(mgr.GetConfig())
+
+	// EKS Auto has a special user impersonation flow that implicitly relies
+	// on the base rest config from kubelet.
+	if slices.Contains(runtimeContext.Tags(), config.EKSAuto) {
+		restCfg, err := NewAutoRestConfigProvider(monitorCfg).Provide()
+		if err != nil {
+			logger.Error(err, "failed to provide rest config", "mode", "eks-auto")
+		} else {
+			monitorCfg = restCfg
+		}
+	} else {
+		// the legacy permission model involves broader access to patch
+		// node/status resources. this provider uses kubeconfig from the host
+		// node in order to authenticate for self-targetted node access.
+		if !legacyNodeRBAC {
+			if restCfg, err := NewPodRestConfigProvider().Provide(); err != nil {
+				logger.Error(err, "failed to provide rest config", "mode", "pod")
+			} else {
+				monitorCfg = restCfg
+			}
+		}
+	}
+
+	monitoringEventRecorder := mgr.GetEventRecorderFor("eks-node-monitoring-agent")
+	monitoringKubeClient, err := client.New(monitorCfg, client.Options{})
+	if err != nil {
+		return err
+	}
+
+	for _, bootstrapper := range []Bootstrapper{
+		NewHybridNodesBootstrapper(monitoringKubeClient, nodeTemplate.DeepCopy()),
+	} {
+		bootstrapper.Bootstrap(ctx)
+	}
 
 	// Register runtime monitor plugin manually (requires node and kubeClient dependencies)
-	// Unlike kernel and storage monitors which auto-register via init(), the runtime monitor
-	// needs access to the node object and Kubernetes client for EKS Auto mode manifest
-	// deprecation tracking. These dependencies are only available after the controller
-	// manager is created, so we register it explicitly here.
-	runtimePlugin := runtime.NewPlugin(nodeTemplate.DeepCopy(), kubeClient)
+	runtimePlugin := runtime.NewPlugin(nodeTemplate.DeepCopy(), monitoringKubeClient)
 	if err := registry.ValidateAndRegister(runtimePlugin); err != nil {
 		logger.Error(err, "failed to register runtime monitor plugin")
 		return err
 	}
 
 	// Get all registered monitors from the global plugin registry
-	// Monitors are auto-registered via init() functions when their packages are imported
 	allMonitors := registry.GlobalRegistry().AllMonitors()
 	if len(allMonitors) == 0 {
 		logger.Info("no monitors registered - agent will run without monitoring capabilities")
-		logger.Info("to add monitors, import monitor packages or register plugins using registry.Register()")
 		return fmt.Errorf("no monitors registered")
 	}
 
@@ -120,7 +167,6 @@ func run() error {
 	}
 
 	// Build condition configs for node exporter
-	// Map each monitor to a Kubernetes node condition type
 	conditionConfigs := make(map[corev1.NodeConditionType]manager.NodeConditionConfig)
 	conditionConfigs[conditions.KernelReady] = manager.NodeConditionConfig{
 		ReadyReason:  "KernelIsReady",
@@ -139,10 +185,6 @@ func run() error {
 		ReadyMessage: "Monitoring for the Networking system is active",
 	}
 
-	// Add config for accelerated hardware based on runtime detection
-	// Note: Both Neuron and Nvidia monitors are always registered via init(),
-	// but we only configure the condition for the hardware that's actually present
-	runtimeContext := config.GetRuntimeContext()
 	switch runtimeContext.AcceleratedHardware() {
 	case config.AcceleratedHardwareNvidia:
 		conditionConfigs[conditions.AcceleratedHardwareReady] = manager.NodeConditionConfig{
@@ -159,9 +201,9 @@ func run() error {
 	// Initialize node exporter
 	logger.Info("initializing node exporter")
 	nodeExporter := manager.NewNodeExporter(
-		nodeTemplate,
-		kubeClient,
-		eventRecorder,
+		nodeTemplate.DeepCopy(),
+		monitoringKubeClient,
+		monitoringEventRecorder,
 		conditionConfigs,
 	)
 	go nodeExporter.Run(ctx)
@@ -173,7 +215,6 @@ func run() error {
 	// Register all monitors with the manager
 	for _, mon := range allMonitors {
 		monCtx := log.IntoContext(ctx, logger.WithValues("monitor", mon.Name()))
-		// Map monitor name to condition type
 		var conditionType corev1.NodeConditionType
 		switch mon.Name() {
 		case "kernel":
@@ -184,9 +225,17 @@ func run() error {
 			conditionType = conditions.ContainerRuntimeReady
 		case "networking":
 			conditionType = conditions.NetworkingReady
-		case "neuron":
-			conditionType = conditions.AcceleratedHardwareReady
 		case "nvidia":
+			if runtimeContext.AcceleratedHardware() != config.AcceleratedHardwareNvidia {
+				logger.Info("skipping monitor registration: no nvidia hardware detected", "monitor", mon.Name())
+				continue
+			}
+			conditionType = conditions.AcceleratedHardwareReady
+		case "neuron":
+			if runtimeContext.AcceleratedHardware() != config.AcceleratedHardwareNeuron {
+				logger.Info("skipping monitor registration: no neuron hardware detected", "monitor", mon.Name())
+				continue
+			}
 			conditionType = conditions.AcceleratedHardwareReady
 		default:
 			conditionType = conditions.KernelReady // Default fallback
@@ -206,7 +255,7 @@ func run() error {
 
 	// Initialize and register NodeDiagnostic controller for log collection
 	logger.Info("initializing node diagnostic controller")
-	diagnosticController := controllers.NewNodeDiagnosticController(kubeClient, hostname, runtimeContext)
+	diagnosticController := controllers.NewNodeDiagnosticController(monitoringKubeClient, hostname, runtimeContext)
 	if err := diagnosticController.Register(ctx, mgr); err != nil {
 		logger.Error(err, "failed to register diagnostic controller")
 		return err
@@ -229,6 +278,7 @@ func parseFlags() error {
 	flagSet := pflag.NewFlagSet(os.Args[0], pflag.ExitOnError)
 	flagSet.AddGoFlagSet(flag.CommandLine)
 	flagSet.StringVar(&hostname, "hostname-override", os.Getenv(envNodeName), "Override the default hostname for the node resource")
+	flagSet.BoolVar(&legacyNodeRBAC, "legacy-node-rbac", false, "Enable the legacy rbac permissions for accessing node resources")
 	flagSet.StringVar(&controllerHealthProbeAddress, "probe-address", ":8081", "Address for the controller runtime health probe endpoints")
 	flagSet.StringVar(&controllerMetricsAddress, "metrics-address", ":8080", "Address for the controller runtime metrics endpoint")
 	flagSet.StringVar(&controllerPprofAddress, "pprof-address", "", "Address for the controller runtime pprof endpoint (default disabled)")

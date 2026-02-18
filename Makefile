@@ -99,6 +99,7 @@ help: ## Show this help message
 .PHONY: build
 build: generate fmt vet ## Build Go code
 	go build -o bin/eks-node-monitoring-agent ./cmd/eks-node-monitoring-agent
+	go build -o bin/chroot ./cmd/chroot
 
 .PHONY: test
 test: generate fmt vet covignore ## Run tests

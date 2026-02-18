@@ -46,19 +46,11 @@ ARG TARGETOS=linux
 ARG TARGETARCH
 ARG GOBUILDARGS=""
 
-# Build the binary with CGO enabled (required for systemd) and greenteagc experiment
-# Note: The cmd/ directory will be added when the core monitoring framework is migrated
-RUN if [ -d "./cmd/eks-node-monitoring-agent" ]; then \
-        CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOEXPERIMENT=greenteagc \
-        go build ${GOBUILDARGS} -ldflags="-s -w" -o bin/eks-node-monitoring-agent ./cmd/eks-node-monitoring-agent/; \
-    else \
-        echo "No cmd/eks-node-monitoring-agent found - creating placeholder binary"; \
-        mkdir -p bin && \
-        echo '#!/bin/sh' > bin/eks-node-monitoring-agent && \
-        echo 'echo "EKS Node Monitoring Agent - binary not yet available"' >> bin/eks-node-monitoring-agent && \
-        echo 'echo "The core monitoring framework has not been migrated yet."' >> bin/eks-node-monitoring-agent && \
-        chmod +x bin/eks-node-monitoring-agent; \
-    fi
+# Build the agent and chroot binaries with CGO enabled (required for systemd) and greenteagc experiment
+RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOEXPERIMENT=greenteagc \
+    go build ${GOBUILDARGS} -ldflags="-s -w" -o bin/eks-node-monitoring-agent ./cmd/eks-node-monitoring-agent/
+RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOEXPERIMENT=greenteagc \
+    go build ${GOBUILDARGS} -ldflags="-s -w" -o bin/chroot ./cmd/chroot/
 
 # =============================================================================
 # Stage 4: Minimal runtime image
@@ -83,8 +75,9 @@ COPY --from=systemd-builder /usr/lib64/libcap.so* /usr/lib64/
 # Copy DCGM client library for GPU monitoring (optional - only used on GPU nodes)
 COPY --from=dcgm-builder /usr/lib64/libdcgm.so* /usr/lib64/
 
-# Copy the built binary (if it exists)
+# Copy the built binaries
 COPY --from=go-builder /workspace/bin/eks-node-monitoring-agent /opt/bin/eks-node-monitoring-agent
+COPY --from=go-builder /workspace/bin/chroot /opt/bin/chroot
 
 # Set working directory
 WORKDIR /opt/bin
