@@ -47,6 +47,8 @@ The following table lists the configurable parameters for this chart and their d
 | dcgmAgent.resources | object | `{}` | Container resources for the dcgm deployment |
 | dcgmAgent.tolerations | list | `[]` | Deployment tolerations for the dcgm |
 | fullnameOverride | string | `"eks-node-monitoring-agent"` | A fullname override for the chart |
+| global | object | `{"podLabels":{}}` | Global values shared across components |
+| global.podLabels | object | `{}` | Labels applied to eks-node-monitoring-agent and dcgm-exporter |
 | imagePullSecrets | list | `[]` | Docker registry pull secrets |
 | nameOverride | string | `"eks-node-monitoring-agent"` | A name override for the chart |
 | nodeAgent.additionalArgs | list | `[]` | List of addittional container arguments for the eks-node-monitoring-agent |
