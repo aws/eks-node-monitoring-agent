@@ -1,0 +1,87 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "description": "Configurable parameters for the eks-node-monitoring-agent",
+    "$ref": "#/definitions/EKSNodeMonitoringAgent",
+    "definitions": {
+        "EKSNodeMonitoringAgent": {
+            "title": "EKSNodeMonitoringAgent",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "monitoringAgent": {
+                    "$ref": "#/definitions/MonitoringAgent"
+                },
+                "dcgmAgent": {
+                    "$ref": "#/definitions/DCGMAgent"
+                }
+            }
+        },
+        "MonitoringAgent": {
+            "title": "MonitoringAgent",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "additionalArgs": {
+                    "type": "array",
+                    "description": "Additional arguments passed to the eks node monitoring agent pod",
+                    "default": [],
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "resources": {
+                    "$ref": "#/definitions/Resources"
+                },
+                "tolerations": {
+                    "$ref": "#/definitions/Tolerations"
+                }
+            }
+        },
+        "DCGMAgent": {
+            "title": "DCGMAgent",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "resources": {
+                    "$ref": "#/definitions/Resources"
+                },
+                "tolerations": {
+                    "$ref": "#/definitions/Tolerations"
+                }
+            }
+        },
+        "Resources": {
+            "title": "Resources",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "requests": {
+                    "$ref": "#/definitions/Limits"
+                },
+                "limits": {
+                    "$ref": "#/definitions/Limits"
+                }
+            }
+        },
+        "Limits": {
+            "title": "Limits",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "memory": {
+                    "type": "string"
+                },
+                "cpu": {
+                    "type": "string"
+                }
+            }
+        },
+        "Tolerations": {
+            "title": "Tolerations",
+            "type": "array",
+            "items": {
+                "type": "object"
+            }
+        }
+    }
+}

@@ -136,6 +136,7 @@ generate-reasons: ## Generate reasons.go from YAML config
 
 .PHONY: generate-docs
 generate-docs: ## Generate AsciiDoc documentation from reasons YAML
+	@mkdir -p docs
 	go run ./tools/codegen-docs/... --config-path pkg/reasons/reasons.yaml > docs/node-health-issues.adoc
 	@echo "Documentation generated to docs/node-health-issues.adoc"
 
