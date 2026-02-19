@@ -115,7 +115,7 @@ test: generate fmt vet covignore ## Run tests
 	fi
 
 .PHONY: generate
-generate: mod-tidy controller-gen generate-crds helm-docs ## Run all code generation
+generate: mod-tidy controller-gen generate-crds generate-reasons generate-docs helm-docs ## Run all code generation
 
 .PHONY: mod-tidy
 mod-tidy: ## Tidy Go modules
@@ -129,6 +129,15 @@ generate-crds: controller-gen ## Generate CRD manifests
 		cp api/crds/eks.amazonaws.com_nodediagnostics.yaml $(CHART_DIR)/crds/; \
 		echo "CRD copied to $(CHART_DIR)/crds/"; \
 	fi
+
+.PHONY: generate-reasons
+generate-reasons: ## Generate reasons.go from YAML config
+	go generate ./pkg/reasons/...
+
+.PHONY: generate-docs
+generate-docs: ## Generate AsciiDoc documentation from reasons YAML
+	go run ./tools/codegen-docs/... --config-path pkg/reasons/reasons.yaml > docs/node-health-issues.adoc
+	@echo "Documentation generated to docs/node-health-issues.adoc"
 
 .PHONY: fmt
 fmt: ## Format Go code

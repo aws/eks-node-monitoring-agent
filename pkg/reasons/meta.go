@@ -1,3 +1,5 @@
+//go:generate go run ../../tools/codegen-reasons/... --config-path reasons.yaml --template-path reasons.go.tpl --out-path reasons.go
+
 package reasons
 
 import (

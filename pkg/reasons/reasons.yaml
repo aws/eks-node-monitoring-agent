@@ -1,0 +1,387 @@
+# NOTE: this file is used for both code and documentation generation, so objects
+# may contain additional metadata that has no functional purpose.
+KernelReady:
+  LargeEnvironment:
+    Template: 'LargeEnvironment'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      The number of environment variables for this process is larger than
+      expected, potentially caused by many services with `enableServiceLinks` set
+      to true, which may cause performance issues.
+  RapidCron:
+    Template: 'RapidCron'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      A cron job is running faster than every five minutes on this node, which
+      may impact performance if the job consumes significant resources.
+  SoftLockup:
+    Template: 'SoftLockup'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      The CPU stalled for a given amount of time.
+  AppBlocked:
+    Template: 'AppBlocked'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      The task has been blocked for a long period of time from scheduling,
+      usually caused by being blocked on input or output.
+  AppCrash:
+    Template: 'AppCrash'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      An application on the node has crashed.
+  ApproachingKernelPidMax:
+    Template: 'ApproachingKernelPidMax'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      The number of processes is approaching the maximum number of PIDs that are
+      available per the current `kernel.pid_max` setting, after which no more
+      processes can be launched.
+  ApproachingMaxOpenFiles:
+    Template: 'ApproachingMaxOpenFiles'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      The number of open files is approaching the maximum number of possible
+      open files given the current kernel settings, after which opening new
+      files will fail.
+  ConntrackExceededKernel:
+    Template: 'ConntrackExceededKernel'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      Connection tracking exceeded the maximum for the kernel and new
+      connections could not be established, which can result in packet loss.
+  ExcessiveZombieProcesses:
+    Template: 'ExcessiveZombieProcesses'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      Processes which can't be fully reclaimed are accumulating in large
+      numbers, which indicates application issues and may lead to reaching
+      system process limits.
+  ForkFailedOutOfPIDs:
+    Template: 'ForkFailedOutOfPIDs'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      A fork or exec call has failed due to the system being out of process IDs
+      or memory, which may be caused by zombie processes or physical memory
+      exhaustion.
+  KernelBug:
+    Template: 'KernelBug'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      A kernel bug was detected and reported by the Linux kernel itself, though
+      this may sometimes be caused by nodes with high CPU or memory usage
+      leading to delayed event processing.
+ContainerRuntimeReady:
+  KubeletFailed:
+    Template: 'KubeletFailed'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      The kubelet entered a failed state.
+  LivenessProbeFailures:
+    Template: 'LivenessProbeFailures'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      A liveness probe failure was detected, potentially indicating application
+      code issues or insufficient timeout values if occurring repeatedly.
+  PodStuckTerminating:
+    Template: 'PodStuckTerminating'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      A Pod is or was stuck terminating for an excessive amount of time, which
+      can be caused by CRI errors preventing pod state progression.
+  ReadinessProbeFailures:
+    Template: 'ReadinessProbeFailures'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      A readiness probe failure was detected, potentially indicating application
+      code issues or insufficient timeout values if occurring repeatedly.
+  RepeatedRestart:
+    Template: '%sRepeatedRestart'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      A systemd unit is restarting frequently.
+  ServiceFailedToStart:
+    Template: 'ServiceFailedToStart'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      A systemd unit failed to start.
+  ContainerRuntimeFailed:
+    Template: 'ContainerRuntimeFailed'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      The container runtime has failed to create a container, likely related to
+      any reported issues if occurring repeatedly.
+  DeprecatedContainerdConfiguration:
+    Template: 'DeprecatedContainerdConfiguration'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      A container image using deprecated image manifest version 2, schema 1 was
+      recently pulled onto the node through `containerd`.
+NetworkingReady:
+  MACAddressPolicyMisconfigured:
+    Template: 'MACAddressPolicyMisconfigured'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      The systemd-networkd link configuration has the incorrect
+      `MACAddressPolicy` value.
+  MissingDefaultRoutes:
+    Template: 'MissingDefaultRoutes'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      There are missing default route rules.
+  MissingIPRoutes:
+    Template: 'MissingIPRoutes'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      There are missing routes for Pod IPs.
+  MissingIPRules:
+    Template: 'MissingIPRules'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      There are missing rules for Pod IPs.
+  MissingLoopbackInterface:
+    Template: 'MissingLoopbackInterface'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      The loopback interface is missing from this instance, causing failure of
+      services depending on local connectivity.
+  NetworkSysctl:
+    Template: 'NetworkSysctl'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      This node's network `sysctl` settings are potentially incorrect.
+  PPSExceeded:
+    Template: 'PPSExceeded'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      Packets have been queued or dropped because the bidirectional PPS exceeded
+      the maximum for the instance.
+  KubeProxyNotReady:
+    Template: 'KubeProxyNotReady'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      Kube-proxy failed to watch or list resources.
+  PortConflict:
+    Template: 'PortConflict'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      If a Pod uses hostPort, it can write `iptables` rules that override the
+      host's already bound ports, potentially preventing API server access to
+      `kubelet`.
+  UnexpectedRejectRule:
+    Template: 'UnexpectedRejectRule'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      An unexpected `REJECT` or `DROP` rule was found in the `iptables`,
+      potentially blocking expected traffic.
+  LinkLocalExceeded:
+    Template: 'LinkLocalExceeded'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      Packets were dropped because the PPS of traffic to local proxy services
+      exceeded the network interface maximum.
+  BandwidthInExceeded:
+    Template: 'BandwidthInExceeded'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      Packets have been queued or dropped because the inbound aggregate
+      bandwidth exceeded the maximum for the instance.
+  BandwidthOutExceeded:
+    Template: 'BandwidthOutExceeded'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      Packets have been queued or dropped because the outbound aggregate
+      bandwidth exceeded the maximum for the instance.
+  ConntrackExceeded:
+    Template: 'ConntrackExceeded'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      Connection tracking exceeded the maximum for the instance and new
+      connections could not be established, which can result in packet loss.
+  IPAMDInconsistentState:
+    Template: 'IPAMDInconsistentState'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      The state of the IPAMD checkpoint on disk does not reflect the IPs in the
+      container runtime.
+  IPAMDNoIPs:
+    Template: 'IPAMDNoIPs'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      IPAMD is out of IP addresses.
+  IPAMDNotReady:
+    Template: 'IPAMDNotReady'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      IPAMD fails to connect to the API server.
+  IPAMDNotRunning:
+    Template: 'IPAMDNotRunning'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      The Amazon VPC CNI process was not found to be running.
+  IPAMDRepeatedlyRestart:
+    Template: 'IPAMDRepeatedlyRestart'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      Multiple restarts in the IPAMD service have occurred.
+  InterfaceNotRunning:
+    Template: 'InterfaceNotRunning'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      This interface appears to not be running or there are network issues.
+  InterfaceNotUp:
+    Template: 'InterfaceNotUp'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      This interface appears to not be up or there are network issues.
+  EFAErrorMetric:
+    Template: 'EFAErrorMetric'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      EFA driver metrics shows there is an interface with performance degredation.
+AcceleratedHardwareReady:
+  DCGMDiagnosticFailure:
+    Template: 'DCGMDiagnosticFailure'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      A test case from the DCGM active diagnostics test suite failed.
+  DCGMError:
+    Template: 'DCGMError'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      Connection to the DCGM host process was lost or could not be established.
+  DCGMFieldError:
+    Template: 'DCGMFieldError%d'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      DCGM detected GPU degredation through a field identifier.
+  DCGMHealthCode:
+    Template: 'DCGMHealthCode%d'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      A DCGM health check failed in a non-fatal manner.
+  DCGMHealthCodeFatal:
+    Template: 'DCGMHealthCode%d'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      A DCGM health check failed in a fatal manner.
+  NvidiaDeviceCountMismatch:
+    Template: 'NvidiaDeviceCountMismatch'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      The number of GPUs visible through NVML is inconsistent with the NVIDIA
+      device count on the filesystem.
+  NvidiaDoubleBitError:
+    Template: 'NvidiaDoubleBitError'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      A double bit error was produced by the GPU driver.
+  NvidiaNCCLError:
+    Template: 'NvidiaNCCLError'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      A segfault occurred in the NVIDIA Collective Communications library (`libnccl`).
+  NvidiaNVLinkError:
+    Template: 'NvidiaNVLinkError'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      NVLink errors were reported by the GPU driver.
+  NvidiaPCIeError:
+    Template: 'NvidiaPCIeError'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      PCIe replays were triggered to recover from transmission errors.
+  NvidiaPageRetirement:
+    Template: 'NvidiaPageRetirement'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      The GPU driver has marked a memory page for retirement. This may occur if
+      there is a single double bit error or two single bit errors are
+      encountered at the same address.
+  NvidiaPowerError:
+    Template: 'NvidiaPowerError'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      Power utilization of GPUs breached the allowed thresholds.
+  NvidiaThermalError:
+    Template: 'NvidiaThermalError'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      Thermal status of GPUs breached the allowed thresholds.
+  NvidiaXIDError:
+    Template: 'NvidiaXID%dError'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      A critical GPU error occurred.
+  NvidiaXIDWarning:
+    Template: 'NvidiaXID%dWarning'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      A non-critical GPU error occurred.
+  NeuronDMAError:
+    Template: 'NeuronDMAError'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      A DMA engine encountered an unrecoverable error.
+  NeuronHBMUncorrectableError:
+    Template: 'NeuronHBMUncorrectableError'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      An HBM encountered an uncorrectable error and produced incorrect results.
+  NeuronNCUncorrectableError:
+    Template: 'NeuronNCUncorrectableError'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      A Neuron Core uncorrectable memory error was detected.
+  NeuronSRAMUncorrectableError:
+    Template: 'NeuronSRAMUncorrectableError'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      An on-chip SRAM encountered a parity error and produced incorrect results.
+StorageReady:
+  EBSInstanceIOPSExceeded:
+    Template: 'EBSInstanceIOPSExceeded'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      Maximum IOPS for the instance was exceeded.
+  EBSInstanceThroughputExceeded:
+    Template: 'EBSInstanceThroughputExceeded'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      Maximum Throughput for the instance was exceeded.
+  EBSVolumeIOPSExceeded:
+    Template: 'EBSVolumeIOPSExceeded'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      Maximum IOPS to a particular EBS Volume was exceeded.
+  EBSVolumeThroughputExceeded:
+    Template: 'EBSVolumeThroughputExceeded'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      Maximum Throughput to a particular Amazon EBS volume was exceeded.
+  EtcHostsMountFailed:
+    Template: 'EtcHostsMountFailed'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      Mounting of the kubelet generated `/etc/hosts` failed due to userdata
+      remounting `/var/lib/kubelet/pods` during `kubelet-container` operation.
+  IODelays:
+    Template: 'IODelays'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      Input or output delay detected in a process, potentially indicating
+      insufficient input-output provisioning if excessive.
+  KubeletDiskUsageSlow:
+    Template: 'KubeletDiskUsageSlow'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      The `kubelet` is reporting slow disk usage while trying to access the
+      filesystem. This potentially indicates insufficient disk input-output or
+      filesystem issues.
+  XFSSmallAverageClusterSize:
+    Template: 'XFSSmallAverageClusterSize'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      The XFS Average Cluster size is small, indicating excessive free space
+      fragmentation. This can prevent file creation despite available inodes or
+      free space.
