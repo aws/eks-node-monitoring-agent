@@ -6,13 +6,33 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
+	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
 	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor/resource"
 	"golang.a2z.com/Eks-node-monitoring-agent/pkg/observer"
 )
+
+var (
+	conditionCount = prometheus.NewCounterVec(
+		prometheus.CounterOpts{Name: "problem_condition_count"},
+		[]string{"severity", "reason"},
+	)
+	conditionTypeGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{Name: "fatal_condition_gauge"},
+		[]string{"type"},
+	)
+)
+
+func init() {
+	metrics.Registry.MustRegister(
+		conditionCount,
+		conditionTypeGauge,
+	)
+}
 
 // MonitorManager manages the lifecycle of monitors and routes their notifications
 type MonitorManager struct {
@@ -104,6 +124,9 @@ func (m *MonitorManager) runLoop(ctx context.Context) error {
 func (m *MonitorManager) exportCondition(ctx context.Context, monitorName string, condition monitor.Condition) error {
 	logger := log.FromContext(ctx).WithValues("source", monitorName, "condition", condition)
 
+	// track condition metrics
+	conditionCount.WithLabelValues(string(condition.Severity), condition.Reason).Add(1)
+
 	conditionType, ok := m.conditionTypeMap[monitorName]
 	if !ok {
 		return fmt.Errorf("missing condition type mapping for monitor: %s", monitorName)
@@ -130,6 +153,11 @@ func (m *MonitorManager) SendCondition(ctx context.Context, condition monitor.Co
 	case monitor.SeverityWarning:
 		return m.exporter.Warning(ctx, condition, conditionType)
 	case monitor.SeverityFatal:
+		for _, cType := range m.conditionTypeMap {
+			if conditionType == cType {
+				conditionTypeGauge.WithLabelValues(string(cType)).Set(1.0)
+			}
+		}
 		return m.exporter.Fatal(ctx, condition, conditionType)
 	default:
 		return fmt.Errorf("invalid condition severity: %q", condition.Severity)

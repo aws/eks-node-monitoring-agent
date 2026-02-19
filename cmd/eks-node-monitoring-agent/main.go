@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/signal"
 	"slices"
+	"time"
 
+	"github.com/shirou/gopsutil/v4/process"
 	"github.com/spf13/pflag"
 	zapraw "go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -27,6 +29,7 @@ import (
 	"golang.a2z.com/Eks-node-monitoring-agent/pkg/conditions"
 	"golang.a2z.com/Eks-node-monitoring-agent/pkg/config"
 	"golang.a2z.com/Eks-node-monitoring-agent/pkg/controllers"
+	"golang.a2z.com/Eks-node-monitoring-agent/pkg/diagnostic"
 	"golang.a2z.com/Eks-node-monitoring-agent/pkg/manager"
 	"golang.a2z.com/Eks-node-monitoring-agent/pkg/monitor/registry"
 
@@ -43,6 +46,7 @@ import (
 )
 
 var (
+	enableConsoleDiagnostics     bool
 	controllerHealthProbeAddress string
 	controllerMetricsAddress     string
 	controllerPprofAddress       string
@@ -61,6 +65,29 @@ func init() {
 }
 
 func main() {
+	// Enable gopsutil boot time caching to fix CPU inefficiency
+	// See: https://github.com/shirou/gopsutil/issues/1283
+	// Fix released in: https://github.com/shirou/gopsutil/pull/1579
+	process.EnableBootTimeCache(true)
+
+	// setup a deferred routing to write errors to the instance device console
+	// so that we have visibility when the agent is crashing on instance.
+	defer func() {
+		if enableConsoleDiagnostics {
+			f, _ := openDevConsole()
+			defer f.Close()
+			// ensures that at least one run of the diagnostic is always
+			// completed and written to console before exiting.
+			diagnostic.NewDiagnosticLogger(f, diagnostic.Settings{}).Start(context.Background())
+
+			// increase visibility on errors/panics propagated from main.
+			if r := recover(); r != nil {
+				fmt.Fprintf(f, "eks-node-monitoring-agent: %s", r)
+				os.Exit(1)
+			}
+		}
+	}()
+
 	utilruntime.Must(run())
 }
 
@@ -77,6 +104,10 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+
+	if enableConsoleDiagnostics {
+		startConsoleDiagnostics(ctx)
+	}
 
 	runtimeContext := config.GetRuntimeContext()
 	logger.V(2).Info("fetched runtime context", "value", runtimeContext)
@@ -278,6 +309,7 @@ func parseFlags() error {
 	flagSet := pflag.NewFlagSet(os.Args[0], pflag.ExitOnError)
 	flagSet.AddGoFlagSet(flag.CommandLine)
 	flagSet.StringVar(&hostname, "hostname-override", os.Getenv(envNodeName), "Override the default hostname for the node resource")
+	flagSet.BoolVarP(&enableConsoleDiagnostics, "console-diagnostics", "d", false, "Enable the console diagnostics logger to periodically write logs to /dev/console")
 	flagSet.BoolVar(&legacyNodeRBAC, "legacy-node-rbac", false, "Enable the legacy rbac permissions for accessing node resources")
 	flagSet.StringVar(&controllerHealthProbeAddress, "probe-address", ":8081", "Address for the controller runtime health probe endpoints")
 	flagSet.StringVar(&controllerMetricsAddress, "metrics-address", ":8080", "Address for the controller runtime metrics endpoint")
@@ -293,4 +325,26 @@ func ensureHostname() (err error) {
 	// fallback to OS hostname
 	hostname, err = os.Hostname()
 	return err
+}
+
+func openDevConsole() (*os.File, error) {
+	return os.OpenFile("/dev/console", os.O_APPEND|os.O_WRONLY, 0o600)
+}
+
+func startConsoleDiagnostics(ctx context.Context) {
+	logger := log.FromContext(ctx)
+
+	go func() {
+		f, err := openDevConsole()
+		if err != nil {
+			logger.Error(err, "failed to open /dev/console for diagnostics logger")
+			return
+		}
+		defer f.Close()
+		settings := diagnostic.Settings{LogInterval: 5 * time.Minute}
+		logger.Info("initializing console diagnostic logger", "settings", settings)
+		if err := diagnostic.NewDiagnosticLogger(f, settings).Start(ctx); err != nil {
+			logger.Error(err, "failed to start diagnostic logger")
+		}
+	}()
 }
