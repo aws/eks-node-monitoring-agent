@@ -5,7 +5,7 @@ import (
 	"log"
 	"slices"
 
-	frameworkext "github.com/aws/eks-node-monitoring-agent/e2e/framework_extensions"
+	frameworkext "github.com/aws/eks-node-monitoring-agent/e2e-ci/framework_extensions"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/types"
 )

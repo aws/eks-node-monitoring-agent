@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"testing"
 
-	"github.com/aws/eks-node-monitoring-agent/e2e/setup"
+	"github.com/aws/eks-node-monitoring-agent/e2e-ci/setup"
 	"sigs.k8s.io/e2e-framework/pkg/env"
 )
 

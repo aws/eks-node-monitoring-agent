@@ -9,14 +9,14 @@ update-e2e-manifests:
 	@helm template eks-node-monitoring-agent charts/eks-node-monitoring-agent \
 		--namespace kube-system \
 		--include-crds | \
-		sed 's|image: [^[:space:]]*|image: {{ .Image }}|g' > e2e/setup/manifests/agent.tpl.yaml
-	@echo "Generated e2e/setup/manifests/agent.tpl.yaml"
+		sed 's|image: [^[:space:]]*|image: {{ .Image }}|g' > e2e-ci/setup/manifests/agent.tpl.yaml
+	@echo "Generated e2e-ci/setup/manifests/agent.tpl.yaml"
 
 .PHONY: build-e2e
 build-e2e:
 	@echo "Building e2e test binary..."
 	@mkdir -p bin
-	$(MAKE) -C e2e build
+	$(MAKE) -C e2e-ci build
 	@echo "Built bin/e2e.test"
 
 .PHONY: e2e

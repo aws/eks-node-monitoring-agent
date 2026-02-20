@@ -16,7 +16,7 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/env"
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 
-	"github.com/aws/eks-node-monitoring-agent/e2e/suites/basic"
+	"github.com/aws/eks-node-monitoring-agent/e2e-ci/suites/basic"
 )
 
 //go:embed manifests/agent.tpl.yaml
