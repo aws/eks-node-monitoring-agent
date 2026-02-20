@@ -3,6 +3,14 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+    inputs:
+      chart_commit:
+        description: 'Git commit SHA to publish chart from (leave empty for current HEAD)'
+        required: false
+        default: ''
+permissions:
+  contents: write
 jobs:
   publish-charts:
     runs-on: ubuntu-latest
@@ -12,7 +20,10 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
         with:
           fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
       - name: "Setup Helm"
         uses: azure/setup-helm@b9e51907a09c216f16ebe8536097933489208112 # 4.3.0
       - name: "Publish Charts"
         run: hack/publish-charts.sh
+        env:
+          CHART_COMMIT: ${{ github.event.inputs.chart_commit }}

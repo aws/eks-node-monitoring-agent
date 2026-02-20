@@ -1,0 +1,139 @@
+name: '[CI] Integration test / kubetest2'
+inputs:
+  k8s_version:
+    required: true
+    type: string
+  arch:
+    required: true
+    type: string
+  instance_type:
+    required: true
+    type: string
+  resource_id:
+    required: true
+    type: string
+  aws_region:
+    required: true
+    type: string
+  log_bucket:
+    required: true
+    type: string
+  image:
+    description: 'NMA container image to deploy (default: extracted from charts/eks-node-monitoring-agent/values.yaml)'
+    required: false
+    default: ''
+  ami_type:
+    description: 'AMI type (standard or nvidia)'
+    required: false
+    default: 'standard'
+  test_filter:
+    description: 'Test filter pattern (e.g., Test/DaemonSetReady)'
+    required: false
+    default: ''
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: stable
+        cache-dependency-path: e2e-ci/go.sum
+
+    - id: resolve-ami
+      shell: bash
+      run: |
+        # Map arch input to SSM path format
+        SSM_ARCH="x86_64"
+        if [ "${{ inputs.arch }}" = "arm64" ]; then
+          SSM_ARCH="arm64"
+        fi
+        echo "ssm_arch=${SSM_ARCH}" >> $GITHUB_OUTPUT
+        
+        # Resolve AMI from SSM Parameter Store
+        AMI_ID=$(aws ssm get-parameter \
+          --name /aws/service/eks/optimized-ami/${{ inputs.k8s_version }}/amazon-linux-2023/${SSM_ARCH}/${{ inputs.ami_type }}/recommended/image_id \
+          --region ${{ inputs.aws_region }} \
+          --query "Parameter.Value" \
+          --output text)
+        echo "ami_id=${AMI_ID}" >> $GITHUB_OUTPUT
+
+    - name: Generate e2e manifests
+      shell: bash
+      run: make update-e2e-manifests
+
+    - name: Build e2e test binary
+      shell: bash
+      run: make build-e2e
+
+    - name: Prepare e2e test script
+      id: prepare-test
+      shell: bash
+      run: |
+        # Create a test script that kubetest2 will execute
+        cat > /tmp/run-e2e-tests.sh << 'SCRIPT'
+        #!/bin/bash
+        
+        # Arguments passed by kubetest2
+        IMAGE="${1}"
+        TEST_FILTER="${2}"
+        E2E_BINARY="${3}"
+        
+        echo "Running e2e tests with image: ${IMAGE}"
+        echo "Test filter: ${TEST_FILTER:-<none>}"
+        
+        # Build test command
+        TEST_CMD="${E2E_BINARY} --test.v --test.timeout 30m --install=true --image=${IMAGE}"
+        
+        # Add filter if provided
+        if [ -n "${TEST_FILTER}" ]; then
+          TEST_CMD="${TEST_CMD} --test.run '${TEST_FILTER}'"
+        fi
+        
+        echo "Executing: ${TEST_CMD}"
+        eval ${TEST_CMD}
+        SCRIPT
+        chmod +x /tmp/run-e2e-tests.sh
+        
+        # Store absolute path to e2e binary
+        echo "e2e_binary=$(pwd)/bin/e2e.test" >> $GITHUB_OUTPUT
+
+    - id: kubetest2
+      shell: bash
+      run: |
+        export PATH=${PATH}:$(go env GOPATH)/bin
+        GOPROXY=direct
+        go install sigs.k8s.io/kubetest2/...@latest
+        go install github.com/aws/aws-k8s-tester/...@HEAD
+
+        set -o xtrace
+        
+        # Use provided image or extract from values.yaml
+        IMAGE="${{ inputs.image }}"
+        if [ -z "$IMAGE" ]; then
+          # Try to derive the image name from charts/eks-node-monitoring-agent/values.yaml
+          VALUES_FILE="charts/eks-node-monitoring-agent/values.yaml"
+          IM_ACCOUNT=$(grep -A15 'nodeAgent:' "$VALUES_FILE" | grep 'account:' | head -1 | awk '{print $2}' | tr -d '"')
+          IM_REGION=$(grep -A15 'nodeAgent:' "$VALUES_FILE" | grep 'region:' | head -1 | awk '{print $2}')
+          IM_TAG=$(grep -A15 'nodeAgent:' "$VALUES_FILE" | grep 'tag:' | head -1 | awk '{print $2}')
+          IMAGE="${IM_ACCOUNT}.dkr.ecr.${IM_REGION}.amazonaws.com/eks/eks-node-monitoring-agent:${IM_TAG}"
+        fi
+
+        echo "Testing this NMA image: ${IMAGE}"
+
+        # Run kubetest2 with --up --down and --test=exec to run our e2e tests
+        # The cluster is created, tests run, then cluster is torn down automatically
+        kubetest2 eksapi \
+          --up \
+          --down \
+          --log-bucket=${{ inputs.log_bucket }} \
+          --kubernetes-version=${{ inputs.k8s_version }} \
+          --unmanaged-nodes \
+          --ami=${{ steps.resolve-ami.outputs.ami_id }} \
+          --region=${{ inputs.aws_region }} \
+          --user-data-format=nodeadm \
+          --test=exec \
+          -- \
+          /tmp/run-e2e-tests.sh \
+          "$IMAGE" \
+          "${{ inputs.test_filter }}" \
+          "${{ steps.prepare-test.outputs.e2e_binary }}"

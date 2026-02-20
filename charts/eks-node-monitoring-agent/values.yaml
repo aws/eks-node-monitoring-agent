@@ -20,7 +20,7 @@ serviceAccount:
 nodeAgent:
   image:
     # -- Image tag for the eks-node-monitoring-agent
-    tag: v1.4.3-eksbuild.2
+    tag: v1.5.1-eksbuild.1
     # -- ECR repository domain for the eks-node-monitoring-agent
     domain: amazonaws.com
     # -- ECR repository region for the eks-node-monitoring-agent
@@ -64,7 +64,7 @@ nodeAgent:
       memory: 30Mi
     limits:
       cpu: 250m
-      memory: 100Mi
+      memory: 200Mi
   # -- Container Security context for the eks-node-monitoring-agent
   securityContext:
     privileged: true
@@ -74,11 +74,13 @@ nodeAgent:
   # -- Deployment tolerations for the eks-node-monitoring-agent
   tolerations:
     - operator: Exists
+  # -- Pod labels applied to the eks-node-monitoring-agent
+  podLabels: {}
 
 dcgmAgent:
   image:
     # -- Image tag for the dcgm-exporter
-    tag: 4.4.0-4.5.0-ubuntu22.04
+    tag: 4.4.2-4.7.1-ubuntu22.04
     # -- ECR repository domain for the dcgm-exporter
     domain: amazonaws.com
     # -- ECR repository region for the dcgm-exporter
@@ -120,6 +122,8 @@ dcgmAgent:
   resources: {}
   # -- Deployment tolerations for the dcgm
   tolerations: []
+  # -- Pod labels applied to the dcgm exporter
+  podLabels: {}
 
 # -- Update strategy for all daemon sets
 updateStrategy:

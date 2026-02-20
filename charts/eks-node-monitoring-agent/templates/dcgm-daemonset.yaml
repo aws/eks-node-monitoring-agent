@@ -18,6 +18,9 @@ spec:
       labels:
         k8s-app: dcgm-server
         version: v1
+        {{- with .Values.dcgmAgent.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
       {{- with .Values.dcgmAgent.affinity }}
       affinity: {{- toYaml . | nindent 8 }}
