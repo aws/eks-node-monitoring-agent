@@ -1,0 +1,46 @@
+---
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: testbed-nma
+  region: us-west-2
+  version: "1.34"
+
+managedNodeGroups:
+
+  # amd64 instance types
+  - name: al23-amd64-standard
+    desiredCapacity: 1
+    amiFamily: AmazonLinux2023
+    instanceType: t3.large
+  - name: al23-amd64-nvidia
+    desiredCapacity: 1
+    amiFamily: AmazonLinux2023
+    instanceType: g4dn.xlarge
+  - name: al23-amd64-neuron
+    desiredCapacity: 1
+    amiFamily: AmazonLinux2023
+    instanceType: inf1.2xlarge
+  - name: br-amd64
+    desiredCapacity: 1
+    amiFamily: Bottlerocket
+    instanceType: t3.large
+  - name: br-amd64-nvidia
+    desiredCapacity: 1
+    amiFamily: Bottlerocket
+    instanceType: g4dn.xlarge
+
+  # arm64 instance types
+  - name: al23-arm64-standard
+    desiredCapacity: 1
+    amiFamily: Bottlerocket
+    instanceType: t4g.large
+  - name: br-arm64-nvidia
+    desiredCapacity: 1
+    amiFamily: Bottlerocket
+    instanceType: g5g.xlarge
+  - name: al23-arm64-nvidia
+    desiredCapacity: 1
+    amiFamily: Bottlerocket
+    instanceType: g5g.xlarge

@@ -17,10 +17,8 @@ var tenv env.Environment
 func TestMain(m *testing.M) {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
-
 	testenv, setupfuncs, finishfuncs := setup.Configure()
 	tenv = testenv.WithContext(ctx)
-
 	os.Exit(tenv.
 		Setup(setupfuncs...).
 		Finish(finishfuncs...).

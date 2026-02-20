@@ -1,0 +1,44 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+build/
+build
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test artifacts
+*.test
+*.out
+coverage.txt
+coverage.html
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Documentation (not needed in image)
+*.md
+!README.md
+docs/
+
+# CI/CD
+.github/
+.circleci/
+.travis.yml
+
+# Helm charts (deployed separately)
+charts/
+
+# Hack scripts (development only)
+hack/
+
+# Examples (not needed in image)
+examples/

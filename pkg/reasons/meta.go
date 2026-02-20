@@ -1,0 +1,44 @@
+//go:generate go run ../../tools/codegen-reasons/... --config-path reasons.yaml --template-path reasons.go.tpl --out-path reasons.go
+
+package reasons
+
+import (
+	"fmt"
+
+	"github.com/aws/eks-node-monitoring-agent/api/monitor"
+)
+
+type ReasonMeta struct {
+	template        string
+	defaultSeverity monitor.Severity
+}
+
+func (r ReasonMeta) Builder(templateArgs ...any) ConditionBuilder {
+	return ConditionBuilder{monitor.Condition{
+		Reason:   fmt.Sprintf(r.template, templateArgs...),
+		Severity: r.defaultSeverity,
+	}}
+}
+
+type ConditionBuilder struct {
+	monitor.Condition
+}
+
+func (r ConditionBuilder) Message(msg string) ConditionBuilder {
+	r.Condition.Message = msg
+	return r
+}
+
+func (r ConditionBuilder) Severity(sev monitor.Severity) ConditionBuilder {
+	r.Condition.Severity = sev
+	return r
+}
+
+func (r ConditionBuilder) MinOccurrences(minOccurrences int64) ConditionBuilder {
+	r.Condition.MinOccurrences = minOccurrences
+	return r
+}
+
+func (r ConditionBuilder) Build() monitor.Condition {
+	return r.Condition
+}

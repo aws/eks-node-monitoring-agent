@@ -1,4 +1,4 @@
-module github.com/aws/eks-node-monitoring-agent/e2e
+module github.com/aws/eks-node-monitoring-agent/e2e-ci
 
 go 1.25.0
 
