@@ -42,7 +42,3 @@ hack/
 
 # Examples (not needed in image)
 examples/
-
-# Brazil/internal build files
-Config
-.crux_dry_run_build
