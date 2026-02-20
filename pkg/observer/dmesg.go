@@ -3,8 +3,8 @@ package observer
 import (
 	"fmt"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor/resource"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/config"
+	"github.com/aws/eks-node-monitoring-agent/api/monitor/resource"
+	"github.com/aws/eks-node-monitoring-agent/pkg/config"
 )
 
 func init() {

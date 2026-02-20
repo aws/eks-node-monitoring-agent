@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	nodeconditions "golang.a2z.com/Eks-node-monitoring-agent/pkg/conditions"
+	nodeconditions "github.com/aws/eks-node-monitoring-agent/pkg/conditions"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/e2e-framework/klient/wait"

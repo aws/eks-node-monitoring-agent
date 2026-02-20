@@ -7,7 +7,7 @@ import (
 	"time"
 
 	dcgmapi "github.com/NVIDIA/go-dcgm/pkg/dcgm"
-	"golang.a2z.com/Eks-node-monitoring-agent/monitors/nvidia/dcgm"
+	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/dcgm"
 )
 
 var _ dcgm.DCGM = &FakeDcgm{}

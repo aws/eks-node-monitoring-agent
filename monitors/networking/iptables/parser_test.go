@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"golang.a2z.com/Eks-node-monitoring-agent/monitors/networking/iptables"
+	"github.com/aws/eks-node-monitoring-agent/monitors/networking/iptables"
 )
 
 func TestIPTablesRuleParser(t *testing.T) {

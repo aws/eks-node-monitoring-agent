@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/util/file"
+	"github.com/aws/eks-node-monitoring-agent/pkg/util/file"
 )
 
 func TestTarValid(t *testing.T) {

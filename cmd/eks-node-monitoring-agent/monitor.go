@@ -1,8 +1,8 @@
 package main
 
 import (
-	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/manager"
+	"github.com/aws/eks-node-monitoring-agent/api/monitor"
+	"github.com/aws/eks-node-monitoring-agent/pkg/manager"
 	corev1 "k8s.io/api/core/v1"
 )
 

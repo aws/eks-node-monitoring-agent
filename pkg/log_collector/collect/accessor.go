@@ -13,8 +13,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/feature/ec2/imds"
 	"github.com/go-logr/logr"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/osext"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/util/file"
+	"github.com/aws/eks-node-monitoring-agent/pkg/osext"
+	"github.com/aws/eks-node-monitoring-agent/pkg/util/file"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
 

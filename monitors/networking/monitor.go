@@ -24,17 +24,17 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
-	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor/resource"
-	"golang.a2z.com/Eks-node-monitoring-agent/monitors/networking/efa"
-	toolexec "golang.a2z.com/Eks-node-monitoring-agent/monitors/networking/exec"
-	"golang.a2z.com/Eks-node-monitoring-agent/monitors/networking/ipamd"
-	"golang.a2z.com/Eks-node-monitoring-agent/monitors/networking/iptables"
-	"golang.a2z.com/Eks-node-monitoring-agent/monitors/networking/networkutils"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/config"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/osext"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/reasons"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/util"
+	"github.com/aws/eks-node-monitoring-agent/api/monitor"
+	"github.com/aws/eks-node-monitoring-agent/api/monitor/resource"
+	"github.com/aws/eks-node-monitoring-agent/monitors/networking/efa"
+	toolexec "github.com/aws/eks-node-monitoring-agent/monitors/networking/exec"
+	"github.com/aws/eks-node-monitoring-agent/monitors/networking/ipamd"
+	"github.com/aws/eks-node-monitoring-agent/monitors/networking/iptables"
+	"github.com/aws/eks-node-monitoring-agent/monitors/networking/networkutils"
+	"github.com/aws/eks-node-monitoring-agent/pkg/config"
+	"github.com/aws/eks-node-monitoring-agent/pkg/osext"
+	"github.com/aws/eks-node-monitoring-agent/pkg/reasons"
+	"github.com/aws/eks-node-monitoring-agent/pkg/util"
 )
 
 var _ monitor.Monitor = (*NetworkingMonitor)(nil)

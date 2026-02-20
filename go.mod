@@ -1,4 +1,4 @@
-module golang.a2z.com/Eks-node-monitoring-agent
+module github.com/aws/eks-node-monitoring-agent
 
 go 1.25.5
 

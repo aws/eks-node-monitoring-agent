@@ -3,7 +3,7 @@ package registry
 import (
 	"testing"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
+	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 )
 
 func TestValidatePlugin(t *testing.T) {

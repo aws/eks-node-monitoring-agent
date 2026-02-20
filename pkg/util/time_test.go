@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/util"
+	"github.com/aws/eks-node-monitoring-agent/pkg/util"
 )
 
 func TestTimeTickWithJitterContext(t *testing.T) {

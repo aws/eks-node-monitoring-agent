@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor/resource"
+	"github.com/aws/eks-node-monitoring-agent/api/monitor/resource"
 )
 
 // ObserverConstructorMap maps resource types to their constructor functions

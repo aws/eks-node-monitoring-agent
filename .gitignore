@@ -3,3 +3,4 @@ gen
 bin
 go.work
 go.work.sum
+Config

@@ -7,9 +7,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
-	"golang.a2z.com/Eks-node-monitoring-agent/monitors/storage/nvme"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/config"
+	"github.com/aws/eks-node-monitoring-agent/api/monitor"
+	"github.com/aws/eks-node-monitoring-agent/monitors/storage/nvme"
+	"github.com/aws/eks-node-monitoring-agent/pkg/config"
 )
 
 func TestEbsThrottling(t *testing.T) {

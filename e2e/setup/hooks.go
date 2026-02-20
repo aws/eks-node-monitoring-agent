@@ -7,9 +7,9 @@ import (
 	"slices"
 	"time"
 
-	frameworkext "golang.a2z.com/Eks-node-monitoring-agent/e2e/framework_extensions"
-	k8shelper "golang.a2z.com/Eks-node-monitoring-agent/e2e/k8s"
-	"golang.a2z.com/Eks-node-monitoring-agent/e2e/monitoring"
+	frameworkext "github.com/aws/eks-node-monitoring-agent/e2e/framework_extensions"
+	k8shelper "github.com/aws/eks-node-monitoring-agent/e2e/k8s"
+	"github.com/aws/eks-node-monitoring-agent/e2e/monitoring"
 
 	appsv1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"

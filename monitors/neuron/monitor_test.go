@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
-	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor/resource"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/reasons"
+	"github.com/aws/eks-node-monitoring-agent/api/monitor"
+	"github.com/aws/eks-node-monitoring-agent/api/monitor/resource"
+	"github.com/aws/eks-node-monitoring-agent/pkg/reasons"
 )
 
 // mockManager implements monitor.Manager for testing

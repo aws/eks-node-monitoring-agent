@@ -5,7 +5,7 @@ package nvidia
 import (
 	"context"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
+	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 )
 
 var _ monitor.Monitor = (*NvidiaMonitor)(nil)

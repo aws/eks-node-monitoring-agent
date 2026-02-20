@@ -3,7 +3,7 @@ package collect
 import (
 	"fmt"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/log_collector/aws"
+	"github.com/aws/eks-node-monitoring-agent/pkg/log_collector/aws"
 )
 
 type Instance struct{}

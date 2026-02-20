@@ -8,7 +8,7 @@ import (
 	"strings"
 	"text/template"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
+	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 	yaml "sigs.k8s.io/yaml/goyaml.v3"
 )
 

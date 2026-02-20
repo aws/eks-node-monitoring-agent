@@ -10,9 +10,9 @@ import (
 	dcgmapi "github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
-	"golang.a2z.com/Eks-node-monitoring-agent/monitors/nvidia/dcgm"
-	"golang.a2z.com/Eks-node-monitoring-agent/monitors/nvidia/dcgm/fake"
+	"github.com/aws/eks-node-monitoring-agent/api/monitor"
+	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/dcgm"
+	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/dcgm/fake"
 )
 
 func TestHealthCheck(t *testing.T) {

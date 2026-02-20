@@ -10,12 +10,12 @@ import (
 	"strings"
 	"time"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
-	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor/resource"
-	"golang.a2z.com/Eks-node-monitoring-agent/monitors/nvidia/dcgm"
-	"golang.a2z.com/Eks-node-monitoring-agent/monitors/nvidia/nccl"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/config"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/util"
+	"github.com/aws/eks-node-monitoring-agent/api/monitor"
+	"github.com/aws/eks-node-monitoring-agent/api/monitor/resource"
+	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/dcgm"
+	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/nccl"
+	"github.com/aws/eks-node-monitoring-agent/pkg/config"
+	"github.com/aws/eks-node-monitoring-agent/pkg/util"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 

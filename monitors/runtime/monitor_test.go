@@ -10,11 +10,11 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
-	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor/resource"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/config"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/observer"
-	"golang.a2z.com/Eks-node-monitoring-agent/test/fake"
+	"github.com/aws/eks-node-monitoring-agent/api/monitor"
+	"github.com/aws/eks-node-monitoring-agent/api/monitor/resource"
+	"github.com/aws/eks-node-monitoring-agent/pkg/config"
+	"github.com/aws/eks-node-monitoring-agent/pkg/observer"
+	"github.com/aws/eks-node-monitoring-agent/test/fake"
 )
 
 var fakeClient = &fake.FakeKubeClient{}

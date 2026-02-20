@@ -6,8 +6,8 @@ import (
 	"errors"
 	"strings"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/config"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/osext"
+	"github.com/aws/eks-node-monitoring-agent/pkg/config"
+	"github.com/aws/eks-node-monitoring-agent/pkg/osext"
 )
 
 func GetRules() (rules []string, merr error) {

@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/pathlib"
+	"github.com/aws/eks-node-monitoring-agent/pkg/pathlib"
 )
 
 type Kubernetes struct{}

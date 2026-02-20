@@ -10,8 +10,8 @@ import (
 	dcgmapi "github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/reasons"
+	"github.com/aws/eks-node-monitoring-agent/api/monitor"
+	"github.com/aws/eks-node-monitoring-agent/pkg/reasons"
 )
 
 // WellKnownXidCodes is a curated list of NVIDIA XID error codes that are known to indicate

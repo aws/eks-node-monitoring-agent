@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
-	"golang.a2z.com/Eks-node-monitoring-agent/monitors/storage/nvme"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/config"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/reasons"
+	"github.com/aws/eks-node-monitoring-agent/api/monitor"
+	"github.com/aws/eks-node-monitoring-agent/monitors/storage/nvme"
+	"github.com/aws/eks-node-monitoring-agent/pkg/config"
+	"github.com/aws/eks-node-monitoring-agent/pkg/reasons"
 	"k8s.io/utils/set"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )

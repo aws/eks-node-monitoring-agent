@@ -5,10 +5,10 @@ package examples
 import (
 	"fmt"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/api"
-	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/monitor/framework"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/monitor/registry"
+	"github.com/aws/eks-node-monitoring-agent/api"
+	"github.com/aws/eks-node-monitoring-agent/api/monitor"
+	"github.com/aws/eks-node-monitoring-agent/pkg/monitor/framework"
+	"github.com/aws/eks-node-monitoring-agent/pkg/monitor/registry"
 )
 
 // Example 1: Creating a plugin with CRDs

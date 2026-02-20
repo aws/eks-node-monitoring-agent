@@ -12,10 +12,10 @@ import (
 
 	"k8s.io/client-go/tools/clientcmd"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/pathlib"
-	netutils "golang.a2z.com/Eks-node-monitoring-agent/pkg/util/net"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/util/networkutils"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/util/validation"
+	"github.com/aws/eks-node-monitoring-agent/pkg/pathlib"
+	netutils "github.com/aws/eks-node-monitoring-agent/pkg/util/net"
+	"github.com/aws/eks-node-monitoring-agent/pkg/util/networkutils"
+	"github.com/aws/eks-node-monitoring-agent/pkg/util/validation"
 )
 
 type Networking struct {

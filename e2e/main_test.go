@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"testing"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/e2e/setup"
+	"github.com/aws/eks-node-monitoring-agent/e2e/setup"
 	"sigs.k8s.io/e2e-framework/pkg/env"
 )
 

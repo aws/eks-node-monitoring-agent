@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	awshelper "golang.a2z.com/Eks-node-monitoring-agent/e2e/aws"
-	k8shelper "golang.a2z.com/Eks-node-monitoring-agent/e2e/k8s"
+	awshelper "github.com/aws/eks-node-monitoring-agent/e2e/aws"
+	k8shelper "github.com/aws/eks-node-monitoring-agent/e2e/k8s"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"

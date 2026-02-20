@@ -1,9 +1,9 @@
 package runtime
 
 import (
-	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/monitor/framework"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/monitor/registry"
+	"github.com/aws/eks-node-monitoring-agent/api/monitor"
+	"github.com/aws/eks-node-monitoring-agent/pkg/monitor/framework"
+	"github.com/aws/eks-node-monitoring-agent/pkg/monitor/registry"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )

@@ -7,7 +7,7 @@ import (
 	"os"
 
 	"github.com/aws/amazon-vpc-cni-k8s/pkg/ipamd/datastore"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/config"
+	"github.com/aws/eks-node-monitoring-agent/pkg/config"
 )
 
 func GetCheckpoint() (*datastore.CheckpointData, error) {

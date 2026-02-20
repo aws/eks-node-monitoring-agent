@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/log_collector/system"
+	"github.com/aws/eks-node-monitoring-agent/pkg/log_collector/system"
 )
 
 type System struct{}

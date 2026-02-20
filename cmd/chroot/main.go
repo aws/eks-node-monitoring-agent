@@ -6,7 +6,7 @@ package main
 import (
 	"os"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/osext"
+	"github.com/aws/eks-node-monitoring-agent/pkg/osext"
 )
 
 func main() {

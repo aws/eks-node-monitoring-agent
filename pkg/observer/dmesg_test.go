@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor/resource"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/observer"
+	"github.com/aws/eks-node-monitoring-agent/api/monitor/resource"
+	"github.com/aws/eks-node-monitoring-agent/pkg/observer"
 )
 
 func TestDmesgObserver_Read(t *testing.T) {

@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
+	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 

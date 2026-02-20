@@ -25,24 +25,24 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/api/v1alpha1"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/conditions"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/config"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/controllers"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/diagnostic"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/manager"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/monitor/registry"
+	"github.com/aws/eks-node-monitoring-agent/api/v1alpha1"
+	"github.com/aws/eks-node-monitoring-agent/pkg/conditions"
+	"github.com/aws/eks-node-monitoring-agent/pkg/config"
+	"github.com/aws/eks-node-monitoring-agent/pkg/controllers"
+	"github.com/aws/eks-node-monitoring-agent/pkg/diagnostic"
+	"github.com/aws/eks-node-monitoring-agent/pkg/manager"
+	"github.com/aws/eks-node-monitoring-agent/pkg/monitor/registry"
 
 	// Import monitor packages to trigger auto-registration via init()
-	_ "golang.a2z.com/Eks-node-monitoring-agent/monitors/kernel"
-	_ "golang.a2z.com/Eks-node-monitoring-agent/monitors/networking"
-	_ "golang.a2z.com/Eks-node-monitoring-agent/monitors/neuron"
-	_ "golang.a2z.com/Eks-node-monitoring-agent/monitors/nvidia"
-	_ "golang.a2z.com/Eks-node-monitoring-agent/monitors/storage"
+	_ "github.com/aws/eks-node-monitoring-agent/monitors/kernel"
+	_ "github.com/aws/eks-node-monitoring-agent/monitors/networking"
+	_ "github.com/aws/eks-node-monitoring-agent/monitors/neuron"
+	_ "github.com/aws/eks-node-monitoring-agent/monitors/nvidia"
+	_ "github.com/aws/eks-node-monitoring-agent/monitors/storage"
 	// Import monitors that require explicit registration (can't use init())
-	"golang.a2z.com/Eks-node-monitoring-agent/monitors/runtime"
+	"github.com/aws/eks-node-monitoring-agent/monitors/runtime"
 	// Import observer packages to register observers
-	_ "golang.a2z.com/Eks-node-monitoring-agent/pkg/observer"
+	_ "github.com/aws/eks-node-monitoring-agent/pkg/observer"
 )
 
 var (

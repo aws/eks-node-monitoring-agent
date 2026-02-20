@@ -1,5 +1,3 @@
-// Ported & Modified from https://code.amazon.com/packages/EKSLogAnalyzer/blobs/4d65189a3a92192cd80d0588de697d0d1c8bcdb0/--/pkg/networking/iptables.go
-
 package iptables
 
 import (

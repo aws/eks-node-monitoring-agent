@@ -3,8 +3,8 @@ package logcollection
 import (
 	"slices"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/api/v1alpha1"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/log_collector/collect"
+	"github.com/aws/eks-node-monitoring-agent/api/v1alpha1"
+	"github.com/aws/eks-node-monitoring-agent/pkg/log_collector/collect"
 )
 
 // GetCollectors returns a list of callable collectors based on the categories

@@ -9,11 +9,11 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/api"
-	"golang.a2z.com/Eks-node-monitoring-agent/api/monitor"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/conditions"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/monitor/framework"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/monitor/registry"
+	"github.com/aws/eks-node-monitoring-agent/api"
+	"github.com/aws/eks-node-monitoring-agent/api/monitor"
+	"github.com/aws/eks-node-monitoring-agent/pkg/conditions"
+	"github.com/aws/eks-node-monitoring-agent/pkg/monitor/framework"
+	"github.com/aws/eks-node-monitoring-agent/pkg/monitor/registry"
 )
 
 // Example 1: Simple plugin creation

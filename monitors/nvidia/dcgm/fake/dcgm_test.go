@@ -10,7 +10,7 @@ import (
 
 	dcgmapi "github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
-	"golang.a2z.com/Eks-node-monitoring-agent/monitors/nvidia/dcgm/fake"
+	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/dcgm/fake"
 )
 
 func Test(t *testing.T) {

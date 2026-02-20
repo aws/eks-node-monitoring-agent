@@ -19,12 +19,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/api/v1alpha1"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/config"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/log_collector/collect"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/logcollection"
-	fileutil "golang.a2z.com/Eks-node-monitoring-agent/pkg/util/file"
-	netutil "golang.a2z.com/Eks-node-monitoring-agent/pkg/util/net"
+	"github.com/aws/eks-node-monitoring-agent/api/v1alpha1"
+	"github.com/aws/eks-node-monitoring-agent/pkg/config"
+	"github.com/aws/eks-node-monitoring-agent/pkg/log_collector/collect"
+	"github.com/aws/eks-node-monitoring-agent/pkg/logcollection"
+	fileutil "github.com/aws/eks-node-monitoring-agent/pkg/util/file"
+	netutil "github.com/aws/eks-node-monitoring-agent/pkg/util/net"
 )
 
 type nodeDiagnosticController struct {

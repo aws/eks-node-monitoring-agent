@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/util/validation"
+	"github.com/aws/eks-node-monitoring-agent/pkg/util/validation"
 )
 
 func TestInstanceIDParser(t *testing.T) {

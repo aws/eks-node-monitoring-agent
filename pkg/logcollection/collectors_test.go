@@ -7,9 +7,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"golang.a2z.com/Eks-node-monitoring-agent/api/v1alpha1"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/log_collector/collect"
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/logcollection"
+	"github.com/aws/eks-node-monitoring-agent/api/v1alpha1"
+	"github.com/aws/eks-node-monitoring-agent/pkg/log_collector/collect"
+	"github.com/aws/eks-node-monitoring-agent/pkg/logcollection"
 )
 
 func TestGetCollectors(t *testing.T) {

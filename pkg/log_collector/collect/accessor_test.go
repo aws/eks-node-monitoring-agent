@@ -3,7 +3,7 @@ package collect_test
 import (
 	"testing"
 
-	"golang.a2z.com/Eks-node-monitoring-agent/pkg/log_collector/collect"
+	"github.com/aws/eks-node-monitoring-agent/pkg/log_collector/collect"
 )
 
 func TestLogCollectorAccessor(t *testing.T) {

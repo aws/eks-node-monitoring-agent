@@ -13,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
-	awshelper "golang.a2z.com/Eks-node-monitoring-agent/e2e/aws"
+	awshelper "github.com/aws/eks-node-monitoring-agent/e2e/aws"
 )
 
 var metricsRoleArn string
