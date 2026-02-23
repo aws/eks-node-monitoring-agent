@@ -51,6 +51,7 @@ The following table lists the configurable parameters for this chart and their d
 | nameOverride | string | `"eks-node-monitoring-agent"` | A name override for the chart |
 | nodeAgent.additionalArgs | list | `[]` | List of addittional container arguments for the eks-node-monitoring-agent |
 | nodeAgent.affinity | object | see [`values.yaml`](./values.yaml) | Map of pod affinities for the eks-node-monitoring-agent |
+| nodeAgent.env | object | `{}` | Container environment for the eks-node-monitoring-agent |
 | nodeAgent.image.account | string | `"602401143452"` | ECR repository account number for the eks-node-monitoring-agent |
 | nodeAgent.image.domain | string | `"amazonaws.com"` | ECR repository domain for the eks-node-monitoring-agent |
 | nodeAgent.image.endpoint | string | `"ecr"` | ECR repository endpoint for the eks-node-monitoring-agent |
