@@ -459,7 +459,7 @@ spec:
       priorityClassName: system-node-critical
       containers:
         - name: eks-node-monitoring-agent-dcgm
-          image: 602401143452.dkr.ecr.us-west-2.amazonaws.com/eks/observability/dcgm-exporter:4.4.2-4.7.1-ubuntu22.04
+          image: 602401143452.dkr.ecr.us-west-2.amazonaws.com/eks/observability/dcgm-exporter:4.5.2-4.8.1-ubuntu22.04
           command: ["/bin/sh"]
           args: ["-c", "nv-hostengine -n -b ALL || true; sleep infinity"]
           ports:

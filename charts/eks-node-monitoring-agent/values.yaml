@@ -80,7 +80,7 @@ nodeAgent:
 dcgmAgent:
   image:
     # -- Image tag for the dcgm-exporter
-    tag: 4.4.2-4.7.1-ubuntu22.04
+    tag: 4.5.2-4.8.1-ubuntu22.04
     # -- ECR repository domain for the dcgm-exporter
     domain: amazonaws.com
     # -- ECR repository region for the dcgm-exporter
