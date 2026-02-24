@@ -115,7 +115,7 @@ test: generate fmt vet covignore ## Run tests
 	fi
 
 .PHONY: generate
-generate: mod-tidy controller-gen generate-crds generate-reasons generate-docs helm-docs ## Run all code generation
+generate: mod-tidy controller-gen generate-crds generate-reasons generate-docs helm-docs update-e2e-manifests ## Run all code generation
 
 .PHONY: mod-tidy
 mod-tidy: ## Tidy Go modules
