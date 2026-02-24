@@ -285,34 +285,25 @@ uninstall: ## Remove deployment from current cluster
 # E2E Test Targets
 # =============================================================================
 
-.PHONY: e2e
-e2e: ## Build and run e2e tests against the current cluster context
-	go test -tags=e2e -v -timeout 60m ./e2e/ --install=true --image $(IMAGE_URI) $(ARGS)
-
-# =============================================================================
-# E2E CI Test Targets (lightweight GitHub CI smoke tests)
-# =============================================================================
-
-.PHONY: update-e2e-ci-manifests
-update-e2e-ci-manifests: ## Generate e2e-ci agent manifest template from Helm chart
-	@echo "Generating e2e-ci agent manifest template..."
+.PHONY: update-e2e-manifests
+update-e2e-manifests: ## Generate e2e agent manifest template from Helm chart
+	@echo "Generating e2e agent manifest template..."
 	@helm template eks-node-monitoring-agent charts/eks-node-monitoring-agent \
 		--namespace kube-system \
 		--include-crds | \
-		sed 's|image: [^[:space:]]*|image: {{ .Image }}|g' > e2e-ci/setup/manifests/agent.tpl.yaml
-	@echo "Generated e2e-ci/setup/manifests/agent.tpl.yaml"
+		sed 's|image: [^[:space:]]*|image: {{ .Image }}|g' > e2e/setup/manifests/agent.tpl.yaml
+	@echo "Generated e2e/setup/manifests/agent.tpl.yaml"
 
-.PHONY: build-e2e-ci
-build-e2e-ci: ## Build e2e-ci test binary
-	@echo "Building e2e-ci test binary..."
+.PHONY: build-e2e
+build-e2e: ## Build e2e test binary
+	@echo "Building e2e test binary..."
 	@mkdir -p bin
-	$(MAKE) -C e2e-ci build
+	go test -c -tags=e2e -o bin/e2e.test ./e2e/
 	@echo "Built bin/e2e.test"
 
-.PHONY: e2e-ci
-e2e-ci: update-e2e-ci-manifests build-e2e-ci ## Run lightweight CI smoke tests
-	@echo "Running e2e-ci tests..."
-	./bin/e2e.test --test.v --test.timeout 60m --install=true --image=$(IMAGE)
+.PHONY: e2e
+e2e: update-e2e-manifests build-e2e ## Build and run e2e tests against the current cluster context
+	./bin/e2e.test --test.v --test.timeout 60m --install=true --image=$(IMAGE_URI) $(ARGS)
 
 # =============================================================================
 # Release Target
