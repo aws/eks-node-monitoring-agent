@@ -3,9 +3,9 @@ package frameworkext
 import (
 	"bytes"
 	"context"
-	"html/template"
 	"io"
 	"os"
+	"text/template"
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -148,7 +148,9 @@ func processObjects(restConfig *rest.Config, objs []k8s.Object, processFunc func
 		if err != nil {
 			return err
 		}
-		processFunc(client, obj)
+		if err := processFunc(client, obj); err != nil {
+			return err
+		}
 	}
 	return nil
 }
