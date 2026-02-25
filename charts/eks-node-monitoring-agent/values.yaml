@@ -76,6 +76,13 @@ nodeAgent:
     - operator: Exists
   # -- Pod labels applied to the eks-node-monitoring-agent
   podLabels: {}
+  # -- Per-monitor configuration keyed by plugin name.
+  # Omit or leave empty to enable all monitors (default).
+  # Example: To disable the networking monitor:
+  #   monitors:
+  #     networking:
+  #       enabled: false
+  monitors: {}
 
 dcgmAgent:
   image:

@@ -68,7 +68,17 @@ spec:
           volumeMounts:
             - name: host-root
               mountPath: /host
+            {{- if .Values.nodeAgent.monitors }}
+            - name: monitor-config
+              mountPath: /etc/nma
+              readOnly: true
+            {{- end }}
       volumes:
         - name: host-root
           hostPath:
             path: /
+        {{- if .Values.nodeAgent.monitors }}
+        - name: monitor-config
+          configMap:
+            name: {{ include "eks-node-monitoring-agent.fullname" . }}-monitor-config
+        {{- end }}
