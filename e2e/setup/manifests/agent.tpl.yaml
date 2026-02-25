@@ -190,10 +190,11 @@ metadata:
   namespace: kube-system
   labels:
     app.kubernetes.io/name: eks-node-monitoring-agent
+    helm.sh/chart: eks-node-monitoring-agent
     app.kubernetes.io/instance: eks-node-monitoring-agent
     app.kubernetes.io/version: "1.5.1"
+    app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
-    app.kubernetes.io/managed-by: EKS
 ---
 # Source: eks-node-monitoring-agent/templates/clusterrole.yaml
 apiVersion: rbac.authorization.k8s.io/v1
@@ -202,12 +203,19 @@ metadata:
   name: eks-node-monitoring-agent
   labels:
     app.kubernetes.io/name: eks-node-monitoring-agent
+    helm.sh/chart: eks-node-monitoring-agent
     app.kubernetes.io/instance: eks-node-monitoring-agent
     app.kubernetes.io/version: "1.5.1"
+    app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
-    app.kubernetes.io/managed-by: EKS
 rules:
   # monitoring permissions
+- apiGroups: [""]
+  resources: ["nodes"]
+  verbs: ["get", "watch", "list"]
+- apiGroups: [""]
+  resources: ["nodes/status"]
+  verbs: ["patch"]
 - apiGroups: [""]
   resources: ["events"]
   verbs: ["create", "patch"]
@@ -226,10 +234,11 @@ metadata:
   name: eks-node-monitoring-agent
   labels:
     app.kubernetes.io/name: eks-node-monitoring-agent
+    helm.sh/chart: eks-node-monitoring-agent
     app.kubernetes.io/instance: eks-node-monitoring-agent
     app.kubernetes.io/version: "1.5.1"
+    app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
-    app.kubernetes.io/managed-by: EKS
 roleRef:
   kind: ClusterRole
   name: eks-node-monitoring-agent
@@ -247,14 +256,16 @@ metadata:
   namespace: kube-system
   labels:
     app.kubernetes.io/name: eks-node-monitoring-agent
+    helm.sh/chart: eks-node-monitoring-agent
     app.kubernetes.io/instance: eks-node-monitoring-agent
     app.kubernetes.io/version: "1.5.1"
+    app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
-    app.kubernetes.io/managed-by: EKS
 spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: eks-node-monitoring-agent
+      helm.sh/chart: eks-node-monitoring-agent
       app.kubernetes.io/instance: eks-node-monitoring-agent
   updateStrategy:
     rollingUpdate:
@@ -264,10 +275,11 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: eks-node-monitoring-agent
+        helm.sh/chart: eks-node-monitoring-agent
         app.kubernetes.io/instance: eks-node-monitoring-agent
         app.kubernetes.io/version: "1.5.1"
+        app.kubernetes.io/managed-by: Helm
         app.kubernetes.io/component: controller
-        app.kubernetes.io/managed-by: EKS
     spec:
       affinity:
         nodeAffinity:
@@ -279,6 +291,7 @@ spec:
                 values:
                 - fargate
                 - auto
+                - hybrid
               - key: sagemaker.amazonaws.com/compute-type
                 operator: NotIn
                 values:
@@ -299,15 +312,13 @@ spec:
       containers:
         - name: eks-node-monitoring-agent
           image: {{ .Image }}
-          imagePullPolicy: Always
+          imagePullPolicy: IfNotPresent
           args:
             - --probe-address=:8002
             - --metrics-address=:8003
-            - --pprof-address=:8082
-            - --verbosity=5
           env:
             - name: HOST_ROOT
-              value: "/host"
+              value: /host
             - name: MY_NODE_NAME
               valueFrom:
                 fieldRef:
@@ -413,12 +424,6 @@ spec:
                 - g6f.large
                 - g6f.xlarge
                 - g6.xlarge
-                - g7e.12xlarge
-                - g7e.24xlarge
-                - g7e.2xlarge
-                - g7e.48xlarge
-                - g7e.4xlarge
-                - g7e.8xlarge
                 - gr6.4xlarge
                 - gr6.8xlarge
                 - gr6f.4xlarge
@@ -439,12 +444,12 @@ spec:
                 - p6-b300.48xlarge
                 - p6e-gb200.36xlarge
                 - p6e-gb300.36xlarge
-                - p6e-gb300r.36xlarge
               - key: eks.amazonaws.com/compute-type
                 operator: NotIn
                 values:
                 - fargate
                 - auto
+                - hybrid
               - key: sagemaker.amazonaws.com/compute-type
                 operator: NotIn
                 values:
@@ -453,13 +458,13 @@ spec:
                 operator: In
                 values:
                 - amd64
-                - arm64
       nodeSelector:
         kubernetes.io/os: linux
       priorityClassName: system-node-critical
       containers:
         - name: eks-node-monitoring-agent-dcgm
-          image: 602401143452.dkr.ecr.us-west-2.amazonaws.com/eks/observability/dcgm-exporter:4.5.2-4.8.1-ubuntu22.04
+          image: {{ .Image }}
+          imagePullPolicy: IfNotPresent
           command: ["/bin/sh"]
           args: ["-c", "nv-hostengine -n -b ALL || true; sleep infinity"]
           ports:

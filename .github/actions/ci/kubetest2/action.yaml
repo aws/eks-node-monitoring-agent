@@ -37,7 +37,7 @@ runs:
       uses: actions/setup-go@v5
       with:
         go-version: stable
-        cache-dependency-path: e2e-ci/go.sum
+        cache-dependency-path: go.sum
 
     - id: resolve-ami
       shell: bash

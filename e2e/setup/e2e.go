@@ -18,6 +18,7 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/e2e/metrics"
 	"github.com/aws/eks-node-monitoring-agent/e2e/monitoring"
 	"github.com/aws/eks-node-monitoring-agent/e2e/suites/addon"
+	"github.com/aws/eks-node-monitoring-agent/e2e/suites/basic"
 	"github.com/aws/eks-node-monitoring-agent/e2e/suites/monitors"
 	"github.com/aws/eks-node-monitoring-agent/e2e/suites/nodediagnostic"
 	appsv1 "k8s.io/api/apps/v1"
@@ -135,6 +136,13 @@ var checkDaemonSet func(context.Context) error
 // The format of this function is a little strange because normally tests are
 // run inside their own top-level test bodies.
 func TestWrapper(t *testing.T, Testenv env.Environment) {
+	// Basic deployment validation (fast-fail)
+	Testenv.Test(t,
+		basic.DaemonSetReady(),
+		basic.PodsHealthy(),
+		basic.CRDsInstalled(),
+	)
+
 	// sleep to account for the dirty condition update time in
 	// development clusters.
 	time.Sleep(20 * time.Second)
