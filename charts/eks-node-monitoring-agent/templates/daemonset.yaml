@@ -15,9 +15,15 @@ spec:
     metadata:
       labels:
         {{- include "eks-node-monitoring-agent.labels" . | nindent 8 }}
-        {{- with .Values.nodeAgent.podLabels }}
+        {{- $podLabels := merge (.Values.nodeAgent.podLabels | default dict) (.Values.global.podLabels | default dict) }}
+        {{- with $podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
+      {{- $podAnnotations := merge (.Values.nodeAgent.podAnnotations | default dict) (.Values.global.podAnnotations | default dict) }}
+      {{- with $podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       {{- with .Values.nodeAgent.affinity }}
       affinity: {{- toYaml . | nindent 8 }}
