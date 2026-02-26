@@ -2,6 +2,14 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
+
+# -- Global values shared across components
+global:
+  # -- Labels applied to eks-node-monitoring-agent and dcgm-exporter (can be overridden by component-specific labels)
+  podLabels: {}
+  # -- Annotations applied to eks-node-monitoring-agent and dcgm-exporter (can be overridden by component-specific annotations)
+  podAnnotations: {}
+
 # -- Docker registry pull secrets
 imagePullSecrets: []
 # -- A name override for the chart
@@ -83,6 +91,8 @@ nodeAgent:
   #     networking:
   #       enabled: false
   monitors: {}
+  # -- Pod annotations applied to the eks-node-monitoring-agent
+  podAnnotations: {}
 
 dcgmAgent:
   image:
@@ -131,6 +141,8 @@ dcgmAgent:
   tolerations: []
   # -- Pod labels applied to the dcgm exporter
   podLabels: {}
+  # -- Pod annotations applied to the dcgm exporter
+  podAnnotations: {}  
 
 # -- Update strategy for all daemon sets
 updateStrategy:
