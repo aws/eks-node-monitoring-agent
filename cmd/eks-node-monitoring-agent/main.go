@@ -222,35 +222,50 @@ func run() error {
 		}
 	}
 
-	// Build condition configs for node exporter
+	// Build condition configs for node exporter, only for enabled monitors.
+	// NodeExporter unconditionally sets all provided conditions to ConditionTrue,
+	// so we must exclude conditions for disabled monitors to avoid falsely
+	// reporting health for subsystems that are not being monitored.
 	conditionConfigs := make(map[corev1.NodeConditionType]manager.NodeConditionConfig)
-	conditionConfigs[conditions.KernelReady] = manager.NodeConditionConfig{
-		ReadyReason:  "KernelIsReady",
-		ReadyMessage: "Monitoring for the Kernel system is active",
+	if monitorConfig.IsMonitorEnabled("kernel-monitor") {
+		conditionConfigs[conditions.KernelReady] = manager.NodeConditionConfig{
+			ReadyReason:  "KernelIsReady",
+			ReadyMessage: "Monitoring for the Kernel system is active",
+		}
 	}
-	conditionConfigs[conditions.StorageReady] = manager.NodeConditionConfig{
-		ReadyReason:  "DiskIsReady",
-		ReadyMessage: "Monitoring for the Disk system is active",
+	if monitorConfig.IsMonitorEnabled("storage-monitor") {
+		conditionConfigs[conditions.StorageReady] = manager.NodeConditionConfig{
+			ReadyReason:  "DiskIsReady",
+			ReadyMessage: "Monitoring for the Disk system is active",
+		}
 	}
-	conditionConfigs[conditions.ContainerRuntimeReady] = manager.NodeConditionConfig{
-		ReadyReason:  "ContainerRuntimeIsReady",
-		ReadyMessage: "Monitoring for the ContainerRuntime system is active",
+	if monitorConfig.IsMonitorEnabled("runtime") {
+		conditionConfigs[conditions.ContainerRuntimeReady] = manager.NodeConditionConfig{
+			ReadyReason:  "ContainerRuntimeIsReady",
+			ReadyMessage: "Monitoring for the ContainerRuntime system is active",
+		}
 	}
-	conditionConfigs[conditions.NetworkingReady] = manager.NodeConditionConfig{
-		ReadyReason:  "NetworkingIsReady",
-		ReadyMessage: "Monitoring for the Networking system is active",
+	if monitorConfig.IsMonitorEnabled("networking") {
+		conditionConfigs[conditions.NetworkingReady] = manager.NodeConditionConfig{
+			ReadyReason:  "NetworkingIsReady",
+			ReadyMessage: "Monitoring for the Networking system is active",
+		}
 	}
 
 	switch runtimeContext.AcceleratedHardware() {
 	case config.AcceleratedHardwareNvidia:
-		conditionConfigs[conditions.AcceleratedHardwareReady] = manager.NodeConditionConfig{
-			ReadyReason:  "NvidiaGPUIsReady",
-			ReadyMessage: "Monitoring for the Nvidia GPU system is active",
+		if monitorConfig.IsMonitorEnabled("nvidia") {
+			conditionConfigs[conditions.AcceleratedHardwareReady] = manager.NodeConditionConfig{
+				ReadyReason:  "NvidiaGPUIsReady",
+				ReadyMessage: "Monitoring for the Nvidia GPU system is active",
+			}
 		}
 	case config.AcceleratedHardwareNeuron:
-		conditionConfigs[conditions.AcceleratedHardwareReady] = manager.NodeConditionConfig{
-			ReadyReason:  "NeuronAcceleratedHardwareIsReady",
-			ReadyMessage: "Monitoring for the Neuron AcceleratedHardware system is active",
+		if monitorConfig.IsMonitorEnabled("neuron") {
+			conditionConfigs[conditions.AcceleratedHardwareReady] = manager.NodeConditionConfig{
+				ReadyReason:  "NeuronAcceleratedHardwareIsReady",
+				ReadyMessage: "Monitoring for the Neuron AcceleratedHardware system is active",
+			}
 		}
 	}
 

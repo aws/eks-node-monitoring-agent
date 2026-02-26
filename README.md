@@ -36,6 +36,47 @@ It is recommended to install the EKS Node Health Monitoring Agent as an EKS add-
 
 For detailed configuration options and usage documentation, refer to the [Amazon EKS Node Health documentation](https://docs.aws.amazon.com/eks/latest/userguide/node-health.html).
 
+## Configuring Monitors
+
+By default all monitors are enabled. Individual monitors can be disabled via the Helm chart's `nodeAgent.monitors` configuration or by providing a config file at `/etc/nma/config.yaml`.
+
+### Helm Values
+
+```yaml
+nodeAgent:
+  monitors:
+    networking:
+      enabled: false
+    neuron:
+      enabled: false
+```
+
+### Config File Format
+
+The agent reads a YAML config file mounted at `/etc/nma/config.yaml`. Omitted monitors default to enabled.
+
+```yaml
+monitors:
+  kernel-monitor:
+    enabled: true
+  networking:
+    enabled: false
+  storage-monitor:
+    enabled: true
+  nvidia:
+    enabled: true
+  neuron:
+    enabled: false
+  runtime:
+    enabled: true
+```
+
+Valid plugin names: `kernel-monitor`, `networking`, `storage-monitor`, `nvidia`, `neuron`, `runtime`.
+
+When a monitor is disabled:
+- Its health checks are not executed.
+- The corresponding `NodeCondition` (e.g., `NetworkingReady`) is not set on the node, avoiding false-positive healthy status for unmonitored subsystems.
+
 ## Building
 
 ```bash

@@ -22,7 +22,7 @@ func TestLoadMonitorConfig_NonExistentFile(t *testing.T) {
 	// Default config: all monitors enabled (empty map).
 	assert.Empty(t, cfg.Monitors)
 	// Every known plugin should be enabled by default.
-	for name := range config.KnownPluginNames {
+	for _, name := range config.KnownPluginNames {
 		assert.True(t, cfg.IsMonitorEnabled(name), "expected %s to be enabled by default", name)
 	}
 }
@@ -92,7 +92,7 @@ func TestLoadMonitorConfig_EmptyFile(t *testing.T) {
 	assert.NotNil(t, cfg)
 	assert.Empty(t, cfg.Monitors)
 	// All monitors should be enabled by default.
-	for name := range config.KnownPluginNames {
+	for _, name := range config.KnownPluginNames {
 		assert.True(t, cfg.IsMonitorEnabled(name), "expected %s to be enabled for empty file", name)
 	}
 }

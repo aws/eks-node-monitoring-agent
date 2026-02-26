@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 
@@ -46,13 +47,13 @@ func (mc *MonitorConfig) IsMonitorEnabled(pluginName string) bool {
 }
 
 // KnownPluginNames is the set of valid plugin names for validation.
-var KnownPluginNames = map[string]bool{
-	"kernel-monitor":  true,
-	"networking":      true,
-	"storage-monitor": true,
-	"nvidia":          true,
-	"neuron":          true,
-	"runtime":         true,
+var KnownPluginNames = []string{
+	"kernel-monitor",
+	"networking",
+	"storage-monitor",
+	"nvidia",
+	"neuron",
+	"runtime",
 }
 
 // Validate checks that all keys in Monitors are known plugin names.
@@ -62,7 +63,7 @@ func (mc *MonitorConfig) Validate() error {
 	}
 	var unknown []string
 	for name := range mc.Monitors {
-		if !KnownPluginNames[name] {
+		if !slices.Contains(KnownPluginNames, name) {
 			unknown = append(unknown, name)
 		}
 	}
