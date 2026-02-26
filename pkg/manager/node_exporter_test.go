@@ -197,3 +197,148 @@ func isConditionEqual(l corev1.NodeCondition, r corev1.NodeCondition) bool {
 		l.Message == r.Message &&
 		l.Reason == r.Reason
 }
+
+func TestNodeExporter_LastTransitionTimeFlapping(t *testing.T) {
+	ctx := context.TODO()
+	fakeClient := fake.NewFakeClient()
+	nodeName := "test-node"
+	initialNode := corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: nodeName},
+		Status: corev1.NodeStatus{
+			Conditions: []corev1.NodeCondition{
+				{
+					Type:               "AcceleratedHardwareReady",
+					Status:             corev1.ConditionTrue,
+					Reason:             "Healthy",
+					Message:            "All good",
+					LastHeartbeatTime:  metav1.Now(),
+					LastTransitionTime: metav1.Now(),
+				},
+			},
+		},
+	}
+	if err := fakeClient.Create(ctx, &initialNode); err != nil {
+		t.Fatalf("failed to create initial node: %v", err)
+	}
+
+	nodeExporter := manager.NewNodeExporter(
+		&initialNode,
+		fakeClient,
+		record.NewFakeRecorder(100),
+		map[corev1.NodeConditionType]manager.NodeConditionConfig{
+			"AcceleratedHardwareReady": {
+				ReadyReason:  "Healthy",
+				ReadyMessage: "All good",
+			},
+		},
+	)
+
+	heartbeatChan := make(chan time.Time)
+	reportChan := make(chan time.Time)
+	go nodeExporter.RunWithTickers(ctx, heartbeatChan, reportChan)
+
+	conditionType := corev1.NodeConditionType("AcceleratedHardwareReady")
+
+	// 1. Report first fatal error
+	err1 := monitor.Condition{
+		Reason:   "ErrorA",
+		Message:  "MessageA",
+		Severity: monitor.SeverityFatal,
+	}
+	if err := nodeExporter.Fatal(ctx, err1, conditionType); err != nil {
+		t.Fatal(err)
+	}
+
+	// Capture the transition time
+	reportChan <- time.Now()
+	
+	// Wait a bit for the report to process
+	time.Sleep(time.Millisecond * 100)
+	
+	var node corev1.Node
+	if err := fakeClient.Get(ctx, client.ObjectKey{Name: nodeName}, &node); err != nil {
+		t.Fatal(err)
+	}
+	
+	var ltt1 time.Time
+	for _, c := range node.Status.Conditions {
+		if c.Type == conditionType {
+			ltt1 = c.LastTransitionTime.Time
+			break
+		}
+	}
+	if ltt1.IsZero() {
+		t.Fatal("LastTransitionTime not set")
+	}
+	t.Logf("LTT1: %v", ltt1)
+
+	// Wait a bit to ensure 'now' changes (metav1.Now() has 1-second resolution)
+	time.Sleep(time.Millisecond * 1100)
+
+	// 2. Report second fatal error with different message
+	err2 := monitor.Condition{
+		Reason:   "ErrorB",
+		Message:  "MessageB",
+		Severity: monitor.SeverityFatal,
+	}
+	if err := nodeExporter.Fatal(ctx, err2, conditionType); err != nil {
+		t.Fatal(err)
+	}
+
+	reportChan <- time.Now()
+	time.Sleep(time.Millisecond * 200)
+
+	if err := fakeClient.Get(ctx, client.ObjectKey{Name: nodeName}, &node); err != nil {
+		t.Fatal(err)
+	}
+
+	var ltt2 time.Time
+	for _, c := range node.Status.Conditions {
+		if c.Type == conditionType {
+			ltt2 = c.LastTransitionTime.Time
+			break
+		}
+	}
+	t.Logf("LTT2: %v", ltt2)
+
+	if ltt2.After(ltt1) {
+		t.Errorf("LastTransitionTime flapped! It should have been preserved because status didn't change from False. ltt1: %v, ltt2: %v", ltt1, ltt2)
+	}
+	if !ltt2.Equal(ltt1) {
+		t.Errorf("LastTransitionTime changed! It should have been identical. ltt1: %v, ltt2: %v", ltt1, ltt2)
+	}
+
+	// Verify the message was still updated to the latest one
+	var latestMessage string
+	for _, c := range node.Status.Conditions {
+		if c.Type == conditionType {
+			latestMessage = c.Message
+			break
+		}
+	}
+	if latestMessage != "MessageA; MessageB" {
+		t.Errorf("Message was not updated to latest or aggregated. expected: MessageA; MessageB, got: %s", latestMessage)
+	}
+
+	// 3. Report same error again - should not duplicate in message
+	if err := nodeExporter.Fatal(ctx, err1, conditionType); err != nil {
+		t.Fatal(err)
+	}
+	reportChan <- time.Now()
+	time.Sleep(time.Millisecond * 200)
+
+	if err := fakeClient.Get(ctx, client.ObjectKey{Name: nodeName}, &node); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, c := range node.Status.Conditions {
+		if c.Type == conditionType {
+			latestMessage = c.Message
+			break
+		}
+	}
+	// It should still be "MessageA; MessageB" because MessageA is already contained in it.
+	if latestMessage != "MessageA; MessageB" {
+		t.Errorf("Message was incorrectly updated with duplicates or cleared. expected: MessageA; MessageB, got: %s", latestMessage)
+	}
+}
