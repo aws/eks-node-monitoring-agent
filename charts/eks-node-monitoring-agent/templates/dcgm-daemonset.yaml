@@ -18,9 +18,15 @@ spec:
       labels:
         k8s-app: dcgm-server
         version: v1
-        {{- with .Values.dcgmAgent.podLabels }}
+        {{- $podLabels := merge (.Values.dcgmAgent.podLabels | default dict) (.Values.global.podLabels | default dict) }}
+        {{- with $podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
+      {{- $podAnnotations := merge (.Values.dcgmAgent.podAnnotations | default dict) (.Values.global.podAnnotations | default dict) }}
+      {{- with $podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       {{- with .Values.dcgmAgent.affinity }}
       affinity: {{- toYaml . | nindent 8 }}

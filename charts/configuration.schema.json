@@ -8,6 +8,9 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
+                "global": {
+                    "$ref": "$/definitions/Global"
+                },
                 "monitoringAgent": {
                     "$ref": "#/definitions/MonitoringAgent"
                 },
@@ -29,6 +32,16 @@
                         "type": "string"
                     }
                 },
+                "podAnnotations": {
+                    "$ref": "#/definitions/StringMap",
+                    "description": "Annotations applied to the eks node monitoring agent pod. These annotations are merged with any global pod annotations, with component specific annotations taking precedence in the case of a conflict.",
+                    "default": {}
+                },
+                "podLabels": {
+                    "$ref": "#/definitions/StringMap",
+                    "description": "Labels applied to the eks node monitoring agent pod. These labels are merged with any global pod labels, with component specific labels taking precedence in the case of a conflict.",
+                    "default": {}
+                },
                 "resources": {
                     "$ref": "#/definitions/Resources"
                 },
@@ -42,11 +55,38 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
+                "podAnnotations": {
+                    "$ref": "#/definitions/StringMap",
+                    "description": "Annotations applied to the eks node monitoring agent pod. These annotations are merged with any global pod annotations, with component specific annotations taking precedence in the case of a conflict.",
+                    "default": {}
+                },
+                "podLabels": {
+                    "$ref": "#/definitions/StringMap",
+                    "description": "Labels applied to the eks node monitoring agent pod. These labels are merged with any global pod labels, with component specific labels taking precedence in the case of a conflict.",
+                    "default": {}
+                },
                 "resources": {
                     "$ref": "#/definitions/Resources"
                 },
                 "tolerations": {
                     "$ref": "#/definitions/Tolerations"
+                }
+            }
+        },
+        "Global": {
+            "title": "Global",
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "podLabels": {
+                    "$ref": "#/definitions/StringMap",
+                    "description": "Labels applied to all pods deployed by the eks-node-monitoring-agent chart. These labels are merged with any component specific pod labels, with component specific labels taking precedence in the case of a conflict.",
+                    "default": {}
+                },
+                "podAnnotations": {
+                    "$ref": "#/definitions/StringMap",
+                    "description": "Annotations applied to all pods deployed by the eks-node-monitoring-agent chart. These annotations are merged with any component specific pod annotations, with component specific annotations taking precedence in the case of a conflict.",
+                    "default": {}
                 }
             }
         },
@@ -81,6 +121,14 @@
             "type": "array",
             "items": {
                 "type": "object"
+            }
+        },
+        "StringMap": {
+            "title": "StringMap",
+            "type": "object",
+            "description": "Key-value pairs of strings",
+            "additionalProperties": {
+                "type": "string"
             }
         }
     }

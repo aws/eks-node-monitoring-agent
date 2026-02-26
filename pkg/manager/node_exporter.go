@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -120,9 +121,18 @@ func (e *nodeExporter) Fatal(ctx context.Context, monitorCondition monitor.Condi
 		LastHeartbeatTime:  now,
 	}
 	if oldCondition, ok := e.managedConditions[conditionType]; ok {
-		// if the reason AND message have not changed, use the old transition time
-		if oldCondition.Reason == newCondition.Reason && oldCondition.Message == newCondition.Message {
+		// if the status has not changed, use the old transition time
+		if oldCondition.Status == newCondition.Status {
 			newCondition.LastTransitionTime = oldCondition.LastTransitionTime
+
+			// aggregate messages if the status is the same (e.g. both False)
+			// and ensure that we don't duplicate identical messages.
+			if oldCondition.Message != "" && oldCondition.Message != newCondition.Message && !strings.Contains(oldCondition.Message, newCondition.Message) {
+				newCondition.Message = oldCondition.Message + "; " + newCondition.Message
+			} else if strings.Contains(oldCondition.Message, newCondition.Message) {
+				// if the old message already contains the new one, preserve the old one (which might have other aggregated messages)
+				newCondition.Message = oldCondition.Message
+			}
 		}
 	}
 	e.managedConditions[conditionType] = newCondition

@@ -20,15 +20,25 @@ if [ -n "${CHART_COMMIT}" ]; then
     trap "rm -rf ${TEMP_CHART_DIR}" EXIT
     
     # Extract each chart directory from the specified commit
-    for chart in $(git ls-tree --name-only ${CHART_COMMIT} charts/); do
+    for chart in $(git ls-tree --name-only -d ${CHART_COMMIT} charts/); do
         chart_name=$(basename ${chart})
         mkdir -p "${TEMP_CHART_DIR}/${chart_name}"
         git archive ${CHART_COMMIT}:${chart} | tar -x -C "${TEMP_CHART_DIR}/${chart_name}"
     done
     
-    helm package ${TEMP_CHART_DIR}/* --destination ${STAGING_DIR} --dependency-update
+    # Package only directories containing Chart.yaml
+    for chart_dir in ${TEMP_CHART_DIR}/*/; do
+        if [ -f "${chart_dir}/Chart.yaml" ]; then
+            helm package "${chart_dir}" --destination ${STAGING_DIR} --dependency-update
+        fi
+    done
 else
-    helm package ${GIT_REPO_ROOT}/charts/* --destination ${STAGING_DIR} --dependency-update
+    # Package only directories containing Chart.yaml
+    for chart_dir in ${GIT_REPO_ROOT}/charts/*/; do
+        if [ -f "${chart_dir}/Chart.yaml" ]; then
+            helm package "${chart_dir}" --destination ${STAGING_DIR} --dependency-update
+        fi
+    done
 fi
 
 for bundle in ${STAGING_DIR}/*.tgz; do
