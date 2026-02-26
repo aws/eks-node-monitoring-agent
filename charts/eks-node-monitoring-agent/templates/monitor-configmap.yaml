@@ -1,0 +1,13 @@
+{{- if .Values.nodeAgent.monitors }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "eks-node-monitoring-agent.fullname" . }}-monitor-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "eks-node-monitoring-agent.labels" . | nindent 4 }}
+data:
+  config.yaml: |
+    monitors:
+      {{- toYaml .Values.nodeAgent.monitors | nindent 6 }}
+{{- end }}

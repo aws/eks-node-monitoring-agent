@@ -47,6 +47,31 @@
                 },
                 "tolerations": {
                     "$ref": "#/definitions/Tolerations"
+                },
+                "monitors": {
+                    "type": "object",
+                    "description": "Per-monitor configuration keyed by plugin name",
+                    "additionalProperties": false,
+                    "properties": {
+                        "kernel-monitor": {
+                            "$ref": "#/definitions/MonitorSettings"
+                        },
+                        "networking": {
+                            "$ref": "#/definitions/MonitorSettings"
+                        },
+                        "storage-monitor": {
+                            "$ref": "#/definitions/MonitorSettings"
+                        },
+                        "nvidia": {
+                            "$ref": "#/definitions/MonitorSettings"
+                        },
+                        "neuron": {
+                            "$ref": "#/definitions/MonitorSettings"
+                        },
+                        "runtime": {
+                            "$ref": "#/definitions/MonitorSettings"
+                        }
+                    }
                 }
             }
         },
@@ -121,6 +146,19 @@
             "type": "array",
             "items": {
                 "type": "object"
+            }
+        },
+        "MonitorSettings": {
+            "title": "MonitorSettings",
+            "type": "object",
+            "description": "Per-monitor settings",
+            "additionalProperties": false,
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "description": "Whether this monitor is enabled",
+                    "default": true
+                }
             }
         },
         "StringMap": {
