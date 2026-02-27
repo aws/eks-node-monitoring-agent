@@ -87,6 +87,8 @@ jobs:
         with:
           aws-region: ${{ secrets.AWS_REGION }}
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_CI }}
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
       - name: Build and push image
         id: build
         run: |
@@ -98,30 +100,14 @@ jobs:
             exit 1
           fi
 
-          REPO="eks-node-monitoring-agent-ci"
-          TAG="${{ inputs.resource_id }}-${{ inputs.arch }}"
-          IMAGE_URI="${REGISTRY}/${REPO}:${TAG}"
+          IMAGE_TAG="ci-${{ inputs.resource_id }}-${{ inputs.arch }}"
 
-          echo "Building image from source: ${IMAGE_URI}"
+          make docker-build \
+            IMAGE_REGISTRY="$REGISTRY" \
+            IMAGE_TAG="$IMAGE_TAG" \
+            DOCKER_PLATFORMS="linux/${{ inputs.arch }}"
 
-          # Authenticate to ECR
-          REGION=$(echo "$REGISTRY" | sed -n 's/.*\.ecr\.\([^.]*\)\.amazonaws\.com.*/\1/p')
-          aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$REGISTRY"
-
-          # Ensure the repository exists
-          aws ecr describe-repositories --repository-names "$REPO" --region "$REGION" 2>/dev/null || \
-            aws ecr create-repository --repository-name "$REPO" --region "$REGION"
-
-          # Set up buildx for the target architecture
-          docker buildx create --use --name ci-builder 2>/dev/null || docker buildx use ci-builder
-
-          # Build and push for the target architecture
-          docker buildx build \
-            --platform "linux/${{ inputs.arch }}" \
-            --push \
-            -t "$IMAGE_URI" .
-
-          echo "image=${IMAGE_URI}" >> $GITHUB_OUTPUT
+          echo "image=${REGISTRY}/eks-node-monitoring-agent:${IMAGE_TAG}" >> $GITHUB_OUTPUT
 
   test:
     runs-on: ubuntu-latest
