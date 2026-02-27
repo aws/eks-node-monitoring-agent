@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/aws/eks-node-monitoring-agent/pkg/osext"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestLookPath(t *testing.T) {

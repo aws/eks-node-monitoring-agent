@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 	"github.com/aws/eks-node-monitoring-agent/monitors/storage/nvme"
 	"github.com/aws/eks-node-monitoring-agent/pkg/config"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestEbsThrottling(t *testing.T) {

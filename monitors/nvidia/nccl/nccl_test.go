@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestNCCL(t *testing.T) {

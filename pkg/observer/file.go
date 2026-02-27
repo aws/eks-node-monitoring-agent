@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/aws/eks-node-monitoring-agent/api/monitor/resource"
+	"github.com/fsnotify/fsnotify"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
