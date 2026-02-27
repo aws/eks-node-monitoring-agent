@@ -1,0 +1,72 @@
+# EKS Node Monitoring Agent
+
+This chart installs the [`eks-node-monitoring-agent`](https://github.com/aws/eks-node-monitoring-agent).
+
+## Prerequisites
+
+- Kubernetes v{?} running on AWS
+- Helm v3
+
+## Installing the Chart
+
+```shell
+# using the github chart repository
+helm repo add eks-node-monitoring-agent https://aws.github.io/eks-node-monitoring-agent
+helm install eks-node-monitoring-agent eks-node-monitoring-agent/eks-node-monitoring-agent --namespace kube-system
+```
+
+**OR**
+
+```shell
+# using the chart sources
+git clone https://github.com/aws/eks-node-monitoring-agent.git
+cd eks-node-monitoring-agent
+helm install eks-node-monitoring-agent ./charts/eks-node-monitoring-agent --namespace kube-system
+```
+
+To uninstall:
+
+```shell
+helm uninstall eks-node-monitoring-agent --namespace kube-system
+```
+
+## Configuration
+
+The following table lists the configurable parameters for this chart and their default values.
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| dcgmAgent.affinity | object | `{"nodeAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":{"nodeSelectorTerms":[{"matchExpressions":[{"key":"node.kubernetes.io/instance-type","operator":"In","values":["g3.16xlarge","g3.4xlarge","g3.8xlarge","g3s.xlarge","g4dn.12xlarge","g4dn.16xlarge","g4dn.2xlarge","g4dn.4xlarge","g4dn.8xlarge","g4dn.metal","g4dn.xlarge","g5.12xlarge","g5.16xlarge","g5.24xlarge","g5.2xlarge","g5.48xlarge","g5.4xlarge","g5.8xlarge","g5g.16xlarge","g5g.2xlarge","g5g.4xlarge","g5g.8xlarge","g5g.metal","g5g.xlarge","g5.xlarge","g6.12xlarge","g6.16xlarge","g6.24xlarge","g6.2xlarge","g6.48xlarge","g6.4xlarge","g6.8xlarge","g6e.12xlarge","g6e.16xlarge","g6e.24xlarge","g6e.2xlarge","g6e.48xlarge","g6e.4xlarge","g6e.8xlarge","g6e.xlarge","g6f.2xlarge","g6f.4xlarge","g6f.large","g6f.xlarge","g6.xlarge","gr6.4xlarge","gr6.8xlarge","gr6f.4xlarge","p2.16xlarge","p2.8xlarge","p2.xlarge","p3.16xlarge","p3.2xlarge","p3.8xlarge","p3dn.24xlarge","p4d.24xlarge","p4de.24xlarge","p5.48xlarge","p5.4xlarge","p5e.48xlarge","p5en.48xlarge","p6-b200.48xlarge","p6-b300.48xlarge","p6e-gb200.36xlarge","p6e-gb300.36xlarge"]},{"key":"eks.amazonaws.com/compute-type","operator":"NotIn","values":["fargate","auto","hybrid"]},{"key":"sagemaker.amazonaws.com/compute-type","operator":"NotIn","values":["hyperpod"]},{"key":"kubernetes.io/arch","operator":"In","values":["amd64"]}]}]}}}` | Map of dcgm pod affinities |
+| dcgmAgent.image.account | string | `"602401143452"` | ECR repository account number for the dcgm-exporter |
+| dcgmAgent.image.domain | string | `"amazonaws.com"` | ECR repository domain for the dcgm-exporter |
+| dcgmAgent.image.endpoint | string | `"ecr"` | ECR repository endpoint for the dcgm-exporter |
+| dcgmAgent.image.pullPolicy | string | `"IfNotPresent"` | Container pull policy for the dcgm-exporter |
+| dcgmAgent.image.region | string | `"us-west-2"` | ECR repository region for the dcgm-exporter |
+| dcgmAgent.image.tag | string | `"4.5.2-4.8.1-ubuntu22.04"` | Image tag for the dcgm-exporter |
+| dcgmAgent.podAnnotations | object | `{}` | Pod annotations applied to the dcgm exporter |
+| dcgmAgent.podLabels | object | `{}` | Pod labels applied to the dcgm exporter |
+| dcgmAgent.resources | object | `{}` | Container resources for the dcgm deployment |
+| dcgmAgent.tolerations | list | `[]` | Deployment tolerations for the dcgm |
+| fullnameOverride | string | `"eks-node-monitoring-agent"` | A fullname override for the chart |
+| global | object | `{"podAnnotations":{},"podLabels":{}}` | Global values shared across components |
+| global.podAnnotations | object | `{}` | Annotations applied to eks-node-monitoring-agent and dcgm-exporter (can be overridden by component-specific annotations) |
+| global.podLabels | object | `{}` | Labels applied to eks-node-monitoring-agent and dcgm-exporter (can be overridden by component-specific labels) |
+| imagePullSecrets | list | `[]` | Docker registry pull secrets |
+| nameOverride | string | `"eks-node-monitoring-agent"` | A name override for the chart |
+| nodeAgent.additionalArgs | list | `[]` | List of addittional container arguments for the eks-node-monitoring-agent |
+| nodeAgent.affinity | object | `{"nodeAffinity":{"requiredDuringSchedulingIgnoredDuringExecution":{"nodeSelectorTerms":[{"matchExpressions":[{"key":"eks.amazonaws.com/compute-type","operator":"NotIn","values":["fargate","auto","hybrid"]},{"key":"sagemaker.amazonaws.com/compute-type","operator":"NotIn","values":["hyperpod"]},{"key":"kubernetes.io/arch","operator":"In","values":["amd64","arm64"]}]}]}}}` | Map of pod affinities for the eks-node-monitoring-agent |
+| nodeAgent.image.account | string | `"602401143452"` | ECR repository account number for the eks-node-monitoring-agent |
+| nodeAgent.image.domain | string | `"amazonaws.com"` | ECR repository domain for the eks-node-monitoring-agent |
+| nodeAgent.image.endpoint | string | `"ecr"` | ECR repository endpoint for the eks-node-monitoring-agent |
+| nodeAgent.image.pullPolicy | string | `"IfNotPresent"` | Container pull policyfor the eks-node-monitoring-agent |
+| nodeAgent.image.region | string | `"us-west-2"` | ECR repository region for the eks-node-monitoring-agent |
+| nodeAgent.image.tag | string | `"v1.5.2-eksbuild.1"` | Image tag for the eks-node-monitoring-agent |
+| nodeAgent.podAnnotations | object | `{}` | Pod annotations applied to the eks-node-monitoring-agent |
+| nodeAgent.podLabels | object | `{}` | Pod labels applied to the eks-node-monitoring-agent |
+| nodeAgent.resources | object | `{"limits":{"cpu":"250m","memory":"200Mi"},"requests":{"cpu":"10m","memory":"30Mi"}}` | Container resources for the eks-node-monitoring-agent |
+| nodeAgent.securityContext | object | `{"capabilities":{"add":["NET_ADMIN"]},"privileged":true}` | Container Security context for the eks-node-monitoring-agent |
+| nodeAgent.tolerations | list | `[{"operator":"Exists"}]` | Deployment tolerations for the eks-node-monitoring-agent |
+| updateStrategy | object | `{"rollingUpdate":{"maxUnavailable":"10%"},"type":"RollingUpdate"}` | Update strategy for all daemon sets |
+
+Specify each parameter using the `--set key=value[,key=value]` argument to `helm install` or provide a YAML file
+containing the values for the above parameters.

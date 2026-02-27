@@ -251,15 +251,15 @@ func TestNodeExporter_LastTransitionTimeFlapping(t *testing.T) {
 
 	// Capture the transition time
 	reportChan <- time.Now()
-	
+
 	// Wait a bit for the report to process
 	time.Sleep(time.Millisecond * 100)
-	
+
 	var node corev1.Node
 	if err := fakeClient.Get(ctx, client.ObjectKey{Name: nodeName}, &node); err != nil {
 		t.Fatal(err)
 	}
-	
+
 	var ltt1 time.Time
 	for _, c := range node.Status.Conditions {
 		if c.Type == conditionType {

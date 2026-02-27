@@ -11,8 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-logr/logr"
-	"github.com/moby/sys/mountinfo"
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 	"github.com/aws/eks-node-monitoring-agent/api/monitor/resource"
 	"github.com/aws/eks-node-monitoring-agent/monitors/storage/ebs"
@@ -20,6 +18,8 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/pkg/osext"
 	"github.com/aws/eks-node-monitoring-agent/pkg/reasons"
 	"github.com/aws/eks-node-monitoring-agent/pkg/util"
+	"github.com/go-logr/logr"
+	"github.com/moby/sys/mountinfo"
 	"k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
