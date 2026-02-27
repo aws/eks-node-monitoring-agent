@@ -19,9 +19,8 @@ inputs:
     required: true
     type: string
   image:
-    description: 'NMA container image to deploy (default: extracted from charts/eks-node-monitoring-agent/values.yaml)'
-    required: false
-    default: ''
+    description: 'NMA container image to deploy'
+    required: true
   ami_type:
     description: 'AMI type (standard or nvidia)'
     required: false
@@ -106,19 +105,8 @@ runs:
         go install github.com/aws/aws-k8s-tester/...@HEAD
 
         set -o xtrace
-        
-        # Use provided image or extract from values.yaml
-        IMAGE="${{ inputs.image }}"
-        if [ -z "$IMAGE" ]; then
-          # Try to derive the image name from charts/eks-node-monitoring-agent/values.yaml
-          VALUES_FILE="charts/eks-node-monitoring-agent/values.yaml"
-          IM_ACCOUNT=$(grep -A15 'nodeAgent:' "$VALUES_FILE" | grep 'account:' | head -1 | awk '{print $2}' | tr -d '"')
-          IM_REGION=$(grep -A15 'nodeAgent:' "$VALUES_FILE" | grep 'region:' | head -1 | awk '{print $2}')
-          IM_TAG=$(grep -A15 'nodeAgent:' "$VALUES_FILE" | grep 'tag:' | head -1 | awk '{print $2}')
-          IMAGE="${IM_ACCOUNT}.dkr.ecr.${IM_REGION}.amazonaws.com/eks/eks-node-monitoring-agent:${IM_TAG}"
-        fi
 
-        echo "Testing this NMA image: ${IMAGE}"
+        echo "Testing this NMA image: ${{ inputs.image }}"
 
         # Run kubetest2 with --up --down and --test=exec to run our e2e tests
         # The cluster is created, tests run, then cluster is torn down automatically
@@ -134,6 +122,6 @@ runs:
           --test=exec \
           -- \
           /tmp/run-e2e-tests.sh \
-          "$IMAGE" \
+          "${{ inputs.image }}" \
           "${{ inputs.test_filter }}" \
           "${{ steps.prepare-test.outputs.e2e_binary }}"

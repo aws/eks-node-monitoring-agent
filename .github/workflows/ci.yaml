@@ -67,11 +67,70 @@ jobs:
           echo "kubernetes_versions=$(jq -Rn --arg input '${{ inputs.k8s_versions }}' '($input | split(","))' | jq -c .)" >> $GITHUB_OUTPUT
         fi
 
+  # Build the container image from source when no pre-built image is provided.
+  # This runs once and the resulting image URI is shared across all test matrix jobs.
+  build:
+    if: ${{ inputs.image == '' }}
+    runs-on: ubuntu-latest
+    needs:
+      - setup
+    outputs:
+      image: ${{ steps.build.outputs.image }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.git_sha }}
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_CI }}
+      - name: Build and push image
+        id: build
+        run: |
+          set -euo pipefail
+
+          REGISTRY="${{ secrets.CI_IMAGE_REGISTRY }}"
+          if [ -z "$REGISTRY" ]; then
+            echo "::error::CI_IMAGE_REGISTRY secret is required to build images from source"
+            exit 1
+          fi
+
+          REPO="eks-node-monitoring-agent-ci"
+          TAG="${{ inputs.resource_id }}-${{ inputs.arch }}"
+          IMAGE_URI="${REGISTRY}/${REPO}:${TAG}"
+
+          echo "Building image from source: ${IMAGE_URI}"
+
+          # Authenticate to ECR
+          REGION=$(echo "$REGISTRY" | sed -n 's/.*\.ecr\.\([^.]*\)\.amazonaws\.com.*/\1/p')
+          aws ecr get-login-password --region "$REGION" | docker login --username AWS --password-stdin "$REGISTRY"
+
+          # Ensure the repository exists
+          aws ecr describe-repositories --repository-names "$REPO" --region "$REGION" 2>/dev/null || \
+            aws ecr create-repository --repository-name "$REPO" --region "$REGION"
+
+          # Set up buildx for the target architecture
+          docker buildx create --use --name ci-builder 2>/dev/null || docker buildx use ci-builder
+
+          # Build and push for the target architecture
+          docker buildx build \
+            --platform "linux/${{ inputs.arch }}" \
+            --push \
+            -t "$IMAGE_URI" .
+
+          echo "image=${IMAGE_URI}" >> $GITHUB_OUTPUT
+
   test:
     runs-on: ubuntu-latest
     name: ${{ matrix.k8s_version }}
     needs:
       - setup
+      - build
+    # Run even if build was skipped (when a pre-built image was provided)
+    if: ${{ !cancelled() && !failure() }}
     permissions:
       id-token: write
       contents: read
@@ -101,5 +160,6 @@ jobs:
           aws_region: ${{ secrets.AWS_REGION }}
           log_bucket: ${{ secrets.CI_LOG_BUCKET }}
           test_filter: ${{ inputs.test_filter }}
-          image: ${{ inputs.image }}
+          # Use the explicitly provided image, or the one built from source
+          image: ${{ inputs.image || needs.build.outputs.image }}
           ami_type: ${{ inputs.ami_type }}
