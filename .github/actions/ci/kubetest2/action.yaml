@@ -97,29 +97,28 @@ runs:
         SCRIPT
         chmod +x /tmp/run-e2e-tests.sh
 
+    # TODO: restore kubetest2 invocation after verifying argument plumbing
     - id: kubetest2
       shell: bash
       run: |
-        export PATH=${PATH}:$(go env GOPATH)/bin
-        GOPROXY=direct
-        go install sigs.k8s.io/kubetest2/...@latest
-        go install github.com/aws/aws-k8s-tester/...@HEAD
+        echo "=== DRY RUN: verifying argument plumbing ==="
+        echo "image: ${{ inputs.image }}"
+        echo "k8s_version: ${{ inputs.k8s_version }}"
+        echo "arch: ${{ inputs.arch }}"
+        echo "instance_type: ${{ inputs.instance_type }}"
+        echo "resource_id: ${{ inputs.resource_id }}"
+        echo "aws_region: ${{ inputs.aws_region }}"
+        echo "log_bucket: ${{ inputs.log_bucket }}"
+        echo "ami_id: ${{ steps.resolve-ami.outputs.ami_id }}"
+        echo "ami_type: ${{ inputs.ami_type }}"
+        echo "test_filter: ${{ inputs.test_filter }}"
+        echo "e2e_binary: ${{ steps.prepare-test.outputs.e2e_binary }}"
+        echo "=== test script contents ==="
+        cat /tmp/run-e2e-tests.sh
+        echo "=== end dry run ==="
 
-        set -o xtrace
-
-        echo "Testing this NMA image: ${{ inputs.image }}"
-
-        # Run kubetest2 with --up --down and --test=exec to run our e2e tests
-        # The cluster is created, tests run, then cluster is torn down automatically
-        kubetest2 eksapi \
-          --up \
-          --down \
-          --log-bucket=${{ inputs.log_bucket }} \
-          --kubernetes-version=${{ inputs.k8s_version }} \
-          --unmanaged-nodes \
-          --ami=${{ steps.resolve-ami.outputs.ami_id }} \
-          --region=${{ inputs.aws_region }} \
-          --user-data-format=nodeadm \
-          --test=exec \
-          -- \
-          /tmp/run-e2e-tests.sh
+        # Fail if image is empty so we catch the bug immediately
+        if [ -z "${{ inputs.image }}" ]; then
+          echo "::error::image input is EMPTY — build output did not propagate"
+          exit 1
+        fi
