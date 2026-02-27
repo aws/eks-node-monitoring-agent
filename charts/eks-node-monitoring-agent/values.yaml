@@ -73,6 +73,8 @@ nodeAgent:
     limits:
       cpu: 250m
       memory: 200Mi
+  # -- Container resize policy for in-place pod vertical scaling (requires Kubernetes 1.33+)
+  resizePolicy: []
   # -- Container Security context for the eks-node-monitoring-agent
   securityContext:
     privileged: true
@@ -130,6 +132,8 @@ dcgmAgent:
               - amd64
   # -- Container resources for the dcgm deployment
   resources: {}
+  # -- Container resize policy for in-place pod vertical scaling (requires Kubernetes 1.33+)
+  resizePolicy: []
   # -- Deployment tolerations for the dcgm
   tolerations: []
   # -- Pod labels applied to the dcgm exporter
