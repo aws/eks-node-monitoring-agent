@@ -46,6 +46,12 @@ var (
 		func(e corev1.Event, _ appsv1.DaemonSet) bool {
 			return strings.Contains(e.Message, "ServiceFailedToStart: Failed to start nvidia-fabricmanager.service")
 		},
+		// IMEX health check (code 122) fails on non-NVLink multi-node systems.
+		// IMEX is only relevant for NVLink multi-node deployments (GB200, DGX SuperPOD).
+		// see: https://github.com/NVIDIA/DCGM/blob/e137795bc755d14fabc0e44c91178a364952cb43/dcgmlib/dcgm_errors.h#L122
+		func(e corev1.Event, _ appsv1.DaemonSet) bool {
+			return strings.Contains(e.Message, "DCGMHealthCode122")
+		},
 	}
 )
 
