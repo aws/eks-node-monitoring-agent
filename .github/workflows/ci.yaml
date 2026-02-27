@@ -67,11 +67,67 @@ jobs:
           echo "kubernetes_versions=$(jq -Rn --arg input '${{ inputs.k8s_versions }}' '($input | split(","))' | jq -c .)" >> $GITHUB_OUTPUT
         fi
 
+  # Build the container image from source when no pre-built image is provided.
+  # This runs once and the resulting image URI is shared across all test matrix jobs.
+  build:
+    runs-on: ubuntu-latest
+    needs:
+      - setup
+    outputs:
+      image: ${{ steps.resolve.outputs.image }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        if: ${{ inputs.image == '' }}
+        with:
+          ref: ${{ inputs.git_sha }}
+      - uses: aws-actions/configure-aws-credentials@v4
+        if: ${{ inputs.image == '' }}
+        with:
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_CI }}
+      - name: Set up Docker Buildx
+        if: ${{ inputs.image == '' }}
+        uses: docker/setup-buildx-action@v3
+      - name: Build and push image
+        if: ${{ inputs.image == '' }}
+        id: build
+        run: |
+          set -euo pipefail
+
+          REGISTRY="${{ secrets.CI_IMAGE_REGISTRY }}"
+          if [ -z "$REGISTRY" ]; then
+            echo "::error::CI_IMAGE_REGISTRY secret is required to build images from source"
+            exit 1
+          fi
+
+          IMAGE_TAG="ci-${{ inputs.resource_id }}-${{ inputs.arch }}"
+
+          make docker-build \
+            IMAGE_REGISTRY="$REGISTRY" \
+            IMAGE_TAG="$IMAGE_TAG" \
+            DOCKER_PLATFORMS="linux/${{ inputs.arch }}"
+
+          echo "image=${REGISTRY}/eks-node-monitoring-agent:${IMAGE_TAG}" >> $GITHUB_OUTPUT
+      - name: Resolve image tag
+        id: resolve
+        run: |
+          if [ -n "${{ inputs.image }}" ]; then
+            echo "image=${{ inputs.image }}" >> $GITHUB_OUTPUT
+          else
+            echo "image=eks-node-monitoring-agent:ci-${{ inputs.resource_id }}-${{ inputs.arch }}" >> $GITHUB_OUTPUT
+          fi
+
   test:
     runs-on: ubuntu-latest
     name: ${{ matrix.k8s_version }}
     needs:
       - setup
+      - build
+    # Run even if build was skipped (when a pre-built image was provided)
+    if: ${{ !cancelled() && !failure() }}
     permissions:
       id-token: write
       contents: read
@@ -90,6 +146,17 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN_CI }}
           # 1 hour
           role-duration-seconds: 3600
+      - name: Resolve image URI
+        id: resolve-image
+        run: |
+          BUILD_OUTPUT="${{ needs.build.outputs.image }}"
+          # If the build output already contains a registry (slash in name), use as-is.
+          # Otherwise, prepend the CI registry.
+          if echo "$BUILD_OUTPUT" | grep -q '/'; then
+            echo "image=${BUILD_OUTPUT}" >> $GITHUB_OUTPUT
+          else
+            echo "image=${{ secrets.CI_IMAGE_REGISTRY }}/${BUILD_OUTPUT}" >> $GITHUB_OUTPUT
+          fi
       - name: "${{ needs.setup.outputs.ci_step_name_prefix }} Test"
         id: test
         uses: ./.github/actions/ci/kubetest2
@@ -101,5 +168,5 @@ jobs:
           aws_region: ${{ secrets.AWS_REGION }}
           log_bucket: ${{ secrets.CI_LOG_BUCKET }}
           test_filter: ${{ inputs.test_filter }}
-          image: ${{ inputs.image }}
+          image: ${{ steps.resolve-image.outputs.image }}
           ami_type: ${{ inputs.ami_type }}
