@@ -168,5 +168,8 @@ func TestWrapper(t *testing.T, Testenv env.Environment) {
 
 	// log collection runs at the end, which effectively makes it collects logs
 	// and data from prior tests.
-	Testenv.Test(t, nodediagnostic.LogCollection(awsCfg))
+	Testenv.Test(t,
+		nodediagnostic.LogCollection(awsCfg),
+		nodediagnostic.NodeDestination(),
+	)
 }
