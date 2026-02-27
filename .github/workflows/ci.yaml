@@ -170,3 +170,4 @@ jobs:
           test_filter: ${{ inputs.test_filter }}
           image: ${{ steps.resolve-image.outputs.image }}
           ami_type: ${{ inputs.ami_type }}
+          nodediagnostic_bucket: ${{ secrets.CI_TEST_BUCKET }}
