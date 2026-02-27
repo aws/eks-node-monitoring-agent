@@ -68,33 +68,34 @@ runs:
       id: prepare-test
       shell: bash
       run: |
-        # Create a test script that kubetest2 will execute
-        cat > /tmp/run-e2e-tests.sh << 'SCRIPT'
-        #!/bin/bash
-        
-        # Arguments passed by kubetest2
-        IMAGE="${1}"
-        TEST_FILTER="${2}"
-        E2E_BINARY="${3}"
-        
-        echo "Running e2e tests with image: ${IMAGE}"
-        echo "Test filter: ${TEST_FILTER:-<none>}"
-        
-        # Build test command
-        TEST_CMD="${E2E_BINARY} --test.v --test.timeout 30m --install=true --image=${IMAGE}"
-        
-        # Add filter if provided
-        if [ -n "${TEST_FILTER}" ]; then
-          TEST_CMD="${TEST_CMD} --test.run '${TEST_FILTER}'"
-        fi
-        
-        echo "Executing: ${TEST_CMD}"
-        eval ${TEST_CMD}
-        SCRIPT
-        chmod +x /tmp/run-e2e-tests.sh
-        
         # Store absolute path to e2e binary
         echo "e2e_binary=$(pwd)/bin/e2e.test" >> $GITHUB_OUTPUT
+
+        # Create a test script that kubetest2 will execute
+        # Values are embedded directly because kubetest2 exec tester
+        # does not forward positional arguments to the test command.
+        cat > /tmp/run-e2e-tests.sh << SCRIPT
+        #!/bin/bash
+        
+        IMAGE="${{ inputs.image }}"
+        TEST_FILTER="${{ inputs.test_filter }}"
+        E2E_BINARY="$(pwd)/bin/e2e.test"
+        
+        echo "Running e2e tests with image: \${IMAGE}"
+        echo "Test filter: \${TEST_FILTER:-<none>}"
+        
+        # Build test command
+        TEST_CMD="\${E2E_BINARY} --test.v --test.timeout 30m --install=true --image=\${IMAGE}"
+        
+        # Add filter if provided
+        if [ -n "\${TEST_FILTER}" ]; then
+          TEST_CMD="\${TEST_CMD} --test.run '\${TEST_FILTER}'"
+        fi
+        
+        echo "Executing: \${TEST_CMD}"
+        eval \${TEST_CMD}
+        SCRIPT
+        chmod +x /tmp/run-e2e-tests.sh
 
     - id: kubetest2
       shell: bash
@@ -121,7 +122,4 @@ runs:
           --user-data-format=nodeadm \
           --test=exec \
           -- \
-          /tmp/run-e2e-tests.sh \
-          "${{ inputs.image }}" \
-          "${{ inputs.test_filter }}" \
-          "${{ steps.prepare-test.outputs.e2e_binary }}"
+          /tmp/run-e2e-tests.sh
