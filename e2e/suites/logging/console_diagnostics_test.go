@@ -3,8 +3,8 @@ package logging
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/aws/eks-node-monitoring-agent/pkg/util/validation"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestInstanceIDParser(t *testing.T) {

@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/aws/eks-node-monitoring-agent/api/v1alpha1"
 	"github.com/aws/eks-node-monitoring-agent/pkg/log_collector/collect"
 	"github.com/aws/eks-node-monitoring-agent/pkg/logcollection"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestGetCollectors(t *testing.T) {

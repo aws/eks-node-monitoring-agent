@@ -286,7 +286,7 @@ func run() error {
 
 	// Initialize and register NodeDiagnostic controller for log collection
 	logger.Info("initializing node diagnostic controller")
-	diagnosticController := controllers.NewNodeDiagnosticController(monitoringKubeClient, hostname, runtimeContext)
+	diagnosticController := controllers.NewNodeDiagnosticController(mgr.GetClient(), hostname, runtimeContext)
 	if err := diagnosticController.Register(ctx, mgr); err != nil {
 		logger.Error(err, "failed to register diagnostic controller")
 		return err
