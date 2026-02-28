@@ -26,6 +26,8 @@ serviceAccount:
   annotations: {}
 
 nodeAgent:
+  # Specifies whether the node agent should be installed
+  enabled: true
   image:
     # -- Image tag for the eks-node-monitoring-agent
     tag: v1.5.2-eksbuild.1
@@ -88,6 +90,8 @@ nodeAgent:
   podAnnotations: {}
 
 dcgmAgent:
+  # Specifies whether the dcgm agent should be installed
+  enabled: true
   image:
     # -- Image tag for the dcgm-exporter
     tag: 4.5.2-4.8.1-ubuntu22.04

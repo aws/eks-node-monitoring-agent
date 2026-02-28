@@ -1,3 +1,4 @@
+{{- if .Values.dcgmAgent.enabled }}
 kind: DaemonSet
 apiVersion: apps/v1
 metadata:
@@ -55,3 +56,4 @@ spec:
             hostPort: 5555
           securityContext:
             privileged: true
+{{- end }}
