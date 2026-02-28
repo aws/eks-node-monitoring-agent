@@ -199,3 +199,93 @@ func assertLogsValid(t *testing.T, reader io.Reader) {
 		t.Logf("found the following paths from the log archive: %s", strings.Join(fileNames, ","))
 	}
 }
+
+func NodeDestination() types.Feature {
+	var nodeDiagnostics []v1alpha1.NodeDiagnostic
+
+	return features.New("NodeDestination").
+		WithLabel("type", "log-collection").
+		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			client, err := cfg.NewClient()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := v1alpha1.SchemeBuilder.AddToScheme(client.Resources().GetScheme()); err != nil {
+				t.Fatal(err)
+			}
+			var nodes corev1.NodeList
+			if err := client.Resources().List(ctx, &nodes); err != nil {
+				t.Fatal(err)
+			}
+			if len(nodes.Items) == 0 {
+				t.Fatal("no nodes were found in the cluster")
+			}
+			for _, node := range nodes.Items {
+				if node.DeletionTimestamp != nil {
+					t.Logf("skipping node %q because it is being deleted", node.Name)
+					continue
+				}
+
+				nodeDiagnostic := v1alpha1.NodeDiagnostic{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: node.Name,
+					},
+					Spec: v1alpha1.NodeDiagnosticSpec{
+						LogCapture: &v1alpha1.LogCapture{
+							UploadDestination: "node",
+						},
+					},
+				}
+				t.Logf("creating NodeDiagnostic for node %q with node destination", node.Name)
+				if err := client.Resources().Create(ctx, &nodeDiagnostic); err != nil {
+					t.Fatal(err)
+				}
+				nodeDiagnostics = append(nodeDiagnostics, nodeDiagnostic)
+			}
+			if len(nodeDiagnostics) == 0 {
+				t.Fatal("no non-terminating nodes were found in the cluster")
+			}
+			return ctx
+		}).
+		Assess("CollectLogs", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			for _, nodeDiagnostic := range nodeDiagnostics {
+				t.Run(nodeDiagnostic.Name, func(t *testing.T) {
+					if err := cfg.Client().Resources().Get(ctx, nodeDiagnostic.Name, nodeDiagnostic.Namespace, &nodeDiagnostic); err != nil {
+						t.Fatal(err)
+					}
+
+					if err := wait.For(
+						conditions.New(cfg.Client().Resources()).ResourceMatch(&nodeDiagnostic, func(object k8s.Object) bool {
+							nd := object.(*v1alpha1.NodeDiagnostic)
+							return len(nd.Status.CaptureStatuses) > 0 && nd.Status.CaptureStatuses[0].State.Completed != nil
+						}),
+						wait.WithTimeout(time.Minute),
+						wait.WithContext(ctx),
+					); err != nil {
+						t.Error(err)
+					}
+					for _, status := range nodeDiagnostic.Status.CaptureStatuses {
+						if status.State.Completed == nil {
+							t.Errorf("capture was not complete: %+v", status.State)
+						} else if status.State.Completed.Reason == v1alpha1.CaptureStateFailure {
+							t.Errorf("capture failed with reason: %s, message: %s", status.State.Completed.Reason, status.State.Completed.Message)
+						} else {
+							t.Logf("capture succeeded with reason: %s, message: %s", status.State.Completed.Reason, status.State.Completed.Message)
+						}
+					}
+				})
+			}
+			return ctx
+		}).
+		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			for _, nodeDiagnostic := range nodeDiagnostics {
+				t.Run(nodeDiagnostic.Name, func(t *testing.T) {
+					if err := cfg.Client().Resources().Delete(ctx, &nodeDiagnostic); err != nil {
+						t.Fatal(err)
+					}
+				})
+			}
+			return ctx
+		}).
+		Feature()
+}
