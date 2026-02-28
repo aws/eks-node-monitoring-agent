@@ -48,6 +48,10 @@ spec:
         - name: {{ .Chart.Name }}
           image: {{ template "eks-node-monitoring-agent.image" . }}
           imagePullPolicy: {{ .Values.nodeAgent.image.pullPolicy }}
+          ports:
+            - name: metrics
+              containerPort: 8003
+              protocol: TCP
           args:
             - --probe-address=:8002
             - --metrics-address=:8003

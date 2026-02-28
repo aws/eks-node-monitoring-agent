@@ -66,6 +66,12 @@ The following table lists the configurable parameters for this chart and their d
 | nodeAgent.resources | object | `{"limits":{"cpu":"250m","memory":"200Mi"},"requests":{"cpu":"10m","memory":"30Mi"}}` | Container resources for the eks-node-monitoring-agent |
 | nodeAgent.securityContext | object | `{"capabilities":{"add":["NET_ADMIN"]},"privileged":true}` | Container Security context for the eks-node-monitoring-agent |
 | nodeAgent.tolerations | list | `[{"operator":"Exists"}]` | Deployment tolerations for the eks-node-monitoring-agent |
+| podMonitor.additionalLabels | object | `{}` | Additional labels to add to the PodMonitor |
+| podMonitor.enabled | bool | `false` | Enable PodMonitor resource creation (requires Prometheus Operator CRDs) |
+| podMonitor.interval | string | `""` | Scrape interval (e.g., "30s") |
+| podMonitor.metricRelabelings | list | `[]` | Metric relabeling rules |
+| podMonitor.relabelings | list | `[]` | Target relabeling rules |
+| podMonitor.scrapeTimeout | string | `""` | Scrape timeout (e.g., "10s") |
 | updateStrategy | object | `{"rollingUpdate":{"maxUnavailable":"10%"},"type":"RollingUpdate"}` | Update strategy for all daemon sets |
 
 Specify each parameter using the `--set key=value[,key=value]` argument to `helm install` or provide a YAML file

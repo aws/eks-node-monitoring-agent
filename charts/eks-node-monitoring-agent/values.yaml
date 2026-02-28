@@ -142,3 +142,17 @@ updateStrategy:
   type: RollingUpdate
   rollingUpdate:
     maxUnavailable: "10%"
+
+podMonitor:
+  # -- Enable PodMonitor resource creation (requires Prometheus Operator CRDs)
+  enabled: false
+  # -- Scrape interval (e.g., "30s")
+  interval: ""
+  # -- Scrape timeout (e.g., "10s")
+  scrapeTimeout: ""
+  # -- Additional labels to add to the PodMonitor
+  additionalLabels: {}
+  # -- Metric relabeling rules
+  metricRelabelings: []
+  # -- Target relabeling rules
+  relabelings: []
