@@ -65,6 +65,10 @@ spec:
             httpGet:
               path: /healthz
               port: 8002
+          {{- with .Values.nodeAgent.resizePolicy }}
+          resizePolicy:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- with .Values.nodeAgent.resources }}
           resources:
             {{- toYaml . | nindent 12 }}

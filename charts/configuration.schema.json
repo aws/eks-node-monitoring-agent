@@ -45,6 +45,9 @@
                 "resources": {
                     "$ref": "#/definitions/Resources"
                 },
+                "resizePolicy": {
+                    "$ref": "#/definitions/ResizePolicy"
+                },
                 "tolerations": {
                     "$ref": "#/definitions/Tolerations"
                 }
@@ -67,6 +70,9 @@
                 },
                 "resources": {
                     "$ref": "#/definitions/Resources"
+                },
+                "resizePolicy": {
+                    "$ref": "#/definitions/ResizePolicy"
                 },
                 "tolerations": {
                     "$ref": "#/definitions/Tolerations"
@@ -114,6 +120,27 @@
                 "cpu": {
                     "type": "string"
                 }
+            }
+        },
+        "ResizePolicy": {
+            "title": "ResizePolicy",
+            "type": "array",
+            "description": "Container resize policy for in-place pod vertical scaling (requires Kubernetes 1.33+)",
+            "default": [],
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "resourceName": {
+                        "type": "string",
+                        "enum": ["cpu", "memory"]
+                    },
+                    "restartPolicy": {
+                        "type": "string",
+                        "enum": ["NotRequired", "RestartContainer"]
+                    }
+                },
+                "required": ["resourceName", "restartPolicy"]
             }
         },
         "Tolerations": {
