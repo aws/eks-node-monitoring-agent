@@ -29,6 +29,14 @@ func (s *DCGMSystem) HealthCheck(ctx context.Context) ([]monitor.Condition, erro
 	var conditions []monitor.Condition
 
 	for _, incidents := range healthRes.Incidents {
+		// DCGM_FR_IMEX_UNHEALTHY (122): IMEX is only for NVLink multi-node systems
+		// (GB200 NVL72, DGX/HGX multi-node). Skip on standard GPU instances.
+		// ref: https://docs.nvidia.com/multi-node-nvlink-systems/imex-guide/overview.html
+		if incidents.Error.Code == 122 {
+			logger.V(2).Info("ignoring IMEX health code on non-NVLink multi-node system", "code", incidents.Error.Code)
+			continue
+		}
+
 		reason := reasons.DCGMHealthCode
 		severity := monitor.SeverityWarning
 		if incidents.Health == dcgmapi.DCGM_HEALTH_RESULT_FAIL {
