@@ -77,28 +77,29 @@ func (mc *MonitorConfig) Validate() error {
 // LoadMonitorConfig reads the config file at the given path.
 // Returns a default (all-enabled) config if the file does not exist.
 // Returns an error if the file exists but contains invalid YAML or unknown plugin names.
-func LoadMonitorConfig(path string) (*MonitorConfig, error) {
+// The second return value indicates whether the config file was found on disk.
+func LoadMonitorConfig(path string) (*MonitorConfig, bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return &MonitorConfig{}, nil
+			return &MonitorConfig{}, false, nil
 		}
-		return nil, fmt.Errorf("reading monitor config: %w", err)
+		return nil, false, fmt.Errorf("reading monitor config: %w", err)
 	}
 
 	// Empty file is treated as default config (all monitors enabled).
 	if len(data) == 0 {
-		return &MonitorConfig{}, nil
+		return &MonitorConfig{}, true, nil
 	}
 
 	cfg := &MonitorConfig{}
 	if err := yaml.UnmarshalStrict(data, cfg); err != nil {
-		return nil, fmt.Errorf("parsing monitor config: %w", err)
+		return nil, false, fmt.Errorf("parsing monitor config: %w", err)
 	}
 
 	if err := cfg.Validate(); err != nil {
-		return nil, fmt.Errorf("validating monitor config: %w", err)
+		return nil, false, fmt.Errorf("validating monitor config: %w", err)
 	}
 
-	return cfg, nil
+	return cfg, true, nil
 }

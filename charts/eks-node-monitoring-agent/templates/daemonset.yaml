@@ -87,4 +87,5 @@ spec:
         - name: monitor-config
           configMap:
             name: {{ include "eks-node-monitoring-agent.fullname" . }}-monitor-config
+            optional: true
         {{- end }}

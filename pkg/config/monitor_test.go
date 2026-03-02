@@ -16,9 +16,10 @@ func boolPtr(b bool) *bool {
 }
 
 func TestLoadMonitorConfig_NonExistentFile(t *testing.T) {
-	cfg, err := config.LoadMonitorConfig("/tmp/does-not-exist-nma-test.yaml")
+	cfg, found, err := config.LoadMonitorConfig("/tmp/does-not-exist-nma-test.yaml")
 	require.NoError(t, err)
 	assert.NotNil(t, cfg)
+	assert.False(t, found, "expected found to be false for non-existent file")
 	// Default config: all monitors enabled (empty map).
 	assert.Empty(t, cfg.Monitors)
 	// Every known plugin should be enabled by default.
@@ -37,9 +38,10 @@ func TestLoadMonitorConfig_ValidFileOneDisabled(t *testing.T) {
 `)
 	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
 
-	cfg, err := config.LoadMonitorConfig(cfgPath)
+	cfg, found, err := config.LoadMonitorConfig(cfgPath)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
+	assert.True(t, found)
 
 	// kernel-monitor should be explicitly disabled.
 	assert.False(t, cfg.IsMonitorEnabled("kernel-monitor"))
@@ -58,7 +60,7 @@ func TestLoadMonitorConfig_InvalidYAML(t *testing.T) {
 	content := []byte(`monitors: [this is not valid: yaml: {{{`)
 	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
 
-	cfg, err := config.LoadMonitorConfig(cfgPath)
+	cfg, _, err := config.LoadMonitorConfig(cfgPath)
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
 	assert.Contains(t, err.Error(), "parsing monitor config")
@@ -74,7 +76,7 @@ func TestLoadMonitorConfig_UnknownPluginName(t *testing.T) {
 `)
 	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
 
-	cfg, err := config.LoadMonitorConfig(cfgPath)
+	cfg, _, err := config.LoadMonitorConfig(cfgPath)
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
 	assert.Contains(t, err.Error(), "unknown-plugin")
@@ -87,9 +89,10 @@ func TestLoadMonitorConfig_EmptyFile(t *testing.T) {
 
 	require.NoError(t, os.WriteFile(cfgPath, []byte(""), 0644))
 
-	cfg, err := config.LoadMonitorConfig(cfgPath)
+	cfg, found, err := config.LoadMonitorConfig(cfgPath)
 	require.NoError(t, err)
 	assert.NotNil(t, cfg)
+	assert.True(t, found)
 	assert.Empty(t, cfg.Monitors)
 	// All monitors should be enabled by default.
 	for _, name := range config.KnownPluginNames {
@@ -158,7 +161,7 @@ func TestLoadMonitorConfig_StrictUnmarshalRejectsUnknownFields(t *testing.T) {
 `)
 	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
 
-	cfg, err := config.LoadMonitorConfig(cfgPath)
+	cfg, _, err := config.LoadMonitorConfig(cfgPath)
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
 	assert.Contains(t, err.Error(), "parsing monitor config")

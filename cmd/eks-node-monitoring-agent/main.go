@@ -188,10 +188,13 @@ func run() error {
 	}
 
 	// Load monitor configuration from ConfigMap mount
-	monitorConfig, err := config.LoadMonitorConfig(config.DefaultConfigPath)
+	monitorConfig, configFound, err := config.LoadMonitorConfig(config.DefaultConfigPath)
 	if err != nil {
 		logger.Error(err, "failed to load monitor configuration")
 		return err
+	}
+	if !configFound {
+		logger.Info("monitor config file not found, all monitors will be enabled by default", "path", config.DefaultConfigPath)
 	}
 
 	// Filter plugins by configuration and log effective state
