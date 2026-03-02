@@ -8,8 +8,8 @@ import (
 	"path"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/aws/eks-node-monitoring-agent/pkg/util/file"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestTarValid(t *testing.T) {

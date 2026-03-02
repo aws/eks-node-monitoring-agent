@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	controllerruntime "sigs.k8s.io/controller-runtime"
@@ -100,6 +101,83 @@ func (c *nodeDiagnosticController) Reconcile(ctx context.Context, nodeDiagnostic
 		}
 
 		log.Info("uploading logs", "url", nodeDiagnostic.Spec.UploadDestination)
+
+		if nodeDiagnostic.Spec.UploadDestination == "node" {
+			log.Info("saving logs to /var/log/support for download via node proxy")
+			supportDir := filepath.Join(config.HostRoot(), "var/log/support")
+			if err := os.MkdirAll(supportDir, 0600); err != nil {
+				log.Error(err, "failed to create support directory")
+				captureStatus.State = v1alpha1.CaptureState{
+					Completed: &v1alpha1.CaptureStateCompleted{
+						Reason:     v1alpha1.CaptureStateFailure,
+						Message:    "failed to create support directory",
+						StartedAt:  captureStatus.State.Running.StartedAt,
+						FinishedAt: metav1.Now(),
+					},
+				}
+				stored := nodeDiagnostic.DeepCopy()
+				nodeDiagnostic.Status.SetCaptureStatus(captureStatus)
+				return reconcile.Result{}, c.kubeClient.Status().Patch(ctx, nodeDiagnostic, client.MergeFrom(stored))
+			}
+			destPath := filepath.Join(supportDir, fmt.Sprintf("%s-logs.tar.gz", c.nodeName))
+			destFile, err := os.Create(destPath)
+			if err != nil {
+				log.Error(err, "failed to create log file")
+				captureStatus.State = v1alpha1.CaptureState{
+					Completed: &v1alpha1.CaptureStateCompleted{
+						Reason:     v1alpha1.CaptureStateFailure,
+						Message:    "failed to create log file",
+						StartedAt:  captureStatus.State.Running.StartedAt,
+						FinishedAt: metav1.Now(),
+					},
+				}
+				stored := nodeDiagnostic.DeepCopy()
+				nodeDiagnostic.Status.SetCaptureStatus(captureStatus)
+				return reconcile.Result{}, c.kubeClient.Status().Patch(ctx, nodeDiagnostic, client.MergeFrom(stored))
+			}
+			defer destFile.Close()
+			if _, err := io.Copy(destFile, archiveReader); err != nil {
+				log.Error(err, "failed to write logs to file")
+				captureStatus.State = v1alpha1.CaptureState{
+					Completed: &v1alpha1.CaptureStateCompleted{
+						Reason:     v1alpha1.CaptureStateFailure,
+						Message:    "failed to write logs to file",
+						StartedAt:  captureStatus.State.Running.StartedAt,
+						FinishedAt: metav1.Now(),
+					},
+				}
+				stored := nodeDiagnostic.DeepCopy()
+				nodeDiagnostic.Status.SetCaptureStatus(captureStatus)
+				return reconcile.Result{}, c.kubeClient.Status().Patch(ctx, nodeDiagnostic, client.MergeFrom(stored))
+			}
+			log.Info("logs saved successfully", "path", destPath)
+			captureStatus.State = v1alpha1.CaptureState{
+				Completed: &v1alpha1.CaptureStateCompleted{
+					Reason:     v1alpha1.CaptureStateSuccess,
+					Message:    fmt.Sprintf("successfully saved logs to %s", destPath),
+					StartedAt:  captureStatus.State.Running.StartedAt,
+					FinishedAt: metav1.Now(),
+				},
+			}
+			if issueCount > 0 {
+				captureStatus.State.Completed.Reason = v1alpha1.CaptureStateSuccessWithErrors
+				captureStatus.State.Completed.Message = fmt.Sprintf("successfully saved logs to %s with some errors", destPath)
+			}
+			stored := nodeDiagnostic.DeepCopy()
+			nodeDiagnostic.Status.SetCaptureStatus(captureStatus)
+			// Delete file from /var/log/support after 10 minutes
+			go func() {
+				time.Sleep(600 * time.Second)
+				if err := os.Remove(destPath); err != nil {
+					if !os.IsNotExist(err) {
+						log.Error(err, "failed to delete log file after timeout", "path", destPath)
+					}
+				} else {
+					log.Info("successfully deleted log file after timeout", "path", destPath)
+				}
+			}()
+			return reconcile.Result{}, c.kubeClient.Status().Patch(ctx, nodeDiagnostic, client.MergeFrom(stored))
+		}
 		// wrapping this setup into one function to avoid redundant failure code
 		doUpload := func() error {
 			uploadRequest, err := http.NewRequestWithContext(ctx, http.MethodPut, string(nodeDiagnostic.Spec.UploadDestination), archiveReader)
