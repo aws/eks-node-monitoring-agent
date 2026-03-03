@@ -1,0 +1,15 @@
+# This file is for Amazon internal build processes
+
+# Copyright 2026 Amazon.com, Inc. or its affiliates.
+# SPDX-License-Identifier: Apache-2.0
+package.EKSTachyonAMI-NodeMonitoringAgent-mirror = {
+    interfaces = (1.0);
+
+    build-system = bgo-wrap-make;
+    build-tools = {
+        1.0 = {
+            BrazilMakeGo = 3.0;
+            GoLang = 1.x;
+        };
+    };
+};
