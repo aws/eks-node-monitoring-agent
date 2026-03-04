@@ -127,6 +127,7 @@ runs:
           --log-bucket=${{ inputs.log_bucket }} \
           --kubernetes-version=${{ inputs.k8s_version }} \
           --unmanaged-nodes \
+          --nodes=1 \
           --ami=${{ steps.resolve-ami.outputs.ami_id }} \
           --region=${{ inputs.aws_region }} \
           --user-data-format=nodeadm \
