@@ -314,3 +314,6 @@ release: build test helm-package ## Build, test, and package for release
 	@echo "Release build completed successfully"
 	@echo "Artifacts:"
 	@echo "  - Helm chart: $(CHART_OUTPUT_DIR)/"
+	@# Copy source charts to build for artifact publishing
+	@mkdir -p build/charts-src
+	@cp -R charts/ build/charts-src/
