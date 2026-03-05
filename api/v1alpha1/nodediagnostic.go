@@ -49,6 +49,7 @@ type LogCapture struct {
 }
 
 // UploadDestination is a URL describing where to deliver a diagnostic artifact.
+// This can be set to "node" to temporarily store logs on the node for later collection.
 type UploadDestination string
 
 // LogCategory is a grouping of log sources to read from when performing a

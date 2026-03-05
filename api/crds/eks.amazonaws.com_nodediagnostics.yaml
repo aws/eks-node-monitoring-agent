@@ -64,8 +64,9 @@ spec:
                       type: string
                     type: array
                   destination:
-                    description: UploadDestination is a URL describing where to deliver
-                      a diagnostic artifact.
+                    description: |-
+                      UploadDestination is a URL describing where to deliver a diagnostic artifact.
+                      This can be set to "node" to temporarily store logs on the node for later collection.
                     type: string
                 required:
                 - destination
