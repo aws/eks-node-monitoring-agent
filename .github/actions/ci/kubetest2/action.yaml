@@ -73,7 +73,7 @@ runs:
       shell: bash
       run: |
         # Store absolute path to e2e binary
-        echo "e2e_binary=$(pwd)/bin/e2e.test" >> $GITHUB_OUTPUT
+        echo "e2e_binary=$(pwd)/bin/eks-node-monitoring-agent.test" >> $GITHUB_OUTPUT
 
         # Create a test script that kubetest2 will execute
         # Values are embedded directly because kubetest2 exec tester
@@ -83,7 +83,7 @@ runs:
         
         IMAGE="${{ inputs.image }}"
         TEST_FILTER="${{ inputs.test_filter }}"
-        E2E_BINARY="$(pwd)/bin/e2e.test"
+        E2E_BINARY="$(pwd)/bin/eks-node-monitoring-agent.test"
         
         echo "Running e2e tests with image: \${IMAGE}"
         echo "Test filter: \${TEST_FILTER:-<none>}"
