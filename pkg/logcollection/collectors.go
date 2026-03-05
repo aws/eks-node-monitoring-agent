@@ -91,6 +91,7 @@ var collectorMap = map[v1alpha1.LogCategory][]collect.Collector{
 		&collect.Kernel{},
 		&collect.SELinux{},
 		&collect.System{},
+		&collect.AutoMode{},
 		&collect.Throttles{},
 	},
 }
