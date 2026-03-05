@@ -307,19 +307,19 @@ update-e2e-manifests: ## Generate e2e agent manifest template from Helm chart
 build-e2e: ## Build e2e test binary
 	@echo "Building e2e test binary..."
 	@mkdir -p $(OUTPUT_BIN)
-	go test -c -tags=e2e -o $(OUTPUT_BIN)/e2e.test ./e2e/
-	@echo "Built $(OUTPUT_BIN)/e2e.test"
+	go test -c -tags=e2e -o $(OUTPUT_BIN)/eks-node-monitoring-agent.test ./e2e/
+	@echo "Built $(OUTPUT_BIN)/eks-node-monitoring-agent.test"
 
 .PHONY: e2e
 e2e: update-e2e-manifests build-e2e ## Build and run e2e tests against the current cluster context
-	$(OUTPUT_BIN)/e2e.test --test.v --test.timeout 60m --install=true --image=$(IMAGE_URI) $(ARGS)
+	$(OUTPUT_BIN)/eks-node-monitoring-agent.test --test.v --test.timeout 60m --install=true --image=$(IMAGE_URI) $(ARGS)
 
 # =============================================================================
 # Release Target
 # =============================================================================
 
 .PHONY: release
-release: build test helm-package ## Build, test, and package for release
+release: build test build-e2e helm-package ## Build, test, and package for release
 	@echo "Release build completed successfully"
 	@echo "Artifacts:"
 	@echo "  - Helm chart: $(CHART_OUTPUT_DIR)/"
