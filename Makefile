@@ -45,6 +45,15 @@ HELM_FLAGS := --namespace $(NAMESPACE) \
               --include-crds \
               $(HELM_EXTRA_FLAGS)
 
+# Build output directory for compiled binaries.
+# Respects GOBIN if set (e.g., by a CI/CD build system), otherwise defaults
+# to the local bin/ directory.
+ifdef GOBIN
+OUTPUT_BIN := $(GOBIN)
+else
+OUTPUT_BIN := bin
+endif
+
 # Tool versions
 CONTROLLER_GEN_VERSION ?= v0.16.5
 
@@ -98,8 +107,8 @@ help: ## Show this help message
 
 .PHONY: build
 build: generate fmt vet ## Build Go code
-	go build -o bin/eks-node-monitoring-agent ./cmd/eks-node-monitoring-agent
-	go build -o bin/chroot ./cmd/chroot
+	go build -o $(OUTPUT_BIN)/eks-node-monitoring-agent ./cmd/eks-node-monitoring-agent
+	go build -o $(OUTPUT_BIN)/chroot ./cmd/chroot
 
 .PHONY: test
 test: generate fmt vet covignore ## Run tests
@@ -297,13 +306,13 @@ update-e2e-manifests: ## Generate e2e agent manifest template from Helm chart
 .PHONY: build-e2e
 build-e2e: ## Build e2e test binary
 	@echo "Building e2e test binary..."
-	@mkdir -p bin
-	go test -c -tags=e2e -o bin/e2e.test ./e2e/
-	@echo "Built bin/e2e.test"
+	@mkdir -p $(OUTPUT_BIN)
+	go test -c -tags=e2e -o $(OUTPUT_BIN)/e2e.test ./e2e/
+	@echo "Built $(OUTPUT_BIN)/e2e.test"
 
 .PHONY: e2e
 e2e: update-e2e-manifests build-e2e ## Build and run e2e tests against the current cluster context
-	./bin/e2e.test --test.v --test.timeout 60m --install=true --image=$(IMAGE_URI) $(ARGS)
+	$(OUTPUT_BIN)/e2e.test --test.v --test.timeout 60m --install=true --image=$(IMAGE_URI) $(ARGS)
 
 # =============================================================================
 # Release Target
@@ -314,3 +323,6 @@ release: build test helm-package ## Build, test, and package for release
 	@echo "Release build completed successfully"
 	@echo "Artifacts:"
 	@echo "  - Helm chart: $(CHART_OUTPUT_DIR)/"
+	@# Copy source charts to build for artifact publishing
+	@mkdir -p build/charts-src
+	@cp -R charts/ build/charts-src/
