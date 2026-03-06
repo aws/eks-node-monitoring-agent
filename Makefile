@@ -288,7 +288,7 @@ update-e2e-manifests: helm-install ## Generate e2e agent manifest template from 
 	@$(HELM) template eks-node-monitoring-agent charts/eks-node-monitoring-agent \
 		--namespace kube-system \
 		--include-crds | \
-		sed 's|image: [^[:space:]]*|image: {{ .Image }}|g' > e2e/setup/manifests/agent.tpl.yaml
+		sed 's|image: .*/eks/eks-node-monitoring-agent.*|image: {{ .Image }}|' > e2e/setup/manifests/agent.tpl.yaml
 	@echo "Generated e2e/setup/manifests/agent.tpl.yaml"
 
 .PHONY: build-e2e
