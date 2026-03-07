@@ -46,6 +46,10 @@ spec:
           imagePullPolicy: {{ .Values.dcgmAgent.image.pullPolicy }}
           command: ["/bin/sh"]
           args: ["-c", "nv-hostengine -n -b ALL || true; sleep infinity"]
+          {{- with .Values.dcgmAgent.resizePolicy }}
+          resizePolicy:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- with .Values.dcgmAgent.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
