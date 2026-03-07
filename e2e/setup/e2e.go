@@ -153,14 +153,18 @@ func TestWrapper(t *testing.T, Testenv env.Environment) {
 		monitors.Generic(),
 	)
 
-	// detection cases are run in parallel to speed up testing.
-	Testenv.TestInParallel(t,
-		monitors.ExporterImpl(),
-		monitors.KernelMonitor(),
-		monitors.NvidiaMonitor(),
-		monitors.NeuronMonitor(),
-		monitors.StressFileObserver(),
-	)
+	t.Run("ParallelMonitors", func(t *testing.T) {
+		// detection cases are run in parallel to speed up testing.
+		Testenv.TestInParallel(t,
+			monitors.ExporterImpl(),
+			monitors.KernelMonitor(),
+			monitors.NeuronMonitor(),
+			monitors.StressFileObserver(),
+		)
+	})
+
+	// Run nvidia monitor test after all parallel monitors complete.
+	Testenv.Test(t, monitors.NvidiaMonitor(awsCfg))
 
 	// test the addon configuration if the agent is installed as an EKS Addon.
 	// this is disruptive, so it must run alone.
