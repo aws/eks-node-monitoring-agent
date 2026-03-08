@@ -93,8 +93,7 @@ func (rule IPTablesRule) IsExpectedRejectRule() bool {
 		// kube service with no endpoints
 		return true
 	} else if strings.HasPrefix(rule.table, "cali-") {
-		// Calico managed chains
-		// use DROP rules as part of normal network policy enforcement
+		// Calico managed chains use DROP rules as part of normal network policy enforcement
 		return true
 	}
 	return false
