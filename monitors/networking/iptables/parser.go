@@ -92,6 +92,10 @@ func (rule IPTablesRule) IsExpectedRejectRule() bool {
 			strings.Contains(rule.rejectWith, "icmp-port-unreachable")) {
 		// kube service with no endpoints
 		return true
+	} else if strings.HasPrefix(rule.table, "cali-") {
+		// Calico managed chains
+		// use DROP rules as part of normal network policy enforcement
+		return true
 	}
 	return false
 }
