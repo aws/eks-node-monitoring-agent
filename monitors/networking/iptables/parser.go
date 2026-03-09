@@ -95,6 +95,9 @@ func (rule IPTablesRule) IsExpectedRejectRule() bool {
 	} else if strings.HasPrefix(rule.table, "cali-") {
 		// Calico managed chains use DROP rules as part of normal network policy enforcement
 		return true
+	} else if rule.table == "FORWARD" && strings.Contains(rule.comment, "Block Node Local Pod access") {
+		// VPC CNI rule to block node-local pod access via link-local addresses
+		return true
 	}
 	return false
 }

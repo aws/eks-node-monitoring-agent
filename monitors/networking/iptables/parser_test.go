@@ -47,6 +47,16 @@ func TestIPTablesRuleParser(t *testing.T) {
 		}
 	})
 
+	t.Run("ExpectedRejectRuleVPCCNI", func(t *testing.T) {
+		for _, ruleRaw := range []string{
+			`-A FORWARD -d 169.254.172.0/22 -m conntrack --ctstate NEW -m comment --comment "Block Node Local Pod access via IPv4" -j REJECT --reject-with icmp-port-unreachable`,
+		} {
+			rule, err := iptables.ParseIPTablesRule(ruleRaw)
+			assert.NoError(t, err)
+			assert.Truef(t, rule.IsExpectedRejectRule(), ruleRaw)
+		}
+	})
+
 	t.Run("NotExpectedRejectRule", func(t *testing.T) {
 		for _, ruleRaw := range []string{
 			`-A NOT-KUBE -m conntrack --ctstate INVALID`,
