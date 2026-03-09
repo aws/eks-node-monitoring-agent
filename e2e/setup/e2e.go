@@ -158,13 +158,19 @@ func TestWrapper(t *testing.T, Testenv env.Environment) {
 		Testenv.TestInParallel(t,
 			monitors.ExporterImpl(),
 			monitors.KernelMonitor(),
-			monitors.NeuronMonitor(),
 			monitors.StressFileObserver(),
 		)
 	})
 
-	// Run nvidia monitor test after all parallel monitors complete.
-	Testenv.Test(t, monitors.NvidiaMonitor(awsCfg))
+	// Accelerated hardware monitors run in parallel after the core monitors.
+	// Neuron and Nvidia are mutually exclusive on a node, so only one will
+	// run amongst the two on accelerated hardware and will skip on all others.
+	t.Run("AcceleratedMonitors", func(t *testing.T) {
+		Testenv.TestInParallel(t,
+			monitors.NvidiaMonitor(awsCfg),
+			monitors.NeuronMonitor(),
+		)
+	})
 
 	// test the addon configuration if the agent is installed as an EKS Addon.
 	// this is disruptive, so it must run alone.
