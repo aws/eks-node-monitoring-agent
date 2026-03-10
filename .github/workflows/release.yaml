@@ -29,21 +29,9 @@ jobs:
             echo "::error::Tag version (${TAG_VERSION}) does not match Chart.yaml appVersion (${APP_VERSION})"
             exit 1
           fi
-          echo "RELEASE_VERSION=${TAG_VERSION}" >> "${GITHUB_ENV}"
 
       - name: Extract changelog for this release
-        id: changelog
-        run: |
-          VERSION="v${RELEASE_VERSION}"
-          # Escape regex metacharacters in version string for safe awk matching
-          ESCAPED_VERSION=$(printf '%s' "${VERSION}" | sed 's/[.[\(*^$+?{|\\]/\\&/g')
-          # Extract the section for this version from CHANGELOG.md
-          NOTES=$(awk "/^## \\[${ESCAPED_VERSION}\\]/{found=1; next} /^## \\[/{if(found) exit} found{print}" CHANGELOG.md)
-          if [ -z "${NOTES}" ]; then
-            NOTES="Release ${VERSION}"
-          fi
-          # Write to file to preserve multiline content
-          echo "${NOTES}" > /tmp/release-notes.md
+        run: hack/extract-changelog.sh "${GITHUB_REF_NAME}" > /tmp/release-notes.md
 
       - name: Create GitHub Release
         env:
