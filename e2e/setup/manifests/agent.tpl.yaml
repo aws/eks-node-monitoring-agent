@@ -193,7 +193,7 @@ metadata:
     app.kubernetes.io/name: eks-node-monitoring-agent
     helm.sh/chart: eks-node-monitoring-agent
     app.kubernetes.io/instance: eks-node-monitoring-agent
-    app.kubernetes.io/version: "1.5.2"
+    app.kubernetes.io/version: "1.6.0"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
 ---
@@ -206,7 +206,7 @@ metadata:
     app.kubernetes.io/name: eks-node-monitoring-agent
     helm.sh/chart: eks-node-monitoring-agent
     app.kubernetes.io/instance: eks-node-monitoring-agent
-    app.kubernetes.io/version: "1.5.2"
+    app.kubernetes.io/version: "1.6.0"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
 rules:
@@ -237,7 +237,7 @@ metadata:
     app.kubernetes.io/name: eks-node-monitoring-agent
     helm.sh/chart: eks-node-monitoring-agent
     app.kubernetes.io/instance: eks-node-monitoring-agent
-    app.kubernetes.io/version: "1.5.2"
+    app.kubernetes.io/version: "1.6.0"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
 roleRef:
@@ -259,7 +259,7 @@ metadata:
     app.kubernetes.io/name: eks-node-monitoring-agent
     helm.sh/chart: eks-node-monitoring-agent
     app.kubernetes.io/instance: eks-node-monitoring-agent
-    app.kubernetes.io/version: "1.5.2"
+    app.kubernetes.io/version: "1.6.0"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
 spec:
@@ -278,7 +278,7 @@ spec:
         app.kubernetes.io/name: eks-node-monitoring-agent
         helm.sh/chart: eks-node-monitoring-agent
         app.kubernetes.io/instance: eks-node-monitoring-agent
-        app.kubernetes.io/version: "1.5.2"
+        app.kubernetes.io/version: "1.6.0"
         app.kubernetes.io/managed-by: Helm
         app.kubernetes.io/component: controller
     spec:
