@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Ignore DCGM health code 122 (IMEX unhealthy) in soak tests ([ebfcaa5](https://github.com/aws/eks-node-monitoring-agent/commit/ebfcaa5))
 - Fix e2e agent manifest to only replace agent image, preserving DCGM image ([c3fa12e](https://github.com/aws/eks-node-monitoring-agent/commit/c3fa12e))
 - Make nvidia monitor e2e tests more resilient ([b2521ca](https://github.com/aws/eks-node-monitoring-agent/commit/b2521ca))
+- Add `containerRegistry` override to chart for addon platform compatibility
 
 #### CI & Build
 - Merge e2e-ci into e2e test suite ([cbb92a8](https://github.com/aws/eks-node-monitoring-agent/commit/cbb92a8))
