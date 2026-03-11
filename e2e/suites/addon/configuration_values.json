@@ -1,5 +1,5 @@
 {
-    "monitoringAgent": {
+    "nodeAgent": {
         "resources": {
             "limits": {
                 "memory": "999Mi",
