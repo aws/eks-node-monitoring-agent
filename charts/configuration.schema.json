@@ -9,18 +9,18 @@
             "additionalProperties": false,
             "properties": {
                 "global": {
-                    "$ref": "$/definitions/Global"
+                    "$ref": "#/definitions/Global"
                 },
-                "monitoringAgent": {
-                    "$ref": "#/definitions/MonitoringAgent"
+                "nodeAgent": {
+                    "$ref": "#/definitions/NodeAgent"
                 },
                 "dcgmAgent": {
                     "$ref": "#/definitions/DCGMAgent"
                 }
             }
         },
-        "MonitoringAgent": {
-            "title": "MonitoringAgent",
+        "NodeAgent": {
+            "title": "NodeAgent",
             "type": "object",
             "additionalProperties": false,
             "properties": {
