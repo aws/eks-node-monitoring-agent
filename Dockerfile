@@ -26,7 +26,7 @@ RUN dnf install -y dnf-plugins-core && \
 # =============================================================================
 # Stage 3: Go builder to compile the application
 # =============================================================================
-FROM public.ecr.aws/docker/library/golang:1.25.5 AS go-builder
+FROM public.ecr.aws/docker/library/golang:1.25.8 AS go-builder
 
 WORKDIR /workspace
 
@@ -55,7 +55,7 @@ RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOEXPERIMENT=greenteagc 
 # =============================================================================
 # Stage 4: Minimal runtime image
 # =============================================================================
-FROM public.ecr.aws/eks-distro-build-tooling/eks-distro-minimal-base-glibc:latest-al23 AS runtime
+FROM cgr.dev/chainguard/glibc-dynamic:latest AS runtime
 
 # Labels for container metadata
 LABEL org.opencontainers.image.title="EKS Node Monitoring Agent"
@@ -64,16 +64,17 @@ LABEL org.opencontainers.image.source="https://github.com/aws/eks-node-monitorin
 LABEL org.opencontainers.image.vendor="Amazon Web Services"
 
 # Copy systemd libraries from builder (required for journald integration)
-COPY --from=systemd-builder /usr/lib64/libsystemd.so* /usr/lib64/
-COPY --from=systemd-builder /usr/lib64/liblz4.so* /usr/lib64/
-COPY --from=systemd-builder /usr/lib64/liblzma.so* /usr/lib64/
-COPY --from=systemd-builder /usr/lib64/libzstd.so* /usr/lib64/
-COPY --from=systemd-builder /usr/lib64/libgcrypt.so* /usr/lib64/
-COPY --from=systemd-builder /usr/lib64/libgpg-error.so* /usr/lib64/
-COPY --from=systemd-builder /usr/lib64/libcap.so* /usr/lib64/
+# Chainguard/Wolfi uses /usr/lib/ instead of AL23's /usr/lib64/
+COPY --from=systemd-builder /usr/lib64/libsystemd.so* /usr/lib/
+COPY --from=systemd-builder /usr/lib64/liblz4.so* /usr/lib/
+COPY --from=systemd-builder /usr/lib64/liblzma.so* /usr/lib/
+COPY --from=systemd-builder /usr/lib64/libzstd.so* /usr/lib/
+COPY --from=systemd-builder /usr/lib64/libgcrypt.so* /usr/lib/
+COPY --from=systemd-builder /usr/lib64/libgpg-error.so* /usr/lib/
+COPY --from=systemd-builder /usr/lib64/libcap.so* /usr/lib/
 
 # Copy DCGM client library for GPU monitoring (optional - only used on GPU nodes)
-COPY --from=dcgm-builder /usr/lib64/libdcgm.so* /usr/lib64/
+COPY --from=dcgm-builder /usr/lib64/libdcgm.so* /usr/lib/
 
 # Copy the built binaries
 COPY --from=go-builder /workspace/bin/eks-node-monitoring-agent /opt/bin/eks-node-monitoring-agent
