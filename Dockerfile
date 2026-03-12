@@ -6,7 +6,7 @@
 # =============================================================================
 # Stage 1: Amazon Linux builder for systemd libraries
 # =============================================================================
-FROM public.ecr.aws/amazonlinux/amazonlinux:2023 AS systemd-builder
+FROM public.ecr.aws/amazonlinux/amazonlinux:2023-minimal AS systemd-builder
 
 RUN dnf install -y systemd-devel && \
     dnf clean all
@@ -14,7 +14,7 @@ RUN dnf install -y systemd-devel && \
 # =============================================================================
 # Stage 2: DCGM builder for GPU monitoring libraries
 # =============================================================================
-FROM public.ecr.aws/amazonlinux/amazonlinux:2023 AS dcgm-builder
+FROM public.ecr.aws/amazonlinux/amazonlinux:2023-minimal AS dcgm-builder
 
 # Install DCGM from NVIDIA repository for GPU monitoring support
 # This is optional - the agent works without it on non-GPU nodes
