@@ -83,7 +83,8 @@ COPY --from=go-builder /workspace/bin/chroot /opt/bin/chroot
 # Set working directory
 WORKDIR /opt/bin
 
-# Run as non-root user (the agent will use privileged container settings for host access)
-# Note: Some operations require privileged mode, configured via Helm chart securityContext
+# The agent requires root for chroot, host filesystem access, and dbus operations.
+# Chainguard images default to nonroot (UID 65532); override for this privileged agent.
+USER 0
 
 ENTRYPOINT ["/opt/bin/eks-node-monitoring-agent"]
