@@ -57,6 +57,17 @@ func TestIPTablesRuleParser(t *testing.T) {
 		}
 	})
 
+	t.Run("ExpectedRejectRuleUserAllowlisted", func(t *testing.T) {
+		for _, ruleRaw := range []string{
+			`-A MY-CUSTOM-CHAIN -s 169.254.172.0/22 -p tcp -m multiport --dports 20,21 -m comment --comment "allowed-in-eks-node-monitoring-agent" -j DROP`,
+			`-A FORWARD -d 10.0.0.0/8 -m comment --comment "[allowed-in-eks-node-monitoring-agent] block internal" -j REJECT --reject-with icmp-port-unreachable`,
+		} {
+			rule, err := iptables.ParseIPTablesRule(ruleRaw)
+			assert.NoError(t, err)
+			assert.Truef(t, rule.IsExpectedRejectRule(), ruleRaw)
+		}
+	})
+
 	t.Run("NotExpectedRejectRule", func(t *testing.T) {
 		for _, ruleRaw := range []string{
 			`-A NOT-KUBE -m conntrack --ctstate INVALID`,

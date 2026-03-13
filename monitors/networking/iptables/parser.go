@@ -98,6 +98,9 @@ func (rule IPTablesRule) IsExpectedRejectRule() bool {
 	} else if rule.table == "FORWARD" && strings.Contains(rule.comment, "Block Node Local Pod access") {
 		// VPC CNI rule to block node-local pod access via link-local addresses
 		return true
+	} else if strings.Contains(rule.comment, "allowed-in-eks-node-monitoring-agent") {
+		// User-allowlisted rule via iptables comment
+		return true
 	}
 	return false
 }
