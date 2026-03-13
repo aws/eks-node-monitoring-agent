@@ -64,16 +64,14 @@ Create the name of the service account to use
 {{- end -}}
 
 {{/*
-Get the current dcgm-exporter image for a region.
-We use the dcgm-exporter image from the eks/observability.
+Get the current dcgm-exporter image.
+Defaults to NVIDIA's public catalog (nvcr.io). Use override for a fully custom image reference.
 */}}
 {{- define "dcgm-exporter.image" -}}
 {{- if .Values.dcgmAgent.image.override }}
 {{- .Values.dcgmAgent.image.override }}
-{{- else if .Values.dcgmAgent.image.containerRegistry }}
-{{- printf "%s/eks/observability/dcgm-exporter:%s" .Values.dcgmAgent.image.containerRegistry .Values.dcgmAgent.image.tag -}}
 {{- else }}
-{{- printf "%s.dkr.%s.%s.%s/eks/observability/dcgm-exporter:%s" .Values.dcgmAgent.image.account .Values.dcgmAgent.image.endpoint .Values.dcgmAgent.image.region .Values.dcgmAgent.image.domain .Values.dcgmAgent.image.tag -}}
+{{- printf "%s/%s:%s" .Values.dcgmAgent.image.registry .Values.dcgmAgent.image.repository .Values.dcgmAgent.image.tag -}}
 {{- end -}}
 {{- end -}}
 
