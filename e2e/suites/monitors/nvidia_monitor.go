@@ -3,6 +3,7 @@ package monitors
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -202,12 +203,21 @@ func getDcgmPod(ctx context.Context, t *testing.T, cfg *envconf.Config, nodeName
 
 func dcgmiExec(ctx context.Context, t *testing.T, cfg *envconf.Config, nodeName string, dcgmiArgs []string) error {
 	// try to find dcgm-server pods to exec into first, then fall back
-	// to running a pod using binaries on the host.
+	// to running a pod using binaries on the host. pod exec may fail
+	// if the dcgm-exporter image is distroless (no dcgmi binary).
 	if dcgmServerPod, ok := getDcgmPod(ctx, t, cfg, nodeName); ok {
-		return dcgmiPodExec(ctx, t, cfg, dcgmServerPod, dcgmiArgs)
-	} else {
-		return dcgmiHostExec(ctx, cfg, nodeName, dcgmiArgs)
+		if err := dcgmiPodExec(ctx, t, cfg, dcgmServerPod, dcgmiArgs); err != nil {
+			errorMessage := err.Error()
+			if strings.Contains(errorMessage, "executable file not found") || strings.Contains(errorMessage, "no such file or directory") {
+				t.Logf("dcgmi not available in pod (distroless image), falling back to host exec: %s", err)
+			} else {
+				return fmt.Errorf("dcgmi pod exec failed: %w", err)
+			}
+		} else {
+			return nil
+		}
 	}
+	return dcgmiHostExec(ctx, cfg, nodeName, dcgmiArgs)
 }
 
 func dcgmiPodExec(ctx context.Context, t *testing.T, cfg *envconf.Config, dcgmPod *corev1.Pod, dcgmiArgs []string) error {

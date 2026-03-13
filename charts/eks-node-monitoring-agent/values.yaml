@@ -95,18 +95,13 @@ nodeAgent:
 dcgmAgent:
   image:
     # -- Image tag for the dcgm-exporter
-    tag: 4.5.2-4.8.1-ubuntu22.04
-    # -- Full container registry URL override (e.g., 602401143452.dkr.ecr.us-west-2.amazonaws.com).
-    # When set, this takes precedence over account/endpoint/region/domain fields.
-    containerRegistry: ""
-    # -- ECR repository domain for the dcgm-exporter
-    domain: amazonaws.com
-    # -- ECR repository region for the dcgm-exporter
-    region: us-west-2
-    # -- ECR repository endpoint for the dcgm-exporter
-    endpoint: ecr
-    # -- ECR repository account number for the dcgm-exporter
-    account: "602401143452"
+    tag: 4.5.2-4.8.1-distroless
+    # -- Full image override (registry/repository:tag). Takes precedence over all other fields.
+    override: ""
+    # -- Container image registry for the dcgm-exporter (default: NVIDIA public catalog)
+    registry: "nvcr.io/nvidia/k8s"
+    # -- Container image repository name for the dcgm-exporter
+    repository: "dcgm-exporter"
     # -- Container pull policy for the dcgm-exporter
     pullPolicy: IfNotPresent
   # -- Map of dcgm pod affinities

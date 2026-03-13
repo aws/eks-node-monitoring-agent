@@ -37,13 +37,11 @@ The following table lists the configurable parameters for this chart and their d
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | dcgmAgent.affinity | object | see [`values.yaml`](./values.yaml) | Map of dcgm pod affinities |
-| dcgmAgent.image.account | string | `"602401143452"` | ECR repository account number for the dcgm-exporter |
-| dcgmAgent.image.containerRegistry | string | `""` | Full container registry URL override (e.g., 602401143452.dkr.ecr.us-west-2.amazonaws.com). When set, this takes precedence over account/endpoint/region/domain fields. |
-| dcgmAgent.image.domain | string | `"amazonaws.com"` | ECR repository domain for the dcgm-exporter |
-| dcgmAgent.image.endpoint | string | `"ecr"` | ECR repository endpoint for the dcgm-exporter |
+| dcgmAgent.image.override | string | `""` | Full image override (registry/repository:tag). Takes precedence over all other fields. |
 | dcgmAgent.image.pullPolicy | string | `"IfNotPresent"` | Container pull policy for the dcgm-exporter |
-| dcgmAgent.image.region | string | `"us-west-2"` | ECR repository region for the dcgm-exporter |
-| dcgmAgent.image.tag | string | `"4.5.2-4.8.1-ubuntu22.04"` | Image tag for the dcgm-exporter |
+| dcgmAgent.image.registry | string | `"nvcr.io/nvidia/k8s"` | Container image registry for the dcgm-exporter (default: NVIDIA public catalog) |
+| dcgmAgent.image.repository | string | `"dcgm-exporter"` | Container image repository name for the dcgm-exporter |
+| dcgmAgent.image.tag | string | `"4.5.2-4.8.1-distroless"` | Image tag for the dcgm-exporter |
 | dcgmAgent.podAnnotations | object | `{}` | Pod annotations applied to the dcgm exporter |
 | dcgmAgent.podLabels | object | `{}` | Pod labels applied to the dcgm exporter |
 | dcgmAgent.resources | object | `{}` | Container resources for the dcgm deployment |

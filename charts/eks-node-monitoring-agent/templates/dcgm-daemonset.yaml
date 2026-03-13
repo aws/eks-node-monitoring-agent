@@ -44,8 +44,8 @@ spec:
         - name: {{ .Chart.Name }}-dcgm
           image: {{ template "dcgm-exporter.image" . }}
           imagePullPolicy: {{ .Values.dcgmAgent.image.pullPolicy }}
-          command: ["/bin/sh"]
-          args: ["-c", "nv-hostengine -n -b ALL || true; sleep infinity"]
+          command: ["/usr/bin/nv-hostengine"]
+          args: ["-n", "-b", "ALL"]
           {{- with .Values.dcgmAgent.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
