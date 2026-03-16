@@ -66,8 +66,9 @@ spec:
                       type: string
                     type: array
                   destination:
-                    description: UploadDestination is a URL describing where to deliver
-                      a diagnostic artifact.
+                    description: |-
+                      UploadDestination is a URL describing where to deliver a diagnostic artifact.
+                      This can be set to "node" to temporarily store logs on the node for later collection.
                     type: string
                 required:
                 - destination
@@ -192,7 +193,7 @@ metadata:
     app.kubernetes.io/name: eks-node-monitoring-agent
     helm.sh/chart: eks-node-monitoring-agent
     app.kubernetes.io/instance: eks-node-monitoring-agent
-    app.kubernetes.io/version: "1.5.2"
+    app.kubernetes.io/version: "1.6.0"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
 ---
@@ -205,7 +206,7 @@ metadata:
     app.kubernetes.io/name: eks-node-monitoring-agent
     helm.sh/chart: eks-node-monitoring-agent
     app.kubernetes.io/instance: eks-node-monitoring-agent
-    app.kubernetes.io/version: "1.5.2"
+    app.kubernetes.io/version: "1.6.0"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
 rules:
@@ -236,7 +237,7 @@ metadata:
     app.kubernetes.io/name: eks-node-monitoring-agent
     helm.sh/chart: eks-node-monitoring-agent
     app.kubernetes.io/instance: eks-node-monitoring-agent
-    app.kubernetes.io/version: "1.5.2"
+    app.kubernetes.io/version: "1.6.0"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
 roleRef:
@@ -258,7 +259,7 @@ metadata:
     app.kubernetes.io/name: eks-node-monitoring-agent
     helm.sh/chart: eks-node-monitoring-agent
     app.kubernetes.io/instance: eks-node-monitoring-agent
-    app.kubernetes.io/version: "1.5.2"
+    app.kubernetes.io/version: "1.6.0"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
 spec:
@@ -277,7 +278,7 @@ spec:
         app.kubernetes.io/name: eks-node-monitoring-agent
         helm.sh/chart: eks-node-monitoring-agent
         app.kubernetes.io/instance: eks-node-monitoring-agent
-        app.kubernetes.io/version: "1.5.2"
+        app.kubernetes.io/version: "1.6.0"
         app.kubernetes.io/managed-by: Helm
         app.kubernetes.io/component: controller
     spec:
@@ -463,7 +464,7 @@ spec:
       priorityClassName: system-node-critical
       containers:
         - name: eks-node-monitoring-agent-dcgm
-          image: {{ .Image }}
+          image: 602401143452.dkr.ecr.us-west-2.amazonaws.com/eks/observability/dcgm-exporter:4.5.2-4.8.1-ubuntu22.04
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh"]
           args: ["-c", "nv-hostengine -n -b ALL || true; sleep infinity"]

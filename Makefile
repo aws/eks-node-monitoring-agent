@@ -56,6 +56,7 @@ endif
 
 # Tool versions
 CONTROLLER_GEN_VERSION ?= v0.16.5
+HELM_VERSION ?= v3.17.2
 
 # Go environment
 ifeq (,$(shell go env GOBIN))
@@ -65,6 +66,7 @@ GOBIN=$(shell go env GOBIN)
 endif
 
 CONTROLLER_GEN ?= $(GOBIN)/controller-gen
+HELM ?= $(GOBIN)/helm
 
 # =============================================================================
 # Help Target
@@ -117,11 +119,7 @@ test: generate fmt vet covignore ## Run tests
 	@# errors from coverage instrumentation on packages without tests.
 	go test $$(go list ./... | while read pkg; do dir=$$(go list -f '{{.Dir}}' "$$pkg"); if ls "$$dir"/*_test.go >/dev/null 2>&1; then echo "$$pkg"; fi; done) -cover -covermode=atomic
 	@echo "Running Helm chart validation..."
-	@if command -v helm >/dev/null 2>&1; then \
-		$(MAKE) helm-lint; \
-	else \
-		echo "Helm not available, skipping helm-lint"; \
-	fi
+	$(MAKE) helm-lint
 
 .PHONY: generate
 generate: mod-tidy controller-gen generate-crds generate-reasons generate-docs helm-docs update-e2e-manifests ## Run all code generation
@@ -174,39 +172,34 @@ controller-gen: ## Install controller-gen if needed
 		go install sigs.k8s.io/controller-tools/cmd/controller-gen@$(CONTROLLER_GEN_VERSION); \
 	fi
 
+.PHONY: helm-install
+helm-install: ## Install helm if needed
+	@if ! command -v $(HELM) >/dev/null 2>&1 || ! $(HELM) version --short | grep -q "$(HELM_VERSION)"; then \
+		echo "Installing helm $(HELM_VERSION)..."; \
+		go install helm.sh/helm/v3/cmd/helm@$(HELM_VERSION); \
+	fi
+
 # =============================================================================
 # Helm Targets
 # =============================================================================
 
 .PHONY: helm-lint
-helm-lint: ## Lint Helm chart for errors
-	@if command -v helm >/dev/null 2>&1; then \
-		helm lint $(CHART_DIR); \
-	else \
-		echo "Helm not available, skipping helm-lint"; \
-	fi
+helm-lint: helm-install ## Lint Helm chart for errors
+	$(HELM) lint $(CHART_DIR)
 
 .PHONY: helm-template
-helm-template: ## Render Helm chart templates to stdout
-	@if command -v helm >/dev/null 2>&1; then \
-		helm template eks-node-monitoring-agent $(CHART_DIR) $(HELM_FLAGS); \
-	else \
-		echo "Helm not available, skipping helm-template"; \
-	fi
+helm-template: helm-install ## Render Helm chart templates to stdout
+	$(HELM) template eks-node-monitoring-agent $(CHART_DIR) $(HELM_FLAGS)
 
 .PHONY: render-chart
 render-chart: helm-template ## Alias for helm-template (backward compatibility)
 
 .PHONY: helm-package
-helm-package: ## Package Helm chart into .tgz archive
-	@if command -v helm >/dev/null 2>&1; then \
-		$(MAKE) helm-lint; \
-		mkdir -p $(CHART_OUTPUT_DIR); \
-		helm package $(CHART_DIR) --destination $(CHART_OUTPUT_DIR); \
-		echo "Chart packaged to $(CHART_OUTPUT_DIR)/"; \
-	else \
-		echo "Helm not available, skipping helm-package"; \
-	fi
+helm-package: helm-install ## Package Helm chart into .tgz archive
+	$(MAKE) helm-lint
+	mkdir -p $(CHART_OUTPUT_DIR)
+	$(HELM) package $(CHART_DIR) --destination $(CHART_OUTPUT_DIR)
+	@echo "Chart packaged to $(CHART_OUTPUT_DIR)/"
 
 .PHONY: helm-docs
 helm-docs: ## Generate Helm chart documentation (requires Docker)
@@ -254,19 +247,14 @@ docker-build: ## Build and push multi-arch Docker image (requires IMAGE_REGISTRY
 
 
 .PHONY: deploy
-deploy: ## Deploy to current Kubernetes cluster
+deploy: helm-install ## Deploy to current Kubernetes cluster
 	@if ! command -v kubectl >/dev/null 2>&1; then \
 		echo "Error: kubectl is not installed."; \
 		echo "Install kubectl: https://kubernetes.io/docs/tasks/tools/"; \
 		exit 1; \
 	fi
-	@if ! command -v helm >/dev/null 2>&1; then \
-		echo "Error: helm is not installed."; \
-		echo "Install helm: https://helm.sh/docs/intro/install/"; \
-		exit 1; \
-	fi
 	@echo "Deploying to namespace: $(NAMESPACE)"
-	helm template eks-node-monitoring-agent $(CHART_DIR) $(HELM_FLAGS) | kubectl apply -f -
+	$(HELM) template eks-node-monitoring-agent $(CHART_DIR) $(HELM_FLAGS) | kubectl apply -f -
 	@echo "Restarting daemonset to pick up changes..."
 	kubectl rollout restart daemonset -n $(NAMESPACE) eks-node-monitoring-agent || true
 	@echo "Deployment complete"
@@ -282,12 +270,12 @@ install-crds: ## Install CRDs to current cluster
 	@echo "CRDs installed"
 
 .PHONY: uninstall
-uninstall: ## Remove deployment from current cluster
+uninstall: helm-install ## Remove deployment from current cluster
 	@if ! command -v kubectl >/dev/null 2>&1; then \
 		echo "Error: kubectl is not installed."; \
 		exit 1; \
 	fi
-	helm template eks-node-monitoring-agent $(CHART_DIR) $(HELM_FLAGS) | kubectl delete -f - || true
+	$(HELM) template eks-node-monitoring-agent $(CHART_DIR) $(HELM_FLAGS) | kubectl delete -f - || true
 	@echo "Deployment removed"
 
 # =============================================================================
@@ -295,31 +283,31 @@ uninstall: ## Remove deployment from current cluster
 # =============================================================================
 
 .PHONY: update-e2e-manifests
-update-e2e-manifests: ## Generate e2e agent manifest template from Helm chart
+update-e2e-manifests: helm-install ## Generate e2e agent manifest template from Helm chart
 	@echo "Generating e2e agent manifest template..."
-	@helm template eks-node-monitoring-agent charts/eks-node-monitoring-agent \
+	@$(HELM) template eks-node-monitoring-agent charts/eks-node-monitoring-agent \
 		--namespace kube-system \
 		--include-crds | \
-		sed 's|image: [^[:space:]]*|image: {{ .Image }}|g' > e2e/setup/manifests/agent.tpl.yaml
+		sed 's|image: .*/eks/eks-node-monitoring-agent.*|image: {{ .Image }}|' > e2e/setup/manifests/agent.tpl.yaml
 	@echo "Generated e2e/setup/manifests/agent.tpl.yaml"
 
 .PHONY: build-e2e
 build-e2e: ## Build e2e test binary
 	@echo "Building e2e test binary..."
 	@mkdir -p $(OUTPUT_BIN)
-	go test -c -tags=e2e -o $(OUTPUT_BIN)/e2e.test ./e2e/
-	@echo "Built $(OUTPUT_BIN)/e2e.test"
+	go test -c -tags=e2e -o $(OUTPUT_BIN)/eks-node-monitoring-agent.test ./e2e/
+	@echo "Built $(OUTPUT_BIN)/eks-node-monitoring-agent.test"
 
 .PHONY: e2e
 e2e: update-e2e-manifests build-e2e ## Build and run e2e tests against the current cluster context
-	$(OUTPUT_BIN)/e2e.test --test.v --test.timeout 60m --install=true --image=$(IMAGE_URI) $(ARGS)
+	$(OUTPUT_BIN)/eks-node-monitoring-agent.test --test.v --test.timeout 60m --install=true --image=$(IMAGE_URI) $(ARGS)
 
 # =============================================================================
 # Release Target
 # =============================================================================
 
 .PHONY: release
-release: build test helm-package ## Build, test, and package for release
+release: build test build-e2e helm-package ## Build, test, and package for release
 	@echo "Release build completed successfully"
 	@echo "Artifacts:"
 	@echo "  - Helm chart: $(CHART_OUTPUT_DIR)/"

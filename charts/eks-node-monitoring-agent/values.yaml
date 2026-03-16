@@ -28,7 +28,10 @@ serviceAccount:
 nodeAgent:
   image:
     # -- Image tag for the eks-node-monitoring-agent
-    tag: v1.5.2-eksbuild.1
+    tag: v1.6.0-eksbuild.1
+    # -- Full container registry URL override (e.g., 602401143452.dkr.ecr.us-west-2.amazonaws.com).
+    # When set, this takes precedence over account/endpoint/region/domain fields.
+    containerRegistry: ""
     # -- ECR repository domain for the eks-node-monitoring-agent
     domain: amazonaws.com
     # -- ECR repository region for the eks-node-monitoring-agent
@@ -39,7 +42,12 @@ nodeAgent:
     account: "602401143452"
     # -- Container pull policyfor the eks-node-monitoring-agent
     pullPolicy: IfNotPresent
-  # -- List of addittional container arguments for the eks-node-monitoring-agent
+  # -- List of additional container arguments for the eks-node-monitoring-agent.
+  # The agent binds to ports 8002 (health probe) and 8080 (metrics) on the host
+  # network by default. To avoid port conflicts, override with:
+  #   additionalArgs:
+  #     - "--probe-address=:8002"
+  #     - "--metrics-address=:8003"
   additionalArgs: []
   # -- Map of pod affinities for the eks-node-monitoring-agent
   affinity:
@@ -73,6 +81,8 @@ nodeAgent:
     limits:
       cpu: 250m
       memory: 200Mi
+  # -- Container resize policy for in-place pod vertical scaling (requires Kubernetes 1.33+)
+  resizePolicy: []
   # -- Container Security context for the eks-node-monitoring-agent
   securityContext:
     privileged: true
@@ -93,6 +103,9 @@ dcgmAgent:
   image:
     # -- Image tag for the dcgm-exporter
     tag: 4.5.2-4.8.1-ubuntu22.04
+    # -- Full container registry URL override (e.g., 602401143452.dkr.ecr.us-west-2.amazonaws.com).
+    # When set, this takes precedence over account/endpoint/region/domain fields.
+    containerRegistry: ""
     # -- ECR repository domain for the dcgm-exporter
     domain: amazonaws.com
     # -- ECR repository region for the dcgm-exporter
@@ -132,6 +145,8 @@ dcgmAgent:
               - amd64
   # -- Container resources for the dcgm deployment
   resources: {}
+  # -- Container resize policy for in-place pod vertical scaling (requires Kubernetes 1.33+)
+  resizePolicy: []
   # -- Deployment tolerations for the dcgm
   tolerations: []
   # -- Pod labels applied to the dcgm exporter

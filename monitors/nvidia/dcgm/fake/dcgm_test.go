@@ -9,8 +9,8 @@ import (
 	"time"
 
 	dcgmapi "github.com/NVIDIA/go-dcgm/pkg/dcgm"
-	"github.com/stretchr/testify/assert"
 	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/dcgm/fake"
+	"github.com/stretchr/testify/assert"
 )
 
 func Test(t *testing.T) {
