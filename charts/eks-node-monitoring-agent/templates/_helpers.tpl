@@ -36,7 +36,6 @@ Common selector labels
 */}}
 {{- define "eks-node-monitoring-agent.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "eks-node-monitoring-agent.name" . }}
-helm.sh/chart: {{ include "eks-node-monitoring-agent.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
@@ -45,6 +44,7 @@ Common labels
 */}}
 {{- define "eks-node-monitoring-agent.labels" -}}
 {{ include "eks-node-monitoring-agent.selectorLabels" . }}
+helm.sh/chart: {{ include "eks-node-monitoring-agent.name" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
