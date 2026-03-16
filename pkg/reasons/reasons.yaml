@@ -173,7 +173,9 @@ NetworkingReady:
     DefaultSeverity: 'Warning'
     Description: >-
       An unexpected `REJECT` or `DROP` rule was found in the `iptables`,
-      potentially blocking expected traffic.
+      potentially blocking expected traffic. To allowlist a custom rule, add
+      `allowed-in-eks-node-monitoring-agent` to its iptables comment (e.g.,
+      `-m comment --comment "allowed-in-eks-node-monitoring-agent"`).
   LinkLocalExceeded:
     Template: 'LinkLocalExceeded'
     DefaultSeverity: 'Warning'
