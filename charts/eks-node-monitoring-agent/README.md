@@ -54,7 +54,7 @@ The following table lists the configurable parameters for this chart and their d
 | global.podLabels | object | `{}` | Labels applied to eks-node-monitoring-agent and dcgm-exporter (can be overridden by component-specific labels) |
 | imagePullSecrets | list | `[]` | Docker registry pull secrets |
 | nameOverride | string | `"eks-node-monitoring-agent"` | A name override for the chart |
-| nodeAgent.additionalArgs | list | `[]` | List of addittional container arguments for the eks-node-monitoring-agent |
+| nodeAgent.additionalArgs | list | `[]` | List of additional container arguments for the eks-node-monitoring-agent. The agent binds to ports 8002 (health probe) and 8080 (metrics) on the host network by default. To avoid port conflicts, override with:   additionalArgs:     - "--probe-address=:8002"     - "--metrics-address=:8003" |
 | nodeAgent.affinity | object | see [`values.yaml`](./values.yaml) | Map of pod affinities for the eks-node-monitoring-agent |
 | nodeAgent.image.account | string | `"602401143452"` | ECR repository account number for the eks-node-monitoring-agent |
 | nodeAgent.image.containerRegistry | string | `""` | Full container registry URL override (e.g., 602401143452.dkr.ecr.us-west-2.amazonaws.com). When set, this takes precedence over account/endpoint/region/domain fields. |
