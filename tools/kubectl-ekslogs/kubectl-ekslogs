@@ -8,8 +8,6 @@
 set -euo pipefail
 
 readonly DEFAULT_TIMEOUT="300s"
-readonly DEFAULT_DEBUG_IMAGE="public.ecr.aws/docker/library/busybox:stable-uclibc"
-readonly POD_LABEL="app.kubernetes.io/managed-by=kubectl-ekslogs"
 
 # --- Colors & Formatting ---
 
@@ -18,10 +16,9 @@ if [[ -t 1 ]]; then
     readonly GREEN='\033[0;32m'
     readonly YELLOW='\033[1;33m'
     readonly CYAN='\033[0;36m'
-    readonly BOLD='\033[1m'
     readonly RESET='\033[0m'
 else
-    readonly RED='' GREEN='' YELLOW='' CYAN='' BOLD='' RESET=''
+    readonly RED='' GREEN='' YELLOW='' CYAN='' RESET=''
 fi
 
 # --- Helpers ---
@@ -46,7 +43,7 @@ FLAGS
         --s3 <bucket-name>     Upload logs to S3 bucket and download from there
         --key <s3-key-prefix>  S3 key prefix for logs (default: root of bucket)
         --no-proxy             Use a debug pod and kubectl cp instead of the node proxy API
-        --debug-image <image>  Container image for debug pod (default: ${DEFAULT_DEBUG_IMAGE})
+        --debug-image <image>  Container image for debug pod
     -h, --help                 Show this help message
 
 EXAMPLES
@@ -63,10 +60,7 @@ EXAMPLES
     kubectl ekslogs --s3 my-bucket --key logs/2024-03 ip-10-0-1-42.ec2.internal
 
     # Use debug pod transfer (no node proxy API required)
-    kubectl ekslogs --no-proxy ip-10-0-1-42.ec2.internal
-
-    # Use debug pod with a custom image
-    kubectl ekslogs --no-proxy --debug-image alpine:3.19 ip-10-0-1-42.ec2.internal
+    kubectl ekslogs --no-proxy --debug-image public.ecr.aws/docker/library/busybox:stable-musl ip-10-0-1-42.ec2.internal
 
     # Collect logs with a custom timeout and output directory
     kubectl ekslogs --timeout 600s --output-dir /tmp/logs ip-10-0-1-42.ec2.internal
@@ -204,17 +198,13 @@ generate_presigned_url() {
     local bucket="$1"
     local key="$2"
 
-    python3 -c "import boto3; print(boto3.client('s3').generate_presigned_url(ClientMethod='put_object', Params={'Bucket': '${bucket}', 'Key': '${key}'}, ExpiresIn=1000))" 2>/dev/null
-}
-
-get_s3_key() {
-    local node_index="$1"
-    echo "${S3_KEYS[$node_index]}"
-}
-
-get_presigned_url() {
-    local node_index="$1"
-    echo "${PRESIGNED_URLS[$node_index]}"
+    python3 -c "
+import boto3, sys
+print(boto3.client('s3').generate_presigned_url(
+    ClientMethod='put_object',
+    Params={'Bucket': sys.argv[1], 'Key': sys.argv[2]},
+    ExpiresIn=1000
+))" "$bucket" "$key" 2>/dev/null
 }
 
 # --- Argument Parsing ---
@@ -225,7 +215,7 @@ NODE_NAMES=()
 TRANSFER_PODS=()
 SELECTOR=""
 NO_PROXY=false
-DEBUG_IMAGE="${DEFAULT_DEBUG_IMAGE}"
+DEBUG_IMAGE=""
 S3_BUCKET=""
 S3_KEY_PREFIX=""
 
@@ -326,6 +316,17 @@ if [[ -n "$S3_KEY_PREFIX" ]] && [[ -z "$S3_BUCKET" ]]; then
     exit 1
 fi
 
+if [[ "$NO_PROXY" == true ]] && [[ -z "$DEBUG_IMAGE" ]]; then
+    error "Flag --debug-image is required when using --no-proxy"
+    exit 1
+fi
+
+# Validate timeout format is positive integer seconds
+if ! [[ "$TIMEOUT" =~ ^[0-9]+s$ ]]; then
+    error "Invalid timeout format: ${TIMEOUT} (expected a positive integer followed by 's', e.g. 300s)"
+    exit 1
+fi
+
 # Resolve label selector to node names
 if [[ -n "$SELECTOR" ]]; then
     status "Resolving nodes matching selector: ${SELECTOR}"
@@ -353,7 +354,7 @@ info "All ${#NODE_NAMES[@]} node(s) validated"
 
 # --- Main ----------------------------------------------------------------
 
-trap cleanup INT TERM
+trap cleanup EXIT INT TERM
 
 # Clean up any pre-existing NodeDiagnostic resources
 for node in "${NODE_NAMES[@]}"; do
@@ -417,7 +418,7 @@ EOF
     ((node_index++))
 done
 
-# Wait for completion
+# Wait for completion and verify success
 status "Waiting for log collection to complete (timeout: ${TIMEOUT})..."
 for node in "${NODE_NAMES[@]}"; do
     if ! kubectl wait \
@@ -430,6 +431,25 @@ for node in "${NODE_NAMES[@]}"; do
         done
         exit 1
     fi
+
+    # Verify completion status
+    reason=$(kubectl get nodediagnostic "$node" -o jsonpath='{.status.captureStatuses[0].state.completed.reason}' 2>/dev/null)
+    message=$(kubectl get nodediagnostic "$node" -o jsonpath='{.status.captureStatuses[0].state.completed.message}' 2>/dev/null)
+
+    case "$reason" in
+        Success|SuccessWithErrors)
+            if [[ "$reason" == "SuccessWithErrors" ]]; then
+                warn "Log collection on ${node} completed with errors: ${message}"
+            fi
+            ;;
+        *)
+            error "Log collection failed on node ${node}: reason=${reason} message=${message}"
+            for n in "${NODE_NAMES[@]}"; do
+                kubectl delete nodediagnostic "$n" --ignore-not-found >/dev/null 2>&1 || true
+            done
+            exit 1
+            ;;
+    esac
 done
 info "Log collection completed on all nodes"
 

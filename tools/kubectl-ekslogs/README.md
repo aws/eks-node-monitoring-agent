@@ -38,7 +38,7 @@ kubectl ekslogs [FLAGS] <node> [node...]
 | `--s3 <bucket-name>` | Upload logs to S3 bucket instead of downloading locally | — |
 | `--key <s3-key-prefix>` | S3 key prefix for logs (requires `--s3`) | root of bucket |
 | `--no-proxy` | Use a debug pod and `kubectl cp` instead of the node proxy API | `false` |
-| `--debug-image <image>` | Container image for debug pod (used with `--no-proxy`) | `public.ecr.aws/docker/library/busybox:stable-uclibc` |
+| `--debug-image <image>` | Container image for debug pod (required with `--no-proxy`) | - |
 | `-h`, `--help` | Show help message | — |
 
 
@@ -70,11 +70,7 @@ kubectl ekslogs --s3 my-bucket --key logs/2024-03 ip-10-0-1-42.ec2.internal
 ```
 **Use debug pod transfer (no node proxy API required):**
 ```bash
-kubectl ekslogs --no-proxy ip-10-0-1-42.ec2.internal
-```
-**Use debug pod with a custom image:**
-```bash
-kubectl ekslogs --no-proxy --debug-image alpine:3.19 ip-10-0-1-42.ec2.internal
+kubectl ekslogs --no-proxy --debug-image public.ecr.aws/docker/library/busybox:stable-musl ip-10-0-1-42.ec2.internal
 ```
 **Collect logs with a custom timeout and output directory:**
 ```bash
