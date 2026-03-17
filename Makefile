@@ -126,7 +126,6 @@ generate: mod-tidy controller-gen generate-crds generate-reasons generate-docs h
 
 .PHONY: mod-tidy
 mod-tidy: ## Tidy Go modules
-	go get -u ./...
 	go mod tidy
 
 .PHONY: generate-crds
