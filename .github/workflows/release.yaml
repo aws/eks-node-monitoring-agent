@@ -1,0 +1,43 @@
+name: "[Release] Create GitHub Release"
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    if: github.repository == 'aws/eks-node-monitoring-agent'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+
+      - name: Validate tag matches Chart.yaml version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          CHART_VERSION=$(grep '^version:' charts/eks-node-monitoring-agent/Chart.yaml | awk '{print $2}')
+          APP_VERSION=$(grep '^appVersion:' charts/eks-node-monitoring-agent/Chart.yaml | awk '{print $2}')
+          if [ "${TAG_VERSION}" != "${CHART_VERSION}" ]; then
+            echo "::error::Tag version (${TAG_VERSION}) does not match Chart.yaml version (${CHART_VERSION})"
+            exit 1
+          fi
+          if [ "${TAG_VERSION}" != "${APP_VERSION}" ]; then
+            echo "::error::Tag version (${TAG_VERSION}) does not match Chart.yaml appVersion (${APP_VERSION})"
+            exit 1
+          fi
+
+      - name: Extract changelog for this release
+        run: hack/extract-changelog.sh "${GITHUB_REF_NAME}" > /tmp/release-notes.md
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file /tmp/release-notes.md \
+            --verify-tag
