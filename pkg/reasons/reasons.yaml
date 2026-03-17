@@ -267,10 +267,10 @@ AcceleratedHardwareReady:
       A DCGM health check failed in a fatal manner.
   NvidiaDeviceCountMismatch:
     Template: 'NvidiaDeviceCountMismatch'
-    DefaultSeverity: 'Warning'
+    DefaultSeverity: 'Fatal'
     Description: >-
-      The number of GPUs visible through NVML is inconsistent with the NVIDIA
-      device count on the filesystem.
+      The number of GPUs detected on the node does not match the expected count,
+      which indicates hardware failure or driver issues requiring investigation.
   NvidiaDoubleBitError:
     Template: 'NvidiaDoubleBitError'
     DefaultSeverity: 'Fatal'
