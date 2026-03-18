@@ -122,7 +122,7 @@ func systemdStatus(services ...string) []byte {
 }
 
 func journalctl(unit string) []byte {
-	if out, err := exec.Command("journalctl", "--unit", unit).Output(); err != nil {
+	if out, err := exec.Command("journalctl", "-o", "short-iso-precise", "--unit", unit).Output(); err != nil {
 		return []byte(fmt.Sprintf("failed to call journalctl due to: %s", err))
 	} else {
 		return out
