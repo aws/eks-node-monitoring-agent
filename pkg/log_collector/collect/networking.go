@@ -59,7 +59,7 @@ func ipInfo(acc *Accessor) error {
 }
 
 func multicard(acc *Accessor) error {
-	return acc.CommandOutput([]string{"journalctl", "-u", "configure-multicard-interfaces"}, "networking/configure-multicard-interfaces.txt", CommandOptionsNone)
+	return acc.CommandOutput([]string{"journalctl", "-o", "short-iso-precise", "-u", "configure-multicard-interfaces"}, "networking/configure-multicard-interfaces.txt", CommandOptionsNone)
 }
 
 func interfaces(acc *Accessor) error {

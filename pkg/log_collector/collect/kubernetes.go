@@ -17,7 +17,7 @@ func (m Kubernetes) Collect(acc *Accessor) error {
 }
 
 func kubelet(acc *Accessor) error {
-	var merr = acc.CommandOutput([]string{"journalctl", "-u", "kubelet", "--since", "10 days ago"}, "kubelet/kubelet.log", CommandOptionsNone)
+	var merr = acc.CommandOutput([]string{"journalctl", "-o", "short-iso-precise", "-u", "kubelet", "--since", "10 days ago"}, "kubelet/kubelet.log", CommandOptionsNone)
 
 	// TODO: determine the source of the 'Access Denied' error that returns when
 	// calling systemctl.
