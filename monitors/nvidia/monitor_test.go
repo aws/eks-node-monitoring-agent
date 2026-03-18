@@ -305,7 +305,7 @@ func TestNvidiaMonitor(t *testing.T) {
 		nvidiaMonitor.Register(ctx, mgr)
 
 		result := awaitCondition(t, mgr, testTimeout)
-		assert.Equal(t, monitor.SeverityWarning, result.Severity)
+		assert.Equal(t, monitor.SeverityFatal, result.Severity)
 		assert.Equal(t, "NvidiaDeviceCountMismatch", result.Reason)
 	})
 }

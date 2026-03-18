@@ -5,6 +5,21 @@ All notable changes to the EKS Node Monitoring Agent will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.6.1] - 2026-03-17
+
+### What's Changed
+
+#### Features
+- Add `resizePolicy` to chart for in-place pod vertical scaling ([61eb3fb](https://github.com/aws/eks-node-monitoring-agent/commit/61eb3fb))
+- Collect automode component logs in dedicated folder ([65aa2c7](https://github.com/aws/eks-node-monitoring-agent/commit/65aa2c7))
+
+#### Bug Fixes
+- Remove `helm.sh/chart` from DaemonSet selector labels to fix immutable selector upgrade failures from v1.5.x ([a7ab4ee](https://github.com/aws/eks-node-monitoring-agent/commit/a7ab4ee))
+- Allowlist Calico iptables chains in UnexpectedRejectRule check to prevent false-positive warnings ([14d813e](https://github.com/aws/eks-node-monitoring-agent/commit/14d813e))
+
+#### Documentation
+- Add example for overriding ports in configuration ([ae33d75](https://github.com/aws/eks-node-monitoring-agent/commit/ae33d75))
+
 ## [v1.6.0] - 2026-03-09
 
 ### What's Changed
@@ -37,5 +52,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### What's Changed
 - Update base DCGM image to 4.5.2-4.8.1-ubuntu22.04 to resolve CVEs ([1a2cda4](https://github.com/aws/eks-node-monitoring-agent/commit/1a2cda4))
 
+[v1.6.1]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.0...v1.6.1
 [v1.6.0]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.5.2...v1.6.0
 [v1.5.2]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.5.1...v1.5.2

@@ -13,7 +13,7 @@ func (c *Containerd) Collect(acc *Accessor) error {
 	return errors.Join(
 		ctrdlogs(acc),
 		acc.CommandOutput([]string{"containerd", "config", "dump"}, "containerd/containerd-config.txt", CommandOptionsNone),
-		acc.CommandOutput([]string{"journalctl", "-u", "containerd"}, "containerd/containerd-log.txt", CommandOptionsNone),
+		acc.CommandOutput([]string{"journalctl", "-o", "short-iso-precise", "-u", "containerd"}, "containerd/containerd-log.txt", CommandOptionsNone),
 		acc.CommandOutput([]string{"ctr", "version"}, "containerd/containerd-version.txt", CommandOptionsNone),
 		acc.CommandOutput([]string{"ctr", "namespaces", "list"}, "containerd/containerd-namespaces.txt", CommandOptionsNone),
 		acc.CommandOutput([]string{"ctr", "--namespace", "k8s.io", "images", "list"}, "containerd/containerd-images.txt", CommandOptionsNone),
