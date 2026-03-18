@@ -40,7 +40,7 @@ func TestDeviceCount(t *testing.T) {
 		assert.Equal(t, conditions[0], monitor.Condition{
 			Reason:   "NvidiaDeviceCountMismatch",
 			Message:  fmt.Sprintf("DCGM detected %d GPUs but %d nvidia device files were detected", 8, 0 /* test is not run on GPU */),
-			Severity: monitor.SeverityWarning,
+			Severity: monitor.SeverityFatal,
 		})
 	})
 }

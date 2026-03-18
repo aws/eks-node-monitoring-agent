@@ -289,4 +289,51 @@ func TestKernelPeriodic(t *testing.T) {
 		}
 		assert.Equal(t, 0, len(mockManager.res))
 	})
+
+	t.Run("ZramHighUsageNoop", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		mon := &KernelMonitor{}
+		mockManager := &mockManager{res: make(chan monitor.Condition, 5)}
+		mon.Register(ctx, mockManager)
+
+		if err := mon.checkZram(10*1024*1024, 5*1024*1024, 1024*1024*1024, "zram0"); err != nil {
+			t.Fatal(err)
+		}
+		assert.Equal(t, 0, len(mockManager.res))
+
+		if err := mon.checkZram(50*1024*1024, 25*1024*1024, 1024*1024*1024, "zram1"); err != nil {
+			t.Fatal(err)
+		}
+		assert.Equal(t, 0, len(mockManager.res))
+
+		if err := mon.checkZram(99*1024*1024, 50*1024*1024, 1000*1024*1024, "zram2"); err != nil {
+			t.Fatal(err)
+		}
+		assert.Equal(t, 0, len(mockManager.res))
+	})
+
+	t.Run("ZramHighUsageWarning", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		mon := &KernelMonitor{}
+		mockManager := &mockManager{res: make(chan monitor.Condition, 5)}
+		mon.Register(ctx, mockManager)
+		// 15% usage - above 10% threshold
+		origSize := int64(150 * 1024 * 1024)
+		compSize := int64(75 * 1024 * 1024)
+		diskSize := int64(1024 * 1024 * 1024)
+		if err := mon.checkZram(origSize, compSize, diskSize, "zram0"); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case monitorResult := <-mockManager.res:
+			assert.Equal(t, monitor.SeverityWarning, monitorResult.Severity)
+			assert.Equal(t, "ZramHighUsage", monitorResult.Reason)
+			assert.Contains(t, monitorResult.Message, "zram0")
+			assert.Contains(t, monitorResult.Message, "capacity")
+		}
+	})
 }

@@ -42,7 +42,7 @@ var (
     }
     NvidiaDeviceCountMismatch = ReasonMeta{
         template:        "NvidiaDeviceCountMismatch",
-        defaultSeverity: "Warning",
+        defaultSeverity: "Fatal",
     }
     NvidiaDoubleBitError = ReasonMeta{
         template:        "NvidiaDoubleBitError",

@@ -64,6 +64,7 @@ func (m *KernelMonitor) Register(ctx context.Context, mgr monitor.Manager) error
 		util.NewChannelHandler(func(time.Time) error { return m.handleZombies() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleOpenedFiles() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleEnvironment() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
+		util.NewChannelHandler(func(time.Time) error { return m.handleZram() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 	} {
 		go handler.Start(ctx)
 	}
@@ -348,4 +349,62 @@ func (k *KernelMonitor) checkEnvironment(envBytes []byte, pid int) error {
 		)
 	}
 	return nil
+}
+
+// ~~~~ zram ~~~~
+
+func (k *KernelMonitor) handleZram() error {
+	zramDirs, err := filepath.Glob(config.ToHostPath("/sys/block/zram*"))
+	if err != nil {
+		return err
+	}
+	if len(zramDirs) == 0 {
+		k.logger.V(1).Info("ZRAM devices not found on this node")
+		return nil
+	}
+	for _, dir := range zramDirs {
+		deviceName := filepath.Base(dir)
+		mmStatData, err := os.ReadFile(filepath.Join(dir, "mm_stat"))
+		if err != nil {
+			k.logger.V(1).Info("failed to read ZRAM mm_stat", "device", deviceName, "error", err)
+			continue
+		}
+		fields := strings.Fields(string(mmStatData))
+		// mm_stat format: orig_data_size compr_data_size mem_used_total ...
+		// We need at least the first 2 fields
+		if len(fields) < 2 {
+			k.logger.V(1).Info("invalid ZRAM mm_stat format", "device", deviceName, "fields", len(fields))
+			continue
+		}
+		origSize, _ := strconv.ParseInt(fields[0], 10, 64)
+		compSize, _ := strconv.ParseInt(fields[1], 10, 64)
+		if origSize == 0 {
+			continue
+		}
+		disksizeData, err := os.ReadFile(filepath.Join(dir, "disksize"))
+		if err != nil {
+			continue
+		}
+		disksize, _ := strconv.ParseInt(strings.TrimSpace(string(disksizeData)), 10, 64)
+		if err := k.checkZram(origSize, compSize, disksize, deviceName); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (k *KernelMonitor) checkZram(origSize, compSize, disksize int64, deviceName string) error {
+	if disksize == 0 {
+		return nil
+	}
+	usagePercent := float64(origSize) / float64(disksize)
+	if usagePercent > 0.10 {
+		return k.manager.Notify(context.Background(), monitor.Condition{
+			Reason:   "ZramHighUsage",
+			Message:  fmt.Sprintf("ZRAM device %s at %.1f%% capacity", deviceName, usagePercent*100),
+			Severity: monitor.SeverityWarning,
+		})
+	}
+	return nil
+
 }
