@@ -327,6 +327,13 @@ if ! [[ "$TIMEOUT" =~ ^[0-9]+s$ ]]; then
     exit 1
 fi
 
+if ! kubectl get crd nodediagnostics.eks.amazonaws.com >/dev/null 2>&1; then
+    error "NodeDiagnostic CRD not found in the cluster"
+    error "The EKS Node Monitoring Agent must be installed before using this plugin"
+    error "See: https://docs.aws.amazon.com/eks/latest/userguide/node-health.html"
+    exit 1
+fi
+
 # Resolve label selector to node names
 if [[ -n "$SELECTOR" ]]; then
     status "Resolving nodes matching selector: ${SELECTOR}"
