@@ -49,8 +49,7 @@ spec:
           image: {{ template "eks-node-monitoring-agent.image" . }}
           imagePullPolicy: {{ .Values.nodeAgent.image.pullPolicy }}
           args:
-            - --probe-address=:8002
-            - --metrics-address=:8003
+            - --probe-address=:{{ .Values.nodeAgent.probePort | default 8002 }}
             {{- with .Values.nodeAgent.additionalArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -64,7 +63,7 @@ spec:
           livenessProbe:
             httpGet:
               path: /healthz
-              port: 8002
+              port: {{ .Values.nodeAgent.probePort | default 8002 }}
           {{- with .Values.nodeAgent.resizePolicy }}
           resizePolicy:
             {{- toYaml . | nindent 12 }}
