@@ -27,35 +27,19 @@ The controller that handles this resource lives in [`pkg/controllers/nodediagnos
 
 | Subfolder | Collector Source | Platform |
 |-----------|-----------------|----------|
-| `bottlerocket/` | [`system.go` – `bottlerocket()`](../../pkg/log_collector/collect/system.go) | Bottlerocket only |
-| `cni/` | [`cni.go`](../../pkg/log_collector/collect/cni.go) | All |
-| `containerd/` | [`containerd.go`](../../pkg/log_collector/collect/containerd.go) | All |
-| `ipamd/` | [`ipamd.go`](../../pkg/log_collector/collect/ipamd.go) | Non-hybrid |
-| `kernel/` | [`kernel.go`](../../pkg/log_collector/collect/kernel.go) | All |
-| `kubelet/` | [`kubernetes.go`](../../pkg/log_collector/collect/kubernetes.go) | All |
-| `networking/` | [`networking.go`](../../pkg/log_collector/collect/networking.go), [`iptables.go`](../../pkg/log_collector/collect/iptables.go), [`nftables.go`](../../pkg/log_collector/collect/nftables.go) | All |
-| `nodeadm/` | [`nodeadm.go`](../../pkg/log_collector/collect/nodeadm.go) | AL2023 and Hybrid nodes |
-| `sandbox-image/` | [`sandbox.go`](../../pkg/log_collector/collect/sandbox.go) | AL2 |
-| `storage/` | [`disk.go`](../../pkg/log_collector/collect/disk.go) | All |
-| `sysctls/` | [`system.go` – `sysctl()`](../../pkg/log_collector/collect/system.go) | All |
-| `system/` | [`system.go`](../../pkg/log_collector/collect/system.go), [`throttles.go`](../../pkg/log_collector/collect/throttles.go), [`instance.go`](../../pkg/log_collector/collect/instance.go), [`region.go`](../../pkg/log_collector/collect/region.go) | All |
-| `var_log/` | [`commonlogs.go`](../../pkg/log_collector/collect/commonlogs.go) | All |
-
-## Subfolder Documentation
-
-- [bottlerocket/](./bottlerocket/README.md)
-- [cni/](./cni/README.md)
-- [containerd/](./containerd/README.md)
-- [ipamd/](./ipamd/README.md)
-- [kernel/](./kernel/README.md)
-- [kubelet/](./kubelet/README.md)
-- [networking/](./networking/README.md)
-- [nodeadm/](./nodeadm/README.md)
-- [sandbox-image/](./sandbox-image/README.md)
-- [storage/](./storage/README.md)
-- [sysctls/](./sysctls/README.md)
-- [system/](./system/README.md)
-- [var_log/](./var_log/README.md)
+| [`bottlerocket/`](./bottlerocket/README.md) | [`system.go` – `bottlerocket()`](../../pkg/log_collector/collect/system.go) | Bottlerocket only |
+| [`cni/`](./cni/README.md) | [`cni.go`](../../pkg/log_collector/collect/cni.go) | All |
+| [`containerd/`](./containerd/README.md) | [`containerd.go`](../../pkg/log_collector/collect/containerd.go) | All |
+| [`ipamd/`](./ipamd/README.md) | [`ipamd.go`](../../pkg/log_collector/collect/ipamd.go) | Non-hybrid |
+| [`kernel/`](./kernel/README.md) | [`kernel.go`](../../pkg/log_collector/collect/kernel.go) | All |
+| [`kubelet/`](./kubelet/README.md) | [`kubernetes.go`](../../pkg/log_collector/collect/kubernetes.go) | All |
+| [`networking/`](./networking/README.md) | [`networking.go`](../../pkg/log_collector/collect/networking.go), [`iptables.go`](../../pkg/log_collector/collect/iptables.go), [`nftables.go`](../../pkg/log_collector/collect/nftables.go) | All |
+| [`nodeadm/`](./nodeadm/README.md) | [`nodeadm.go`](../../pkg/log_collector/collect/nodeadm.go) | AL2023 and Hybrid nodes |
+| [`sandbox-image/`](./sandbox-image/README.md) | [`sandbox.go`](../../pkg/log_collector/collect/sandbox.go) | AL2 |
+| [`storage/`](./storage/README.md) | [`disk.go`](../../pkg/log_collector/collect/disk.go) | All |
+| [`sysctls/`](./sysctls/README.md) | [`system.go` – `sysctl()`](../../pkg/log_collector/collect/system.go) | All |
+| [`system/`](./system/README.md) | [`system.go`](../../pkg/log_collector/collect/system.go), [`throttles.go`](../../pkg/log_collector/collect/throttles.go), [`instance.go`](../../pkg/log_collector/collect/instance.go), [`region.go`](../../pkg/log_collector/collect/region.go) | All |
+| [`var_log/`](./var_log/README.md) | [`commonlogs.go`](../../pkg/log_collector/collect/commonlogs.go) | All |
 
 ## Platform Tags
 
