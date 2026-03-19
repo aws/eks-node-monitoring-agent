@@ -13,7 +13,7 @@ CNI plugin configuration files and VPC CNI container environment variables.
 The AWS VPC CNI plugin configuration file.
 
 - **Source:** Directory copy of `/etc/cni/net.d/` via `cniConfig()` — copies all files from the CNI config directory
-- **Linux syscall:** `getdents64(2)` + `open(2)` + `read(2)`
+- **Linux syscall:** [`getdents64(2)`](https://man7.org/linux/man-pages/man2/getdents64.2.html) + [`open(2)`](https://man7.org/linux/man-pages/man2/open.2.html) + [`read(2)`](https://man7.org/linux/man-pages/man2/read.2.html)
 - **Content:** CNI plugin chain configuration in JSON format, specifying the VPC CNI plugin, bandwidth plugin, and portmap plugin with their settings
 
 **Sample output:**
@@ -50,7 +50,7 @@ The AWS VPC CNI plugin configuration file.
 Environment variables and configuration of the running `amazon-k8s-cni` container.
 
 - **Source:** [`cni.go` – `cniVariables()`](../../../pkg/log_collector/collect/cni.go) — lists containers via `ctr --namespace k8s.io container list`, finds the `amazon-k8s-cni:v*` container, then runs `ctr --namespace k8s.io container info <id>`
-- **Linux syscall:** gRPC over `connect(2)` on `/run/containerd/containerd.sock`
+- **Linux syscall:** gRPC over [`connect(2)`](https://man7.org/linux/man-pages/man2/connect.2.html) on `/run/containerd/containerd.sock`
 - **Content:** Full containerd container spec including environment variables, mounts, and OCI runtime config for the VPC CNI container
 - **Present only if:** The `amazon-k8s-cni` container is running in the `k8s.io` namespace
 

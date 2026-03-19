@@ -15,7 +15,7 @@ Bottlerocket OS-specific diagnostics: application inventory and logdog support b
 Installed software packages and their versions on the Bottlerocket node.
 
 - **Source:** File copy of `/usr/share/bottlerocket/application-inventory.json`
-- **Linux syscall:** `open(2)`, `read(2)`
+- **Linux syscall:** [`open(2)`](https://man7.org/linux/man-pages/man2/open.2.html), [`read(2)`](https://man7.org/linux/man-pages/man2/read.2.html)
 - **Content:** JSON array of installed packages with name, version, and source information. This is the Bottlerocket equivalent of `rpm -qa`.
 
 **Sample output (truncated):**
@@ -50,7 +50,7 @@ Output from the Bottlerocket `logdog` diagnostic tool.
 Standard output and exit status of the `logdog` command invocation.
 
 - **Command:** `logdog`
-- **Linux syscall:** `execve(2)` + `pipe(2)` + `read(2)` (subprocess output capture)
+- **Linux syscall:** [`execve(2)`](https://man7.org/linux/man-pages/man2/execve.2.html) + [`pipe(2)`](https://man7.org/linux/man-pages/man2/pipe.2.html) + [`read(2)`](https://man7.org/linux/man-pages/man2/read.2.html) (subprocess output capture)
 - **Content:** `logdog` progress messages and any errors encountered during log collection. `logdog` itself does not print the collected logs — it writes them to a tarball.
 
 **Sample output:**
@@ -65,7 +65,7 @@ Done.
 The Bottlerocket support bundle tarball produced by `logdog`.
 
 - **Source:** File copy of `/var/log/support/bottlerocket-logs.tar.gz`
-- **Linux syscall:** `open(2)`, `read(2)`
+- **Linux syscall:** [`open(2)`](https://man7.org/linux/man-pages/man2/open.2.html), [`read(2)`](https://man7.org/linux/man-pages/man2/read.2.html)
 - **Content:** A compressed tar archive containing Bottlerocket-specific logs and diagnostics collected by `logdog`, including:
   - `journald` logs for all Bottlerocket services
   - Bottlerocket settings (from the API server)

@@ -12,8 +12,8 @@ containerd container runtime state, configuration, and journal logs.
 
 The effective (merged) containerd configuration.
 
-- **Command:** `containerd config dump`
-- **Linux syscall:** `connect(2)` on the containerd gRPC socket (`/run/containerd/containerd.sock`), or subprocess exec
+- **Command:** `containerd config dump` — [`containerd(8)`](https://github.com/containerd/containerd/blob/main/docs/man/containerd.8.md)
+- **Linux syscall:** [`connect(2)`](https://man7.org/linux/man-pages/man2/connect.2.html) on the containerd gRPC socket (`/run/containerd/containerd.sock`), or subprocess exec
 - **Content:** Full TOML configuration including snapshotter, runtime, and plugin settings
 
 **Sample output (truncated):**
@@ -34,8 +34,8 @@ version = 3
 
 containerd service journal log.
 
-- **Command:** `journalctl -o short-iso-precise -u containerd`
-- **Linux syscall:** `AF_UNIX` socket to `systemd-journald` or `open(2)` on journal files in `/run/log/journal/`
+- **Command:** `journalctl -o short-iso-precise -u containerd` — [`journalctl(1)`](https://man7.org/linux/man-pages/man1/journalctl.1.html)
+- **Linux syscall:** [`AF_UNIX`](https://man7.org/linux/man-pages/man7/unix.7.html) socket to `systemd-journald` or [`open(2)`](https://man7.org/linux/man-pages/man2/open.2.html) on journal files in `/run/log/journal/`
 - **Content:** Timestamped containerd log lines including container start/stop events, snapshot operations, and errors
 
 **Sample output (truncated):**
@@ -52,8 +52,8 @@ containerd service journal log.
 
 containerd and `ctr` client version information.
 
-- **Command:** `ctr version`
-- **Linux syscall:** `connect(2)` on `/run/containerd/containerd.sock` (gRPC)
+- **Command:** `ctr version` — [`ctr(8)`](https://github.com/containerd/containerd/blob/main/docs/man/ctr.8.md)
+- **Linux syscall:** [`connect(2)`](https://man7.org/linux/man-pages/man2/connect.2.html) on `/run/containerd/containerd.sock` (gRPC)
 - **Content:** Client and server version, revision, and Go version
 
 **Sample output:**
@@ -75,8 +75,8 @@ Server:
 
 List of containerd namespaces.
 
-- **Command:** `ctr namespaces list`
-- **Linux syscall:** gRPC over `connect(2)` on containerd socket
+- **Command:** `ctr namespaces list` — [`ctr(8)`](https://github.com/containerd/containerd/blob/main/docs/man/ctr.8.md)
+- **Linux syscall:** gRPC over [`connect(2)`](https://man7.org/linux/man-pages/man2/connect.2.html) on containerd socket
 - **Content:** All namespaces; Kubernetes workloads use the `k8s.io` namespace
 
 **Sample output:**
@@ -91,7 +91,7 @@ k8s.io
 
 Container images in the `k8s.io` namespace.
 
-- **Command:** `ctr --namespace k8s.io images list`
+- **Command:** `ctr --namespace k8s.io images list` — [`ctr(8)`](https://github.com/containerd/containerd/blob/main/docs/man/ctr.8.md)
 - **Linux syscall:** gRPC over containerd socket
 - **Content:** Image reference, digest, media type, size, and labels
 
@@ -108,7 +108,7 @@ public.ecr.aws/eks-distro/kubernetes/pause:3.10-eks-1-32-latest          applica
 
 Containers in the `k8s.io` namespace.
 
-- **Command:** `ctr --namespace k8s.io containers list`
+- **Command:** `ctr --namespace k8s.io containers list` — [`ctr(8)`](https://github.com/containerd/containerd/blob/main/docs/man/ctr.8.md)
 - **Linux syscall:** gRPC over containerd socket
 - **Content:** Container ID, image, and runtime
 
@@ -125,7 +125,7 @@ CONTAINER                                                           IMAGE       
 
 Running tasks (container processes) in the `k8s.io` namespace.
 
-- **Command:** `ctr --namespace k8s.io tasks list`
+- **Command:** `ctr --namespace k8s.io tasks list` — [`ctr(8)`](https://github.com/containerd/containerd/blob/main/docs/man/ctr.8.md)
 - **Linux syscall:** gRPC over containerd socket
 - **Content:** Task ID, PID, and status (RUNNING, STOPPED, etc.)
 
@@ -142,7 +142,7 @@ TASK                                                                PID     STAT
 
 Loaded containerd plugins and their status.
 
-- **Command:** `ctr --namespace k8s.io plugins list`
+- **Command:** `ctr --namespace k8s.io plugins list` — [`ctr(8)`](https://github.com/containerd/containerd/blob/main/docs/man/ctr.8.md)
 - **Linux syscall:** gRPC over containerd socket
 - **Content:** Plugin type, ID, platforms, and status (ok / error)
 
@@ -162,6 +162,6 @@ io.containerd.grpc.v1                  cri                   -           ok
 containerd goroutine stack dumps (if present).
 
 - **Source:** Glob of `/tmp/containerd.*.stacks.log` — these files are written by containerd when it receives `SIGUSR1`
-- **Linux syscall:** `open(2)`, `read(2)`
+- **Linux syscall:** [`open(2)`](https://man7.org/linux/man-pages/man2/open.2.html), [`read(2)`](https://man7.org/linux/man-pages/man2/read.2.html)
 - **Content:** Go runtime goroutine stack traces for all containerd goroutines at the time of the signal
 - **Present only if:** containerd was sent `SIGUSR1` prior to collection

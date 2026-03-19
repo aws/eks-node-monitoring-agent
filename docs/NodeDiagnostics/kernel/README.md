@@ -10,8 +10,8 @@ Kernel ring buffer messages and kernel version information.
 
 Raw kernel ring buffer output with monotonic timestamps (seconds since boot).
 
-- **Command:** `dmesg`
-- **Linux syscall:** `syslog(2)` (action `SYSLOG_ACTION_READ_ALL`) — the `dmesg` binary reads from the kernel log buffer via this syscall
+- **Command:** `dmesg` — [`dmesg(1)`](https://man7.org/linux/man-pages/man1/dmesg.1.html)
+- **Linux syscall:** [`syslog(2)`](https://man7.org/linux/man-pages/man2/syslog.2.html) (action `SYSLOG_ACTION_READ_ALL`) — the `dmesg` binary reads from the kernel log buffer via this syscall
 - **Content:** All kernel messages since boot: hardware detection, driver init, filesystem mounts, network adapter bring-up, SELinux policy load, systemd early boot messages
 
 **Sample output (truncated):**
@@ -47,8 +47,8 @@ Key things to look for:
 
 Same kernel ring buffer as `dmesg.current` but with human-readable wall-clock timestamps (`--ctime` flag).
 
-- **Command:** `dmesg --ctime`
-- **Linux syscall:** `syslog(2)`
+- **Command:** `dmesg --ctime` — [`dmesg(1)`](https://man7.org/linux/man-pages/man1/dmesg.1.html)
+- **Linux syscall:** [`syslog(2)`](https://man7.org/linux/man-pages/man2/syslog.2.html)
 - **Content:** Identical to `dmesg.current` but timestamps are converted to calendar time using the system clock at collection time
 
 **Sample output (truncated):**
@@ -72,7 +72,7 @@ Use this file when correlating kernel events with application-level timestamps.
 Copy of `/var/log/dmesg` — the kernel ring buffer snapshot saved at boot time by some distributions (e.g., Amazon Linux 2). Not present on Bottlerocket.
 
 - **Source:** `/var/log/dmesg` (file copy via `os.CopyFile`)
-- **Linux syscall:** `open(2)`, `read(2)`, `write(2)`
+- **Linux syscall:** [`open(2)`](https://man7.org/linux/man-pages/man2/open.2.html), [`read(2)`](https://man7.org/linux/man-pages/man2/read.2.html), [`write(2)`](https://man7.org/linux/man-pages/man2/write.2.html)
 - **Content:** Kernel messages from the previous boot cycle, useful for diagnosing boot failures
 
 ---
@@ -81,8 +81,8 @@ Copy of `/var/log/dmesg` — the kernel ring buffer snapshot saved at boot time 
 
 Kernel version, hostname, and architecture string.
 
-- **Command:** `uname -a`
-- **Linux syscall:** `uname(2)`
+- **Command:** `uname -a` — [`uname(1)`](https://man7.org/linux/man-pages/man1/uname.1.html)
+- **Linux syscall:** [`uname(2)`](https://man7.org/linux/man-pages/man2/uname.2.html)
 - **Content:** Kernel release, build date, machine hardware name
 
 **Sample output:**
@@ -98,7 +98,7 @@ Fields: `<hostname> <kernel-release> <kernel-version> <machine> <OS>`
 
 Module information for selected kernel modules (currently: `lustre`).
 
-- **Command:** `modinfo <module>`
-- **Linux syscall:** `open(2)` on `/lib/modules/<version>/modules.dep`
+- **Command:** `modinfo <module>` — [`modinfo(8)`](https://man7.org/linux/man-pages/man8/modinfo.8.html)
+- **Linux syscall:** [`open(2)`](https://man7.org/linux/man-pages/man2/open.2.html) on `/lib/modules/<version>/modules.dep`
 - **Content:** Module filename, description, license, version, dependencies
 - **Note:** Collection failures are silently ignored — the module may simply not be present on the node

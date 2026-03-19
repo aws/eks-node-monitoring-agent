@@ -12,8 +12,8 @@ All kernel runtime parameters.
 
 All kernel parameters and their current values.
 
-- **Command:** `sysctl --all`
-- **Linux syscall:** `open(2)` + `read(2)` on files under `/proc/sys/` (sysctl reads the procfs pseudo-filesystem)
+- **Command:** `sysctl --all` — [`sysctl(8)`](https://man7.org/linux/man-pages/man8/sysctl.8.html)
+- **Linux syscall:** [`open(2)`](https://man7.org/linux/man-pages/man2/open.2.html) + [`read(2)`](https://man7.org/linux/man-pages/man2/read.2.html) on files under `/proc/sys/` — see [`proc(5)`](https://man7.org/linux/man-pages/man5/proc.5.html) (sysctl reads the procfs pseudo-filesystem)
 - **Content:** Every tunable kernel parameter in `key = value` format, organized by subsystem prefix
 
 **Sample output (truncated):**

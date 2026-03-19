@@ -15,7 +15,7 @@ The controller that handles this resource lives in [`pkg/controllers/nodediagnos
 ├── kernel/                # Kernel ring buffer and version
 ├── kubelet/               # kubelet logs, config, and kubeconfig
 ├── networking/            # IP rules, routes, iptables, nftables, conntrack, ethtool
-├── nodeadm/               # nodeadm service journal logs (hybrid nodes)
+├── nodeadm/               # nodeadm service journal logs (AL2023 and hybrid nodes)
 ├── sandbox-image/         # pause image service log
 ├── storage/               # Disk, mount, inode, XFS, and pod storage info
 ├── sysctls/               # All kernel parameters
@@ -34,7 +34,7 @@ The controller that handles this resource lives in [`pkg/controllers/nodediagnos
 | `kernel/` | [`kernel.go`](../../pkg/log_collector/collect/kernel.go) | All |
 | `kubelet/` | [`kubernetes.go`](../../pkg/log_collector/collect/kubernetes.go) | All |
 | `networking/` | [`networking.go`](../../pkg/log_collector/collect/networking.go), [`iptables.go`](../../pkg/log_collector/collect/iptables.go), [`nftables.go`](../../pkg/log_collector/collect/nftables.go) | All |
-| `nodeadm/` | [`nodeadm.go`](../../pkg/log_collector/collect/nodeadm.go) | Hybrid nodes |
+| `nodeadm/` | [`nodeadm.go`](../../pkg/log_collector/collect/nodeadm.go) | AL2023 and Hybrid nodes |
 | `sandbox-image/` | [`sandbox.go`](../../pkg/log_collector/collect/sandbox.go) | AL2 |
 | `storage/` | [`disk.go`](../../pkg/log_collector/collect/disk.go) | All |
 | `sysctls/` | [`system.go` – `sysctl()`](../../pkg/log_collector/collect/system.go) | All |
@@ -63,9 +63,11 @@ Collectors use tags to conditionally skip or include collection steps:
 
 | Tag | Meaning |
 |-----|---------|
-| `bottlerocket` | Node runs Bottlerocket OS |
+| `bottlerocket` | Node runs [Bottlerocket](https://github.com/bottlerocket-os/bottlerocket) OS |
 | `nvidia` | Node has NVIDIA GPU |
-| `eks-auto` | Node is an EKS Auto Mode node |
-| `eks-hybrid` | Node is an EKS Hybrid node |
+| `eks-auto` | Node is an [EKS Auto Mode](https://docs.aws.amazon.com/eks/latest/userguide/automode.html) node |
+| `eks-hybrid` | Node is an [EKS Hybrid](https://docs.aws.amazon.com/eks/latest/userguide/hybrid-nodes-overview.html) node |
 
 Tags are defined in [`pkg/log_collector/collect/accessor.go`](../../pkg/log_collector/collect/accessor.go).
+
+EKS optimized OS images for AL2 and AL2023 are built from the [Amazon EKS AMI Build Specification](https://github.com/awslabs/amazon-eks-ami/tree/main).

@@ -16,8 +16,8 @@ The `sandbox-image` service pre-pulls the pause container image used as the pod 
 
 Journal log for the `sandbox-image` systemd service.
 
-- **Command:** `journalctl -o short-iso-precise -u sandbox-image`
-- **Linux syscall:** `AF_UNIX` socket to `systemd-journald`, or `open(2)` on journal files in `/run/log/journal/`
+- **Command:** `journalctl -o short-iso-precise -u sandbox-image` — [`journalctl(1)`](https://man7.org/linux/man-pages/man1/journalctl.1.html)
+- **Linux syscall:** [`AF_UNIX`](https://man7.org/linux/man-pages/man7/unix.7.html) socket to `systemd-journald`, or [`open(2)`](https://man7.org/linux/man-pages/man2/open.2.html) on journal files in `/run/log/journal/`
 - **Content:** Log output from the service that pulls and caches the pause image before kubelet starts, ensuring the sandbox image is available locally
 
 **Sample output:**

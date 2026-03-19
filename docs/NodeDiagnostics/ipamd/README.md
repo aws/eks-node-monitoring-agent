@@ -19,7 +19,7 @@ Data is collected from two local HTTP endpoints exposed by the `aws-node` Daemon
 All ENIs (Elastic Network Interfaces) attached to the node and their IP allocations.
 
 - **Source:** HTTP GET `http://localhost:61679/v1/enis`
-- **Linux syscall:** `connect(2)` + `sendto(2)` (TCP to localhost)
+- **Linux syscall:** [`connect(2)`](https://man7.org/linux/man-pages/man2/connect.2.html) + [`sendto(2)`](https://man7.org/linux/man-pages/man2/sendto.2.html) (TCP to localhost) — see [`socket(2)`](https://man7.org/linux/man-pages/man2/socket.2.html)
 - **Content:** Per-ENI details including ENI ID, MAC address, subnet, security groups, and the list of IPv4/IPv6 addresses assigned to each ENI
 
 **Sample output (truncated):**
@@ -135,7 +135,7 @@ awscni_eni_allocated 2
 IPAMD checkpoint file — persisted IP allocation state.
 
 - **Source:** File copy of `/var/run/aws-node/ipam.json` (or `/run/aws-node/ipam.json` on Bottlerocket)
-- **Linux syscall:** `open(2)`, `read(2)`
+- **Linux syscall:** [`open(2)`](https://man7.org/linux/man-pages/man2/open.2.html), [`read(2)`](https://man7.org/linux/man-pages/man2/read.2.html)
 - **Content:** Serialized IPAMD state including allocated IPs and their pod assignments, used by IPAMD to recover state after a restart without re-querying the EC2 API
 
 **Sample output (truncated):**

@@ -43,7 +43,7 @@ The following files are copied directly from `/var/log/` if they exist:
 | `user-data.log` | EC2 user data script output |
 | `kube-proxy.log` | kube-proxy log (file-based logging) |
 
-- **Linux syscall:** `stat(2)` to check existence; `open(2)` + `read(2)` for files; `getdents64(2)` for directories
+- **Linux syscall:** [`stat(2)`](https://man7.org/linux/man-pages/man2/stat.2.html) to check existence; [`open(2)`](https://man7.org/linux/man-pages/man2/open.2.html) + [`read(2)`](https://man7.org/linux/man-pages/man2/read.2.html) for files; [`getdents64(2)`](https://man7.org/linux/man-pages/man2/getdents64.2.html) for directories
 
 ---
 
@@ -112,7 +112,7 @@ Pod logs are collected for the following kube-system pods (matched by glob patte
 
 Pod logs are stored under `/var/log/pods/<namespace>_<pod-name>_<uid>/<container>/0.log`.
 
-- **Linux syscall:** `glob(3)` pattern matching on `/var/log/pods/`; `getdents64(2)` + `open(2)` + `read(2)` for recursive copy
+- **Linux syscall:** [`glob(3)`](https://man7.org/linux/man-pages/man3/glob.3.html) pattern matching on `/var/log/pods/`; [`getdents64(2)`](https://man7.org/linux/man-pages/man2/getdents64.2.html) + [`open(2)`](https://man7.org/linux/man-pages/man2/open.2.html) + [`read(2)`](https://man7.org/linux/man-pages/man2/read.2.html) for recursive copy
 
 **Sample directory structure:**
 ```

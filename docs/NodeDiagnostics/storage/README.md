@@ -14,8 +14,8 @@ Uses [`github.com/moby/sys/mountinfo`](https://pkg.go.dev/github.com/moby/sys/mo
 
 Combined output of active mount table and disk space usage.
 
-- **Commands:** `mount` then `df --human-readable` (appended)
-- **Linux syscall:** `open(2)` on `/proc/self/mounts` (for `mount`); `statfs(2)` on each mountpoint (for `df`)
+- **Commands:** `mount` — [`mount(8)`](https://man7.org/linux/man-pages/man8/mount.8.html) then `df --human-readable` — [`df(1)`](https://man7.org/linux/man-pages/man1/df.1.html) (appended)
+- **Linux syscall:** [`open(2)`](https://man7.org/linux/man-pages/man2/open.2.html) on `/proc/self/mounts` (for `mount`) — see [`proc(5)`](https://man7.org/linux/man-pages/man5/proc.5.html); [`statfs(2)`](https://man7.org/linux/man-pages/man2/statfs.2.html) on each mountpoint (for `df`)
 - **Content:** Two sections:
   1. All active mounts with filesystem type and mount options
   2. Human-readable disk space per filesystem (Size, Used, Avail, Use%)
@@ -41,8 +41,8 @@ Note: `/dev/root` at 100% is normal for Bottlerocket — the root filesystem is 
 
 Inode usage per filesystem.
 
-- **Command:** `df --inodes`
-- **Linux syscall:** `statfs(2)` on each mountpoint (returns `f_files` and `f_ffree`)
+- **Command:** `df --inodes` — [`df(1)`](https://man7.org/linux/man-pages/man1/df.1.html)
+- **Linux syscall:** [`statfs(2)`](https://man7.org/linux/man-pages/man2/statfs.2.html) on each mountpoint (returns `f_files` and `f_ffree`)
 - **Content:** Filesystem, total inodes, used inodes, free inodes, use%, mountpoint
 
 **Sample output (truncated):**
@@ -62,8 +62,8 @@ Inode exhaustion (`IUse% = 100%`) prevents new file creation even when disk spac
 
 Block device tree showing disk layout and mount points.
 
-- **Command:** `lsblk`
-- **Linux syscall:** `open(2)` on `/sys/block/` and `/proc/partitions`; `ioctl(2)` with `BLKGETSIZE64` for device sizes
+- **Command:** `lsblk` — [`lsblk(8)`](https://man7.org/linux/man-pages/man8/lsblk.8.html)
+- **Linux syscall:** [`open(2)`](https://man7.org/linux/man-pages/man2/open.2.html) on `/sys/block/` and `/proc/partitions`; [`ioctl(2)`](https://man7.org/linux/man-pages/man2/ioctl.2.html) with `BLKGETSIZE64` for device sizes
 - **Content:** Device name, major:minor numbers, removable flag, size, read-only flag, type (disk/part), and mountpoints
 
 **Sample output:**
@@ -87,9 +87,9 @@ nvme1n1     259:1    0   80G  0 disk
 
 XFS filesystem geometry and free space distribution for all XFS-mounted volumes.
 
-- **Commands:** `xfs_info <device>` and `xfs_db -r -c "freesp -s" <device>` (appended per XFS mount)
+- **Commands:** `xfs_info <device>` — [`xfs_info(8)`](https://man7.org/linux/man-pages/man8/xfs_info.8.html) and `xfs_db -r -c "freesp -s" <device>` — [`xfs_db(8)`](https://man7.org/linux/man-pages/man8/xfs_db.8.html) (appended per XFS mount)
 - **Source:** XFS mounts discovered via `mountinfo.GetMounts()` filtering on `FSType == "xfs"`
-- **Linux syscall:** `open(2)` on `/proc/self/mountinfo`; `ioctl(2)` with XFS-specific ioctls for `xfs_info`
+- **Linux syscall:** [`open(2)`](https://man7.org/linux/man-pages/man2/open.2.html) on `/proc/self/mountinfo`; [`ioctl(2)`](https://man7.org/linux/man-pages/man2/ioctl.2.html) with XFS-specific ioctls for `xfs_info`
 - **Content:** Filesystem geometry (block size, AG count, inode size) and a histogram of free extent sizes
 
 **Sample output:**
@@ -113,7 +113,7 @@ average free extent size 124209
 Disk usage of each container's writable overlay layer (`upperdir`).
 
 - **Source:** [`disk.go`](../../../pkg/log_collector/collect/disk.go) — enumerates overlay mounts via `mountinfo.GetMounts()`, extracts `upperdir=` from VFS options, runs `du -sh` on each
-- **Linux syscall:** `open(2)` on `/proc/self/mountinfo`; `getdents64(2)` + `stat(2)` for `du`
+- **Linux syscall:** [`open(2)`](https://man7.org/linux/man-pages/man2/open.2.html) on `/proc/self/mountinfo`; [`getdents64(2)`](https://man7.org/linux/man-pages/man2/getdents64.2.html) + [`stat(2)`](https://man7.org/linux/man-pages/man2/stat.2.html) for `du` — [`du(1)`](https://man7.org/linux/man-pages/man1/du.1.html)
 - **Content:** Human-readable size and path for each container's writable layer. Containers that have written no data show `0`.
 
 **Sample output:**
@@ -133,8 +133,8 @@ Snapshot directories map to running containers. A large value here indicates a c
 Static filesystem table.
 
 - **Source:** File copy of `/etc/fstab`
-- **Linux syscall:** `open(2)`, `read(2)`
-- **Content:** Configured mount points, filesystem types, and mount options
+- **Linux syscall:** [`open(2)`](https://man7.org/linux/man-pages/man2/open.2.html), [`read(2)`](https://man7.org/linux/man-pages/man2/read.2.html)
+- **Content:** Configured mount points, filesystem types, and mount options — see [`fstab(5)`](https://man7.org/linux/man-pages/man5/fstab.5.html)
 - **Not collected on:** Bottlerocket (fstab is not used)
 
 ---
@@ -143,7 +143,7 @@ Static filesystem table.
 
 LVM logical volumes, physical volumes, and volume groups.
 
-- **Commands:** `lvs`, `pvs`, `vgs`
-- **Linux syscall:** `ioctl(2)` on `/dev/mapper/control` (device-mapper)
+- **Commands:** `lvs` — [`lvs(8)`](https://man7.org/linux/man-pages/man8/lvs.8.html), `pvs` — [`pvs(8)`](https://man7.org/linux/man-pages/man8/pvs.8.html), `vgs` — [`vgs(8)`](https://man7.org/linux/man-pages/man8/vgs.8.html)
+- **Linux syscall:** [`ioctl(2)`](https://man7.org/linux/man-pages/man2/ioctl.2.html) on `/dev/mapper/control` (device-mapper)
 - **Content:** LVM configuration if present; failures are silently ignored
 - **Not collected on:** Bottlerocket
