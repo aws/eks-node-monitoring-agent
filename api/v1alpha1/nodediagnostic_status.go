@@ -14,7 +14,8 @@ type CaptureStatus struct {
 type CaptureType string
 
 const (
-	CaptureTypeLog CaptureType = "Log"
+	CaptureTypeLog    CaptureType = "Log"
+	CaptureTypePacket CaptureType = "Packet"
 )
 
 type CaptureState struct {

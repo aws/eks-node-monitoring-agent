@@ -362,6 +362,8 @@ k8s.io/kube-openapi v0.0.0-20260317180543-43fb72c5454a h1:xCeOEAOoGYl2jnJoHkC3hk
 k8s.io/kube-openapi v0.0.0-20260317180543-43fb72c5454a/go.mod h1:uGBT7iTA6c6MvqUvSXIaYZo9ukscABYi2btjhvgKGZ0=
 k8s.io/utils v0.0.0-20260210185600-b8788abfbbc2 h1:AZYQSJemyQB5eRxqcPky+/7EdBj0xi3g0ZcxxJ7vbWU=
 k8s.io/utils v0.0.0-20260210185600-b8788abfbbc2/go.mod h1:xDxuJ0whA3d0I4mf/C4ppKHxXynQ+fxnkmQH0vTHnuk=
+pgregory.net/rapid v1.2.0 h1:keKAYRcjm+e1F0oAuU5F5+YPAWcyxNNRK2wud503Gnk=
+pgregory.net/rapid v1.2.0/go.mod h1:PY5XlDGj0+V1FCq0o192FdRhpKHGTRIWBgqjDBTrq04=
 sigs.k8s.io/controller-runtime v0.23.3 h1:VjB/vhoPoA9l1kEKZHBMnQF33tdCLQKJtydy4iqwZ80=
 sigs.k8s.io/controller-runtime v0.23.3/go.mod h1:B6COOxKptp+YaUT5q4l6LqUJTRpizbgf9KSRNdQGns0=
 sigs.k8s.io/e2e-framework v0.6.0 h1:p7hFzHnLKO7eNsWGI2AbC1Mo2IYxidg49BiT4njxkrM=
