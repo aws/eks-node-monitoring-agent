@@ -58,8 +58,8 @@ If auto repair is enabled, the repair actions that are listed start 10 minutes a
 |An on-chip SRAM encountered a parity error and produced incorrect results.
 
 |NvidiaDeviceCountMismatch
-|Event
-|The number of GPUs visible through NVML is inconsistent with the NVIDIA device count on the filesystem.
+|Condition
+|The number of GPUs detected on the node does not match the expected count, which indicates hardware failure or driver issues requiring investigation.
 
 |NvidiaDoubleBitError
 |Condition

@@ -28,7 +28,7 @@ serviceAccount:
 nodeAgent:
   image:
     # -- Image tag for the eks-node-monitoring-agent
-    tag: v1.6.0-eksbuild.1
+    tag: v1.6.1-eksbuild.1
     # -- Full container registry URL override (e.g., 602401143452.dkr.ecr.us-west-2.amazonaws.com).
     # When set, this takes precedence over account/endpoint/region/domain fields.
     containerRegistry: ""
@@ -42,7 +42,12 @@ nodeAgent:
     account: "602401143452"
     # -- Container pull policyfor the eks-node-monitoring-agent
     pullPolicy: IfNotPresent
-  # -- List of addittional container arguments for the eks-node-monitoring-agent
+  # -- List of additional container arguments for the eks-node-monitoring-agent.
+  # The agent binds to ports 8002 (health probe) and 8080 (metrics) on the host
+  # network by default. To avoid port conflicts, override with:
+  #   additionalArgs:
+  #     - "--probe-address=:8002"
+  #     - "--metrics-address=:8003"
   additionalArgs: []
   # -- Map of pod affinities for the eks-node-monitoring-agent
   affinity:
