@@ -300,6 +300,7 @@ func (m *NetworkingMonitor) checkIPAMD(ipamdShouldBeRunning bool, ipamdRunning b
 			reasons.IPAMDNotRunning.
 				Builder().
 				Message("The AWS VPC CNI was detected on this node but IPAMD was not found running").
+				MinOccurrences(1).
 				Build(),
 		)
 	}
