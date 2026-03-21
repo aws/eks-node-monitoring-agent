@@ -397,13 +397,13 @@ spec:
                 - g5.48xlarge
                 - g5.4xlarge
                 - g5.8xlarge
+                - g5.xlarge
                 - g5g.16xlarge
                 - g5g.2xlarge
                 - g5g.4xlarge
                 - g5g.8xlarge
                 - g5g.metal
                 - g5g.xlarge
-                - g5.xlarge
                 - g6.12xlarge
                 - g6.16xlarge
                 - g6.24xlarge
@@ -411,6 +411,7 @@ spec:
                 - g6.48xlarge
                 - g6.4xlarge
                 - g6.8xlarge
+                - g6.xlarge
                 - g6e.12xlarge
                 - g6e.16xlarge
                 - g6e.24xlarge
@@ -423,7 +424,12 @@ spec:
                 - g6f.4xlarge
                 - g6f.large
                 - g6f.xlarge
-                - g6.xlarge
+                - g7e.12xlarge
+                - g7e.24xlarge
+                - g7e.2xlarge
+                - g7e.48xlarge
+                - g7e.4xlarge
+                - g7e.8xlarge
                 - gr6.4xlarge
                 - gr6.8xlarge
                 - gr6f.4xlarge
