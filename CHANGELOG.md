@@ -5,6 +5,23 @@ All notable changes to the EKS Node Monitoring Agent will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.6.2] - 2026-03-23
+
+### What's Changed
+
+#### Features
+- Add `kubectl ekslogs` plugin for NodeDiagnostic log collection ([a2a9660](https://github.com/aws/eks-node-monitoring-agent/commit/a2a9660))
+- Add ZRAM usage monitoring to kernel monitor ([b7d3ed3](https://github.com/aws/eks-node-monitoring-agent/commit/b7d3ed3))
+- Change `NvidiaDeviceCountMismatch` severity from Warning to Fatal ([8379e15](https://github.com/aws/eks-node-monitoring-agent/commit/8379e15))
+- Add g7e instances to NVIDIA DCGM affinity list ([c46738a](https://github.com/aws/eks-node-monitoring-agent/commit/c46738a))
+
+#### Bug Fixes
+- Add `-o short-iso-precise` to all journalctl invocations for consistent ISO 8601 timestamps with timezone offset ([442308a](https://github.com/aws/eks-node-monitoring-agent/commit/442308a))
+
+#### Dependencies
+- Bump `google.golang.org/grpc` from 1.79.2 to 1.79.3 ([1fe8681](https://github.com/aws/eks-node-monitoring-agent/commit/1fe8681))
+- Update Go dependencies ([929dce6](https://github.com/aws/eks-node-monitoring-agent/commit/929dce6))
+
 ## [v1.6.1] - 2026-03-17
 
 ### What's Changed
@@ -52,6 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### What's Changed
 - Update base DCGM image to 4.5.2-4.8.1-ubuntu22.04 to resolve CVEs ([1a2cda4](https://github.com/aws/eks-node-monitoring-agent/commit/1a2cda4))
 
+[v1.6.2]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.1...v1.6.2
 [v1.6.1]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.0...v1.6.1
 [v1.6.0]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.5.2...v1.6.0
 [v1.5.2]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.5.1...v1.5.2
