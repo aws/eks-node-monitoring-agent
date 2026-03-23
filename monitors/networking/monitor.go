@@ -59,6 +59,7 @@ type NetworkingMonitor struct {
 	manager            monitor.Manager
 	ctrdRuntimeService cri.RuntimeService
 	criIPCache         cache.Store // containerID -> IP and metadata
+	vpcCNIPodID        string      // may be empty if on Auto or if pod was not prev. observed
 	interfaceCache     cache.Store
 	log                logr.Logger
 	exec               osext.Exec
@@ -173,6 +174,8 @@ func (m *NetworkingMonitor) Register(ctx context.Context, mgr monitor.Manager) e
 		util.NewChannelHandler(func(time.Time) error { return m.handleIPTables() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleInterfaces() }, util.TimeTickWithJitterContext(ctx, interfaceMonitorPeriod)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleNetworkSysctl() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
+		// handleIPAMD interval also currently dictates IPAMD startup duration tolerance on non-auto. if changing
+		// one value, consider separating out the two
 		util.NewChannelHandler(func(time.Time) error { return m.handleIPAMD() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleMACAddressPolicy() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 	} {
@@ -266,36 +269,39 @@ func (m *NetworkingMonitor) handleIPAMD() error {
 		if property.Value.Value().(string) == "active" {
 			ipamdRunning = true
 		}
-		return m.checkIPAMD(true /* EKS Auto comes with ipamd */, ipamdRunning)
+		return m.checkIPAMD(ipamdRunning)
 	} else {
-		ipamdShouldBeRunning := false
 		ipamdRunning := false
-		// Search pod logs to found out if the VPC CNI is presently running.
-		dirs, err := os.ReadDir(config.PodLogsDirPath)
+		podName, isInstalled, err := m.isVPCCNIInstalled()
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to check if the VPC CNI is installed: %w", err)
+		} else if !isInstalled {
+			return nil
+		} else if podName != m.vpcCNIPodID {
+			// if this is the first time seeing a given pod, do not require IPAMD
+			// to run immediately. gives at least the IPAMD monitor interval
+			// as startup toleration (currently ~5m)
+			m.vpcCNIPodID = podName
+			m.log.Info("New VPC CNI pod detected", "podName", podName)
+			return nil
 		}
-		for _, path := range dirs {
-			// aws-node pod implies that IPAMD will be started
-			if strings.Contains(path.Name(), "aws-node") {
-				ipamdShouldBeRunning = true
-				// SAFETY: the current working slice is returned and will never be nil
-				procs, _ := process.Processes()
-				for _, proc := range procs {
-					name, _ := proc.Name()
-					if strings.Contains(name, "aws-k8s-agent") {
-						ipamdRunning = true
-					}
-				}
-				break
+
+		procs, err := process.Processes()
+		if err != nil {
+			return fmt.Errorf("failed to check for a running IPAMD process: %w", err)
+		}
+		for _, proc := range procs {
+			name, _ := proc.Name()
+			if strings.Contains(name, "aws-k8s-agent") {
+				ipamdRunning = true
 			}
 		}
-		return m.checkIPAMD(ipamdShouldBeRunning, ipamdRunning)
+		return m.checkIPAMD(ipamdRunning)
 	}
 }
 
-func (m *NetworkingMonitor) checkIPAMD(ipamdShouldBeRunning bool, ipamdRunning bool) error {
-	if ipamdShouldBeRunning && !ipamdRunning {
+func (m *NetworkingMonitor) checkIPAMD(ipamdRunning bool) error {
+	if !ipamdRunning {
 		return m.manager.Notify(context.Background(),
 			reasons.IPAMDNotRunning.
 				Builder().
@@ -304,57 +310,55 @@ func (m *NetworkingMonitor) checkIPAMD(ipamdShouldBeRunning bool, ipamdRunning b
 		)
 	}
 
-	if ipamdShouldBeRunning && ipamdRunning {
-		// To ensure that pods haven't been incorrectly assigned IPs, we discover all containers and their assigned IPs
-		// as per the IPAMD checkpoint file, and cross-verify with the IPs assigned per the CRI.
-		checkpointData, err := ipamd.GetCheckpoint()
+	// To ensure that pods haven't been incorrectly assigned IPs, we discover all containers and their assigned IPs
+	// as per the IPAMD checkpoint file, and cross-verify with the IPs assigned per the CRI.
+	checkpointData, err := ipamd.GetCheckpoint()
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Skip this check if the file doesn't exist
+			return nil
+		}
+		return err
+	}
+	if m.ctrdRuntimeService == nil {
+		m.ctrdRuntimeService, err = remote.NewRuntimeService(config.CRIEndpoint, 5*time.Second)
 		if err != nil {
-			if os.IsNotExist(err) {
-				// Skip this check if the file doesn't exist
-				return nil
-			}
 			return err
 		}
-		if m.ctrdRuntimeService == nil {
-			m.ctrdRuntimeService, err = remote.NewRuntimeService(config.CRIEndpoint, 5*time.Second)
+	}
+	for _, entry := range checkpointData.Allocations {
+		if _, ok, _ := m.criIPCache.GetByKey(entry.ContainerID); !ok {
+			status, err := m.ctrdRuntimeService.PodSandboxStatus(entry.ContainerID)
 			if err != nil {
-				return err
+				// If the CRI is down, or if the container doesn't exist in the CRI, skip this check.
+				m.log.Info("failed to get pod sandbox status", "containerId", entry.ContainerID)
+				continue
+			} else {
+				// cache responses from CRI, since each container will always be associated with the same IP for its lifetime
+				m.criIPCache.Add(criIPDetails{
+					ip:          status.Network.Ip,
+					containerId: entry.ContainerID,
+					name:        status.Metadata.Name,
+					namespace:   status.Metadata.Namespace,
+				})
 			}
 		}
-		for _, entry := range checkpointData.Allocations {
-			if _, ok, _ := m.criIPCache.GetByKey(entry.ContainerID); !ok {
-				status, err := m.ctrdRuntimeService.PodSandboxStatus(entry.ContainerID)
-				if err != nil {
-					// If the CRI is down, or if the container doesn't exist in the CRI, skip this check.
-					m.log.Info("failed to get pod sandbox status", "containerId", entry.ContainerID)
-					continue
-				} else {
-					// cache responses from CRI, since each container will always be associated with the same IP for its lifetime
-					m.criIPCache.Add(criIPDetails{
-						ip:          status.Network.Ip,
-						containerId: entry.ContainerID,
-						name:        status.Metadata.Name,
-						namespace:   status.Metadata.Namespace,
-					})
-				}
-			}
-			cacheEntry, exists, err := m.criIPCache.GetByKey(entry.ContainerID)
-			if err != nil {
-				return err
-			}
-			if !exists {
-				m.log.Info("cache entry expired", "containerId", entry.ContainerID)
-				continue
-			}
-			criDetails := cacheEntry.(criIPDetails)
-			if !(criDetails.ip == entry.IPv4 || criDetails.ip == entry.IPv6) {
-				return m.manager.Notify(context.Background(),
-					reasons.IPAMDInconsistentState.
-						Builder().
-						Message(fmt.Sprintf("Internal IPAMD state has conflicting IP addresses for pod %s/%s", criDetails.namespace, criDetails.name)).
-						Build(),
-				)
-			}
+		cacheEntry, exists, err := m.criIPCache.GetByKey(entry.ContainerID)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			m.log.Info("cache entry expired", "containerId", entry.ContainerID)
+			continue
+		}
+		criDetails := cacheEntry.(criIPDetails)
+		if !(criDetails.ip == entry.IPv4 || criDetails.ip == entry.IPv6) {
+			return m.manager.Notify(context.Background(),
+				reasons.IPAMDInconsistentState.
+					Builder().
+					Message(fmt.Sprintf("Internal IPAMD state has conflicting IP addresses for pod %s/%s", criDetails.namespace, criDetails.name)).
+					Build(),
+			)
 		}
 	}
 	return nil
@@ -889,7 +893,9 @@ func (m *NetworkingMonitor) handleMACAddressPolicy() error {
 		return nil
 	}
 
-	if !m.isVPCCNIInstalled() {
+	if _, isInstalled, err := m.isVPCCNIInstalled(); err != nil {
+		return fmt.Errorf("failed to check if VPC CNI is installed: %v", err)
+	} else if !isInstalled {
 		m.log.Info("Skipping MAC address policy check - VPC CNI is not installed")
 		return nil
 	}
@@ -926,20 +932,19 @@ func (m *NetworkingMonitor) handleMACAddressPolicy() error {
 }
 
 // isVPCCNIInstalled checks if AWS VPC CNI is installed by looking for aws-node pods
-func (m *NetworkingMonitor) isVPCCNIInstalled() bool {
+// returns a string containing the name of the pod and a boolean indiciating if it's present
+// or an error if it could not be checked
+func (m *NetworkingMonitor) isVPCCNIInstalled() (string, bool, error) {
 	dirs, err := os.ReadDir(config.PodLogsDirPath)
 	if err != nil {
-		m.log.Info("Failed to read pod logs directory", "error", err)
-		return false
+		return "", false, fmt.Errorf("failed to check for VPC CNI pod logs dir: %w", err)
 	}
 	for _, path := range dirs {
 		if strings.Contains(path.Name(), "aws-node") {
-			m.log.Info("VPC CNI detected", "podDir", path.Name())
-			return true
+			return path.Name(), true, nil
 		}
 	}
-	m.log.Info("VPC CNI not detected - no aws-node pods found")
-	return false
+	return "", false, nil
 }
 
 func (m *NetworkingMonitor) checkMACAddressPolicy(content, fileName string) error {

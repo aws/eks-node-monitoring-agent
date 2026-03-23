@@ -221,7 +221,7 @@ func TestNetworkingPeriodic(t *testing.T) {
 			res: make(chan monitor.Condition, 5),
 		}
 		mon.Register(ctx, mockManager)
-		if !assert.NoError(t, mon.checkIPAMD(true, false)) {
+		if !assert.NoError(t, mon.checkIPAMD(false)) {
 			return
 		}
 		select {
@@ -676,7 +676,7 @@ func TestHandleMACAddressPolicy(t *testing.T) {
 func TestIsVPCCNIInstalled(t *testing.T) {
 	t.Run("VPCCNINotInstalled", func(t *testing.T) {
 		mon := NewNetworkingMonitor()
-		result := mon.isVPCCNIInstalled()
+		_, result, _ := mon.isVPCCNIInstalled()
 		assert.False(t, result)
 	})
 }
@@ -722,7 +722,7 @@ func TestCheckIPAMD_CacheExpiry(t *testing.T) {
 	}
 
 	// This should not panic even if cache entry "expires" between checks
-	err := mon.checkIPAMD(true, true)
+	err := mon.checkIPAMD(true)
 	assert.NoError(t, err)
 }
 
