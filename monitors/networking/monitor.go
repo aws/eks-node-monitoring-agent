@@ -294,6 +294,7 @@ func (m *NetworkingMonitor) handleIPAMD() error {
 			name, _ := proc.Name()
 			if strings.Contains(name, "aws-k8s-agent") {
 				ipamdRunning = true
+				break
 			}
 		}
 		return m.checkIPAMD(ipamdRunning)
