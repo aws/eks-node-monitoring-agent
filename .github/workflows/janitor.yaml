@@ -1,0 +1,23 @@
+name: "Janitor"
+on:
+  workflow_dispatch:
+  schedule:
+    # hourly at the top of the hour
+    - cron: "0 * * * *"
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  kubetest2-sweeper:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_CI }}
+      - uses: ./.github/actions/janitor/kubetest2-sweeper
+        with:
+          max_resource_age_duration: 3h
