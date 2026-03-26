@@ -93,7 +93,7 @@ type PacketCapture struct {
 
 	// Duration specifies how long to capture traffic
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Pattern=^([0-9]+[smh])+$
+	// +kubebuilder:validation:Pattern=^\d+[smh]$
 	Duration string `json:"duration"`
 
 	// Filter specifies capture filter expression (tcpdump syntax)
@@ -102,8 +102,8 @@ type PacketCapture struct {
 
 	// ChunkSizeMB is the max size of each capture file in MB before rotation
 	// +kubebuilder:validation:Minimum=1
-	// +kubebuilder:validation:Maximum=1000
-	// +kubebuilder:default=100
+	// +kubebuilder:validation:Maximum=100
+	// +kubebuilder:default=10
 	// +optional
 	ChunkSizeMB int `json:"chunkSizeMB,omitempty"`
 }

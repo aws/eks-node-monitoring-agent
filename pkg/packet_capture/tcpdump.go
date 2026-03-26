@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/aws/eks-node-monitoring-agent/api/v1alpha1"
+	fileutil "github.com/aws/eks-node-monitoring-agent/pkg/util/file"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -117,7 +118,7 @@ func (t *TcpdumpCapturer) startFileWatcher(ctx context.Context, dir string, uplo
 			}
 
 			// Check disk usage
-			usage, err := checkDiskSpace(dir)
+			usage, err := fileutil.CheckDiskSpace(dir)
 			if err != nil {
 				logger.Error(err, "failed to check disk space")
 				continue
@@ -157,6 +158,13 @@ func (t *TcpdumpCapturer) CaptureAndUpload(ctx context.Context, config Config) (
 		return nil, fmt.Errorf("failed to start tcpdump: %w", err)
 	}
 
+	// Wait for tcpdump exit in a goroutine so we can detect early failures
+	// (e.g., invalid filter, missing binary, permission error).
+	cmdDoneCh := make(chan error, 1)
+	go func() {
+		cmdDoneCh <- cmd.Wait()
+	}()
+
 	stopCh := make(chan struct{})
 	terminateCh := make(chan struct{})
 
@@ -168,34 +176,49 @@ func (t *TcpdumpCapturer) CaptureAndUpload(ctx context.Context, config Config) (
 		watcherErrors = t.startFileWatcher(ctx, config.OutputPath, config.UploadConfig, stopCh, terminateCh)
 	}()
 
-	// Wait for duration, termination signal, or context cancellation
+	// Wait for duration, termination signal, tcpdump exit, or context cancellation
+	var cmdErr error
 	select {
 	case <-time.After(duration):
 		logger.Info("capture duration elapsed, stopping tcpdump")
 	case <-terminateCh:
 		logger.Info("file watcher requested termination")
+	case cmdErr = <-cmdDoneCh:
+		// tcpdump exited on its own (could be error or normal exit)
+		if cmdErr != nil {
+			logger.Error(cmdErr, "tcpdump exited early")
+		} else {
+			logger.Info("tcpdump exited before duration elapsed")
+		}
 	case <-ctx.Done():
 		logger.Info("context cancelled")
 	}
 
-	// Send SIGTERM to tcpdump
-	if cmd.Process != nil {
-		if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
-			logger.Info("failed to send SIGTERM to tcpdump (process may have already exited)", "error", err)
-		}
-	}
+	// Send SIGTERM to tcpdump if it hasn't exited yet
 	var tcpdumpErr error
-	if err := cmd.Wait(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() && status.Signal() == syscall.SIGTERM {
-				logger.Info("tcpdump terminated with SIGTERM")
-			} else {
-				logger.Error(err, "tcpdump exited with error")
-				tcpdumpErr = err
+	if cmdErr != nil {
+		// tcpdump already exited with error via cmdDoneCh
+		tcpdumpErr = cmdErr
+	} else {
+		// tcpdump may still be running — send SIGTERM and wait
+		if cmd.Process != nil {
+			if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+				logger.Info("failed to send SIGTERM to tcpdump (process may have already exited)", "error", err)
 			}
-		} else {
-			logger.Error(err, "tcpdump Wait() failed")
-			tcpdumpErr = err
+		}
+		waitErr := <-cmdDoneCh
+		if waitErr != nil {
+			if exitErr, ok := waitErr.(*exec.ExitError); ok {
+				if status, ok := exitErr.Sys().(syscall.WaitStatus); ok && status.Signaled() && status.Signal() == syscall.SIGTERM {
+					logger.Info("tcpdump terminated with SIGTERM")
+				} else {
+					logger.Error(waitErr, "tcpdump exited with error")
+					tcpdumpErr = waitErr
+				}
+			} else {
+				logger.Error(waitErr, "tcpdump Wait() failed")
+				tcpdumpErr = waitErr
+			}
 		}
 	}
 
@@ -221,7 +244,7 @@ func (t *TcpdumpCapturer) CaptureAndUpload(ctx context.Context, config Config) (
 	} else {
 		logger.Info("shutdown: found remaining pcap files", "count", len(remainingPcap), "files", remainingPcap)
 		for _, f := range remainingPcap {
-			if err := gzipFile(f); err != nil {
+			if err := fileutil.GzipFile(f); err != nil {
 				logger.Error(err, "failed to gzip remaining file", "fileName", filepath.Base(f))
 			}
 		}

@@ -18,7 +18,7 @@ func TestBuildTcpdumpArgs_DefaultChunkSize(t *testing.T) {
 		},
 	}
 	args := buildTcpdumpArgs("/tmp/capture.pcap", spec)
-	assertFlagValue(t, args, "-C", "100")
+	assertFlagValue(t, args, "-C", "10")
 }
 
 func TestBuildTcpdumpArgs_CustomChunkSize(t *testing.T) {

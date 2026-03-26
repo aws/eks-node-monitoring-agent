@@ -1,9 +1,7 @@
 package packet_capture
 
 import (
-	"compress/gzip"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -54,54 +52,4 @@ func deleteCorrespondingPcapFile(gzPath string) error {
 		return err
 	}
 	return nil
-}
-
-// gzipFile compresses a file with gzip, writing to path.gz, then deletes the original file.
-// On error, removes any incomplete .gz file to prevent uploading corrupt data.
-func gzipFile(path string) (err error) {
-	src, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer src.Close()
-
-	gzPath := path + ".gz"
-	dst, err := os.Create(gzPath)
-	if err != nil {
-		return err
-	}
-
-	gw := gzip.NewWriter(dst)
-
-	defer func() {
-		if gw != nil {
-			if closeErr := gw.Close(); closeErr != nil && err == nil {
-				err = closeErr
-			}
-		}
-		if dst != nil {
-			if closeErr := dst.Close(); closeErr != nil && err == nil {
-				err = closeErr
-			}
-		}
-		if err != nil {
-			_ = os.Remove(gzPath)
-		}
-	}()
-
-	if _, err = io.Copy(gw, src); err != nil {
-		return err
-	}
-
-	// Close gzip writer to flush, then close dst, then remove original
-	if err = gw.Close(); err != nil {
-		return err
-	}
-	gw = nil // prevent double close in defer
-	if err = dst.Close(); err != nil {
-		return err
-	}
-	dst = nil // prevent double close in defer
-	src.Close()
-	return os.Remove(path)
 }

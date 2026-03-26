@@ -76,15 +76,15 @@ spec:
                   traffic
                 properties:
                   chunkSizeMB:
-                    default: 100
+                    default: 10
                     description: ChunkSizeMB is the max size of each capture file
                       in MB before rotation
-                    maximum: 1000
+                    maximum: 100
                     minimum: 1
                     type: integer
                   duration:
                     description: Duration specifies how long to capture traffic
-                    pattern: ^([0-9]+[smh])+$
+                    pattern: ^\d+[smh]$
                     type: string
                   filter:
                     description: Filter specifies capture filter expression (tcpdump

@@ -259,6 +259,9 @@ func (c *nodeDiagnosticController) handleLogCapture(ctx context.Context, nodeDia
 	return nil
 }
 
+// MaxCaptureDuration is the maximum allowed packet capture duration.
+const MaxCaptureDuration = 1 * time.Hour
+
 // handlePacketCapture handles the packet capture workflow.
 func (c *nodeDiagnosticController) handlePacketCapture(ctx context.Context, nd *v1alpha1.NodeDiagnostic) error {
 	if nd.Spec.PacketCapture == nil {
@@ -269,6 +272,25 @@ func (c *nodeDiagnosticController) handlePacketCapture(ctx context.Context, nd *
 	existingStatus := nd.Status.GetCaptureStatus(v1alpha1.CaptureTypePacket)
 	if existingStatus != nil && existingStatus.State.Completed != nil {
 		return nil
+	}
+
+	// Validate duration is within bounds
+	duration, err := time.ParseDuration(nd.Spec.PacketCapture.Duration)
+	if err != nil || duration > MaxCaptureDuration {
+		captureStatus := v1alpha1.CaptureStatus{
+			Type: v1alpha1.CaptureTypePacket,
+			State: v1alpha1.CaptureState{
+				Completed: &v1alpha1.CaptureStateCompleted{
+					Reason:     v1alpha1.CaptureStateFailure,
+					Message:    fmt.Sprintf("invalid or excessive duration %q (max %s). Delete this resource with: kubectl delete nodediagnostic %s", nd.Spec.PacketCapture.Duration, MaxCaptureDuration, nd.Name),
+					StartedAt:  metav1.Now(),
+					FinishedAt: metav1.Now(),
+				},
+			},
+		}
+		stored := nd.DeepCopy()
+		nd.Status.SetCaptureStatus(captureStatus)
+		return c.kubeClient.Status().Patch(ctx, nd, client.MergeFrom(stored))
 	}
 
 	// Generate capture ID for tracing

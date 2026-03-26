@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	DefaultRotationSizeMB = 100
+	DefaultRotationSizeMB = 10
 	FileCheckInterval     = 5 * time.Second
 	DiskUsageThreshold    = 0.90
 	MaxRetries            = 1

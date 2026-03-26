@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/aws/eks-node-monitoring-agent/api/v1alpha1"
+	fileutil "github.com/aws/eks-node-monitoring-agent/pkg/util/file"
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 )
@@ -25,7 +26,7 @@ func genPacketCaptureSpec(t *rapid.T) *v1alpha1.PacketCapture {
 		filter = rapid.StringMatching(`[a-z0-9 ]{1,50}`).Draw(t, "filter")
 	}
 
-	chunkSize := rapid.IntRange(0, 1000).Draw(t, "chunkSizeMB")
+	chunkSize := rapid.IntRange(0, 100).Draw(t, "chunkSizeMB")
 
 	return &v1alpha1.PacketCapture{
 		Mode:        v1alpha1.ModeTcpdump,
@@ -279,7 +280,7 @@ func TestProperty7_FindGzipFilesOnlyGzSorted(t *testing.T) {
 	})
 }
 
-// Feature: tcpdump-packet-capture, Property 8: checkDiskSpace returns a value in [0.0, 1.0]
+// Feature: tcpdump-packet-capture, Property 8: CheckDiskSpace returns a value in [0.0, 1.0]
 // **Validates: Requirements 10.13**
 func TestProperty8_CheckDiskSpaceInRange(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
@@ -289,9 +290,9 @@ func TestProperty8_CheckDiskSpaceInRange(t *testing.T) {
 		}
 		defer os.RemoveAll(dir)
 
-		usage, err := checkDiskSpace(dir)
+		usage, err := fileutil.CheckDiskSpace(dir)
 		if err != nil {
-			rt.Fatalf("checkDiskSpace error: %v", err)
+			rt.Fatalf("CheckDiskSpace error: %v", err)
 		}
 		if usage < 0.0 || usage > 1.0 {
 			rt.Fatalf("disk usage out of range [0.0, 1.0]: %f", usage)
