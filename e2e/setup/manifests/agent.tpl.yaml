@@ -135,11 +135,22 @@ spec:
                       properties:
                         completed:
                           properties:
+                            captureID:
+                              description: |-
+                                CaptureID is the unique identifier for this capture, used for log correlation
+                                and S3 path isolation.
+                              type: string
                             finishedAt:
                               format: date-time
                               type: string
                             message:
                               type: string
+                            observedGeneration:
+                              description: |-
+                                ObservedGeneration records which spec generation this capture executed against.
+                                Used to detect spec changes and allow re-execution without delete + recreate.
+                              format: int64
+                              type: integer
                             reason:
                               type: string
                             startedAt:
@@ -153,6 +164,11 @@ spec:
                           type: object
                         running:
                           properties:
+                            captureID:
+                              description: |-
+                                CaptureID is the unique identifier for this capture session.
+                                Only set for packet captures.
+                              type: string
                             startedAt:
                               format: date-time
                               type: string
