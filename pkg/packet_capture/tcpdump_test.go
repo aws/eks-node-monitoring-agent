@@ -59,9 +59,8 @@ func TestBuildTcpdumpArgs_WithoutInterfaces(t *testing.T) {
 		},
 	}
 	args := buildTcpdumpArgs("/tmp/capture.pcap", spec)
-	for _, a := range args {
-		assert.NotEqual(t, "-i", a, "should not contain -i flag when interfaces is empty")
-	}
+	// When no interface specified, should default to "any"
+	assertFlagValue(t, args, "-i", "any")
 }
 
 func TestBuildTcpdumpArgs_WithFilter(t *testing.T) {
@@ -92,7 +91,7 @@ func TestBuildTcpdumpArgs_WithoutFilter(t *testing.T) {
 	lastArg := args[len(args)-1]
 	assert.NotEqual(t, "", lastArg)
 	// Verify no standalone filter-like string at the end
-	assert.Contains(t, []string{"igzip", "10000", "-U"}, lastArg,
+	assert.Contains(t, []string{"igzip", "10000", "-U", "any"}, lastArg,
 		"last arg should be a known flag value when no filter is set, or an interface/chunk value")
 }
 

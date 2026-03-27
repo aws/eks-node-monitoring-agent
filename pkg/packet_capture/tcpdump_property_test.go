@@ -155,10 +155,16 @@ func TestProperty3_InterfacesProduceIFlag(t *testing.T) {
 				t.Fatalf("args missing -i flag for interface %q: %v", spec.Interface, args)
 			}
 		} else {
-			for _, a := range args {
-				if a == "-i" {
-					t.Fatalf("args should not contain -i when interface is empty: %v", args)
+			// When interface is empty, should default to "any"
+			foundI := false
+			for i, a := range args {
+				if a == "-i" && i+1 < len(args) && args[i+1] == "any" {
+					foundI = true
+					break
 				}
+			}
+			if !foundI {
+				t.Fatalf("args missing -i any when interface is empty: %v", args)
 			}
 		}
 	})

@@ -26,6 +26,18 @@ func NewTcpdumpCapturer() *TcpdumpCapturer {
 	return &TcpdumpCapturer{}
 }
 
+// cleanupStaleTcpdump kills any leftover tcpdump processes from a previous crash.
+// This prevents zombie captures that could fill disk or hold AF_PACKET sockets.
+func cleanupStaleTcpdump(logger interface{ Info(string, ...interface{}) }) {
+	// Look for tcpdump processes writing to our temp directory pattern
+	out, err := exec.Command("pgrep", "-f", "tcpdump -w /tmp/eks-packet-capture").Output()
+	if err != nil || len(out) == 0 {
+		return // no stale processes
+	}
+	logger.Info("found stale tcpdump processes, cleaning up")
+	_ = exec.Command("pkill", "-f", "tcpdump -w /tmp/eks-packet-capture").Run()
+}
+
 // buildTcpdumpArgs constructs the tcpdump command arguments from the spec.
 func buildTcpdumpArgs(outputPath string, spec *v1alpha1.PacketCapture) []string {
 	chunkSize := spec.ChunkSizeMB
@@ -43,6 +55,8 @@ func buildTcpdumpArgs(outputPath string, spec *v1alpha1.PacketCapture) []string 
 
 	if spec.Interface != "" {
 		args = append(args, "-i", spec.Interface)
+	} else {
+		args = append(args, "-i", "any")
 	}
 
 	// Filter expression must be the last argument per tcpdump convention
@@ -146,6 +160,9 @@ func (t *TcpdumpCapturer) CaptureAndUpload(ctx context.Context, config Config) (
 
 	capturePath := filepath.Join(config.OutputPath, "capture.pcap")
 	args := buildTcpdumpArgs(capturePath, config.Spec)
+
+	// Kill any stale tcpdump processes from a previous crash to prevent zombie captures
+	cleanupStaleTcpdump(logger)
 
 	logger.Info("starting tcpdump", "duration", duration, "interface", config.Spec.Interface, "chunkSizeMB", config.Spec.ChunkSizeMB, "outputPath", config.OutputPath)
 
