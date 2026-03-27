@@ -1,0 +1,158 @@
+name: "Bump DCGM Exporter Image"
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Once a day at 09:00 UTC
+    - cron: "0 9 * * *"
+
+permissions:
+  id-token: write
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump-dcgm-exporter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Clean up merged bot branches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Delete remote branches from previous bot runs whose PRs are already merged or closed
+          for BRANCH in $(git branch -r | grep 'origin/automated/bump-dcgm-exporter-' | sed 's|origin/||'); do
+            OPEN=$(gh pr list --head "$BRANCH" --state open --json number --jq 'length')
+            if [ "$OPEN" = "0" ]; then
+              echo "Deleting stale branch: ${BRANCH}"
+              git push origin --delete "$BRANCH" || true
+            fi
+          done
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: us-west-2
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_CI }}
+
+      - name: Check for new DCGM exporter image
+        id: check
+        run: |
+          # Parse current dcgmAgent image tag from values.yaml
+          # The tag sits under dcgmAgent.image.tag — grab the first 'tag:' line after 'dcgmAgent:'
+          VALUES_FILE="charts/eks-node-monitoring-agent/values.yaml"
+          CURRENT_TAG=$(awk '/^dcgmAgent:/{found=1} found && /tag:/{print $2; exit}' "$VALUES_FILE")
+          if [ -z "$CURRENT_TAG" ]; then
+            echo "::error::Failed to parse current DCGM tag from ${VALUES_FILE}"
+            exit 1
+          fi
+          echo "Current DCGM exporter tag: ${CURRENT_TAG}"
+          echo "current_tag=${CURRENT_TAG}" >> "$GITHUB_OUTPUT"
+
+          # Step 1: Get the latest tag from Docker Hub
+          echo "Fetching tags from Docker Hub..."
+          HTTP_CODE=$(curl -s -o /tmp/dockerhub_tags.json -w "%{http_code}" "https://hub.docker.com/v2/repositories/nvidia/dcgm-exporter/tags/?page_size=100&ordering=last_updated")
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::Docker Hub API returned HTTP ${HTTP_CODE}"
+            cat /tmp/dockerhub_tags.json
+            exit 1
+          fi
+          echo "Docker Hub response received (HTTP ${HTTP_CODE})"
+
+          LATEST_TAG=$(jq -r '.results[].name' /tmp/dockerhub_tags.json \
+            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.[0-9]+\.[0-9]+-ubuntu22\.04$' \
+            | sort -V \
+            | tail -1 || true)
+
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No matching tags found on Docker Hub"
+            echo "new_version_available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Latest Docker Hub tag: ${LATEST_TAG}"
+
+          if [ "$CURRENT_TAG" = "$LATEST_TAG" ]; then
+            echo "Already up to date"
+            echo "new_version_available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Step 2: Verify the tag exists in the ECR repo configured in the chart
+          ECR_REGISTRY="602401143452.dkr.ecr.us-west-2.amazonaws.com"
+          ECR_IMAGE="${ECR_REGISTRY}/eks/observability/dcgm-exporter:${LATEST_TAG}"
+          echo "Checking if ${ECR_IMAGE} exists in ECR..."
+
+          aws ecr get-login-password --region us-west-2 \
+            | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
+
+          if docker manifest inspect "${ECR_IMAGE}" > /dev/null 2>&1; then
+            echo "Image verified in ECR"
+            echo "new_version_available=true" >> "$GITHUB_OUTPUT"
+            echo "latest_tag=${LATEST_TAG}" >> "$GITHUB_OUTPUT"
+          else
+            echo "Tag ${LATEST_TAG} exists on Docker Hub but NOT in ECR yet — skipping"
+            echo "new_version_available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check for existing PR
+        if: steps.check.outputs.new_version_available == 'true'
+        id: existing_pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="automated/bump-dcgm-exporter-${{ steps.check.outputs.latest_tag }}"
+          EXISTING=$(gh pr list --head "$BRANCH" --state open --json number --jq 'length')
+          if [ "$EXISTING" -gt 0 ]; then
+            echo "PR already exists for ${BRANCH}"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Update DCGM exporter tag
+        if: steps.check.outputs.new_version_available == 'true' && steps.existing_pr.outputs.exists == 'false'
+        run: |
+          set -euo pipefail
+          CURRENT="${{ steps.check.outputs.current_tag }}"
+          LATEST="${{ steps.check.outputs.latest_tag }}"
+          sed -i "s|tag: ${CURRENT}|tag: ${LATEST}|" charts/eks-node-monitoring-agent/values.yaml
+
+      - name: Run make generate
+        if: steps.check.outputs.new_version_available == 'true' && steps.existing_pr.outputs.exists == 'false'
+        run: make generate
+
+      - name: Create Pull Request
+        if: steps.check.outputs.new_version_available == 'true' && steps.existing_pr.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          LATEST="${{ steps.check.outputs.latest_tag }}"
+          CURRENT="${{ steps.check.outputs.current_tag }}"
+          BRANCH="automated/bump-dcgm-exporter-${LATEST}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add -A
+          git commit -m "Bump DCGM exporter image to ${LATEST}"
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --title "Bump DCGM exporter image from ${CURRENT} to ${LATEST}" \
+            --body "Automated PR to update the DCGM exporter base image.
+
+          - **Previous tag:** \`${CURRENT}\`
+          - **New tag:** \`${LATEST}\`
+          - **Source:** [nvidia/dcgm-exporter on Docker Hub](https://hub.docker.com/r/nvidia/dcgm-exporter/tags)
+
+          This PR was created automatically by the \`bump-dcgm-exporter\` workflow.
+          \`make generate\` has been run to update any generated artifacts." \
+            --head "$BRANCH"
