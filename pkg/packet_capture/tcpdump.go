@@ -34,11 +34,11 @@ func buildTcpdumpArgs(outputPath string, spec *v1alpha1.PacketCapture) []string 
 	}
 
 	args := []string{
-		"-w", outputPath,                       // write capture to file
-		"-C", fmt.Sprintf("%d", chunkSize),     // rotate after chunkSize MB
-		"-W", MaxRotatedFiles,                  // max rotated files before wrapping
-		"-U",                                   // packet-buffered output (flush per packet)
-		"-z", CompressCmd,                      // post-rotate compress command
+		"-w", outputPath, // write capture to file
+		"-C", fmt.Sprintf("%d", chunkSize), // rotate after chunkSize MB
+		"-W", MaxRotatedFiles, // max rotated files before wrapping
+		"-U",              // packet-buffered output (flush per packet)
+		"-z", CompressCmd, // post-rotate compress command
 	}
 
 	if spec.Interface != "" {

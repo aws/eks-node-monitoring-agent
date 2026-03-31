@@ -42,12 +42,12 @@ nodeAgent:
     account: "602401143452"
     # -- Container pull policyfor the eks-node-monitoring-agent
     pullPolicy: IfNotPresent
-    # -- Health probe port for the eks-node-monitoring-agent.
-    # Used for both the --probe-address arg and the liveness probe.
-    probePort: 8002
-    # -- List of additional container arguments for the eks-node-monitoring-agent
-    additionalArgs:
-      - "--metrics-address=:8003"
+  # -- Health probe port for the eks-node-monitoring-agent.
+  # Used for both the --probe-address arg and the liveness probe.
+  probePort: 8002
+  # -- List of additional container arguments for the eks-node-monitoring-agent
+  additionalArgs:
+    - "--metrics-address=:8003"
   # -- Map of pod affinities for the eks-node-monitoring-agent
   affinity:
     nodeAffinity:
