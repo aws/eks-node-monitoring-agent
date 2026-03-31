@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	cri "github.com/containerd/containerd/integration/cri-api/pkg/apis"
-	"github.com/containerd/containerd/integration/remote"
+	cri "github.com/containerd/containerd/v2/integration/cri-api/pkg/apis"
+	"github.com/containerd/containerd/v2/integration/remote"
 	"github.com/coreos/go-systemd/v22/dbus"
 	"github.com/go-logr/logr"
 	"github.com/shirou/gopsutil/v4/process"
