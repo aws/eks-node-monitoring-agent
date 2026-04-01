@@ -44,3 +44,53 @@ func TestDeviceCount(t *testing.T) {
 		})
 	})
 }
+
+func TestDeviceCountExpectedMismatch(t *testing.T) {
+	t.Run("DetectsMissingGPU", func(t *testing.T) {
+		// Simulate a g6e.12xlarge where one GPU fell off the PCIe bus:
+		// DCGM sees 3, /dev has 3 (so existing check passes), but EC2 API says 4.
+		mockDcgm := &fake.FakeDcgm{DeviceCount: 3}
+		fakeProvider := &fake.FakeExpectedGPUCountProvider{Count: 4}
+		dcgmSystem := dcgm.NewDCGMSystemWithExpectedGPUCountProvider(mockDcgm, dcgm.GetDiagType(), fakeProvider)
+		conditions, err := dcgmSystem.DeviceCount(context.TODO())
+		assert.NoError(t, err)
+
+		var expectedMismatch *monitor.Condition
+		for i, c := range conditions {
+			if c.Reason == "NvidiaExpectedDeviceCountMismatch" {
+				expectedMismatch = &conditions[i]
+				break
+			}
+		}
+		assert.NotNil(t, expectedMismatch, "expected NvidiaExpectedDeviceCountMismatch condition")
+		assert.Equal(t, monitor.SeverityFatal, expectedMismatch.Severity)
+		assert.Contains(t, expectedMismatch.Message, "expected 4 GPUs")
+		assert.Contains(t, expectedMismatch.Message, "only 3 were detected")
+	})
+
+	t.Run("NoConditionWhenCountMatches", func(t *testing.T) {
+		mockDcgm := &fake.FakeDcgm{DeviceCount: 4}
+		fakeProvider := &fake.FakeExpectedGPUCountProvider{Count: 4}
+		dcgmSystem := dcgm.NewDCGMSystemWithExpectedGPUCountProvider(mockDcgm, dcgm.GetDiagType(), fakeProvider)
+		conditions, err := dcgmSystem.DeviceCount(context.TODO())
+		assert.NoError(t, err)
+
+		for _, c := range conditions {
+			assert.NotEqual(t, "NvidiaExpectedDeviceCountMismatch", c.Reason,
+				"should not report expected count mismatch when GPU count matches")
+		}
+	})
+
+	t.Run("HandlesProviderError", func(t *testing.T) {
+		mockDcgm := &fake.FakeDcgm{DeviceCount: 3}
+		fakeProvider := &fake.FakeExpectedGPUCountProvider{Err: fmt.Errorf("IMDS unavailable")}
+		dcgmSystem := dcgm.NewDCGMSystemWithExpectedGPUCountProvider(mockDcgm, dcgm.GetDiagType(), fakeProvider)
+		conditions, err := dcgmSystem.DeviceCount(context.TODO())
+		assert.NoError(t, err)
+
+		for _, c := range conditions {
+			assert.NotEqual(t, "NvidiaExpectedDeviceCountMismatch", c.Reason,
+				"should not report expected count mismatch when provider fails")
+		}
+	})
+}

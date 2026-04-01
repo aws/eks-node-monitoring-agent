@@ -269,8 +269,15 @@ AcceleratedHardwareReady:
     Template: 'NvidiaDeviceCountMismatch'
     DefaultSeverity: 'Fatal'
     Description: >-
-      The number of GPUs detected on the node does not match the expected count,
-      which indicates hardware failure or driver issues requiring investigation.
+      The number of GPUs detected by DCGM does not match the number of nvidia
+      device files in /dev, which indicates driver issues requiring investigation.
+  NvidiaExpectedDeviceCountMismatch:
+    Template: 'NvidiaExpectedDeviceCountMismatch'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      The number of GPUs detected on the node does not match the expected count
+      for the EC2 instance type, which indicates a GPU failed to enumerate on the
+      PCIe bus at boot. The instance should be replaced.
   NvidiaDoubleBitError:
     Template: 'NvidiaDoubleBitError'
     DefaultSeverity: 'Fatal'
