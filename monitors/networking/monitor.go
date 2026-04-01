@@ -607,6 +607,15 @@ func (m *NetworkingMonitor) handleIPRulesAndRoutes() (merr error) {
 		return nil
 	}
 
+	// IP rules/routes checks are VPC CNI-specific; skip if it's not installed.
+	if !slices.Contains(m.runtimeContext.Tags(), config.EKSAuto) {
+		if _, isInstalled, err := m.isVPCCNIInstalled(); err != nil {
+			return fmt.Errorf("failed to check if the VPC CNI is installed: %w", err)
+		} else if !isInstalled {
+			return nil
+		}
+	}
+
 	enis, err := ipamd.GetEndpoint(ipamd.EndpointEnis)
 	if err != nil {
 		return err
