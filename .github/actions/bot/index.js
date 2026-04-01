@@ -176,6 +176,14 @@ class CICommand {
         if (this.goal === "cancel") {
             return this.cancelCI(author, github);
         }
+        // Presets: /ci all runs full version matrix, /ci gpu runs nvidia AMI
+        if (this.goal === "all") {
+            this.goal_args["workflow:k8s_versions"] = "all";
+        } else if (this.goal === "gpu") {
+            this.goal_args["workflow:instance_type"] = "g5.2xlarge";
+            this.goal_args["workflow:ami_type"] = "nvidia";
+            this.goal_args["workflow:arch"] = "amd64";
+        }
         return this.triggerCI(author, github);
     }
 
