@@ -100,7 +100,7 @@ func (rule IPTablesRule) IsExpectedRejectRule(allowedChainPrefixes []string) boo
 		return true
 	}
 	for _, prefix := range allowedChainPrefixes {
-		if prefix != "" && strings.HasPrefix(rule.table, prefix) {
+		if strings.TrimSpace(prefix) != "" && strings.HasPrefix(rule.table, prefix) {
 			return true
 		}
 	}

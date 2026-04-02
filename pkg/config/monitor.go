@@ -91,7 +91,7 @@ func (mc *MonitorConfig) Validate() error {
 				return fmt.Errorf("allowedIPTablesChainPrefixes is only supported by the networking monitor, not %q", name)
 			}
 			for _, prefix := range settings.AllowedIPTablesChainPrefixes {
-				if prefix == "" {
+				if strings.TrimSpace(prefix) == "" {
 					return fmt.Errorf("allowedIPTablesChainPrefixes must not contain empty strings")
 				}
 			}
