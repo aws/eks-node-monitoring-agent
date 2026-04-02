@@ -92,7 +92,7 @@ func (mc *MonitorConfig) Validate() error {
 			}
 			for _, prefix := range settings.AllowedIPTablesChainPrefixes {
 				if strings.TrimSpace(prefix) == "" {
-					return fmt.Errorf("allowedIPTablesChainPrefixes must not contain empty strings")
+					return fmt.Errorf("allowedIPTablesChainPrefixes must not contain empty or whitespace-only strings")
 				}
 			}
 		}

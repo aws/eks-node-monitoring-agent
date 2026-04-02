@@ -213,7 +213,24 @@ func TestLoadMonitorConfig_EmptyChainPrefixRejected(t *testing.T) {
 	cfg, _, err := config.LoadMonitorConfig(cfgPath)
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
-	assert.Contains(t, err.Error(), "allowedIPTablesChainPrefixes must not contain empty strings")
+	assert.Contains(t, err.Error(), "allowedIPTablesChainPrefixes must not contain empty or whitespace-only strings")
+}
+
+func TestLoadMonitorConfig_WhitespaceOnlyChainPrefixRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`monitors:
+  networking:
+    allowedIPTablesChainPrefixes:
+      - "   "
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "allowedIPTablesChainPrefixes must not contain empty or whitespace-only strings")
 }
 
 func TestLoadMonitorConfig_AllowedIPTablesChainPrefixesOnNonNetworkingMonitorRejected(t *testing.T) {
