@@ -90,8 +90,8 @@ func (mc *MonitorConfig) Validate() error {
 			if name != "networking" {
 				return fmt.Errorf("allowedIPTablesChains is only supported by the networking monitor, not %q", name)
 			}
-			for _, prefix := range settings.AllowedIPTablesChains {
-				if strings.TrimSpace(prefix) == "" {
+			for _, chain := range settings.AllowedIPTablesChains {
+				if strings.TrimSpace(chain) == "" {
 					return fmt.Errorf("allowedIPTablesChains must not contain empty or whitespace-only strings")
 				}
 			}
