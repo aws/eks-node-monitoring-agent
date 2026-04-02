@@ -199,9 +199,9 @@
                     "description": "Whether this monitor is enabled",
                     "default": true
                 },
-                "allowedIPTablesChainPrefixes": {
+                "allowedIPTablesChains": {
                     "type": "array",
-                    "description": "List of iptables chain name prefixes whose REJECT/DROP rules should not trigger an UnexpectedRejectRule event. Use this to suppress false positives from known-good custom chains.",
+                    "description": "List of iptables chain names whose REJECT/DROP rules should not trigger an UnexpectedRejectRule event. Use this to suppress false positives from known-good custom chains.",
                     "default": [],
                     "items": {
                         "type": "string",

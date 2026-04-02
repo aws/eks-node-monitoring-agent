@@ -15,8 +15,8 @@ const DefaultConfigPath = "/etc/nma/config.yaml"
 
 // MonitorSettings holds per-monitor configuration.
 type MonitorSettings struct {
-	Enabled                      *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	AllowedIPTablesChainPrefixes []string `yaml:"allowedIPTablesChainPrefixes,omitempty" json:"allowedIPTablesChainPrefixes,omitempty"`
+	Enabled               *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	AllowedIPTablesChains []string `yaml:"allowedIPTablesChains,omitempty" json:"allowedIPTablesChains,omitempty"`
 }
 
 // IsEnabled returns true if the monitor is enabled.
@@ -47,9 +47,9 @@ func (mc *MonitorConfig) IsMonitorEnabled(pluginName string) bool {
 	return settings.IsEnabled()
 }
 
-// GetAllowedIPTablesChainPrefixes returns the allowed iptables chain prefixes
+// GetAllowedIPTablesChains returns the allowed iptables chains
 // configured for the networking monitor.
-func (mc *MonitorConfig) GetAllowedIPTablesChainPrefixes() []string {
+func (mc *MonitorConfig) GetAllowedIPTablesChains() []string {
 	if mc == nil || mc.Monitors == nil {
 		return nil
 	}
@@ -57,7 +57,7 @@ func (mc *MonitorConfig) GetAllowedIPTablesChainPrefixes() []string {
 	if !exists {
 		return nil
 	}
-	return settings.AllowedIPTablesChainPrefixes
+	return settings.AllowedIPTablesChains
 }
 
 // KnownPluginNames is the set of valid plugin names for validation.
@@ -86,13 +86,13 @@ func (mc *MonitorConfig) Validate() error {
 		return fmt.Errorf("unknown monitor plugin name(s): %s", strings.Join(unknown, ", "))
 	}
 	for name, settings := range mc.Monitors {
-		if len(settings.AllowedIPTablesChainPrefixes) > 0 {
+		if len(settings.AllowedIPTablesChains) > 0 {
 			if name != "networking" {
-				return fmt.Errorf("allowedIPTablesChainPrefixes is only supported by the networking monitor, not %q", name)
+				return fmt.Errorf("allowedIPTablesChains is only supported by the networking monitor, not %q", name)
 			}
-			for _, prefix := range settings.AllowedIPTablesChainPrefixes {
+			for _, prefix := range settings.AllowedIPTablesChains {
 				if strings.TrimSpace(prefix) == "" {
-					return fmt.Errorf("allowedIPTablesChainPrefixes must not contain empty or whitespace-only strings")
+					return fmt.Errorf("allowedIPTablesChains must not contain empty or whitespace-only strings")
 				}
 			}
 		}

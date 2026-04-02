@@ -301,7 +301,7 @@ The monitoring condition is `NetworkingReady` for issues in the following table 
 
 |UnexpectedRejectRule
 |Event
-|An unexpected `REJECT` or `DROP` rule was found in the `iptables`, potentially blocking expected traffic. To suppress this for known-good custom chains, set `allowedIPTablesChainPrefixes` under `nodeAgent.monitors.networking` in the Helm values or under `monitors.networking` in the config file at `/etc/nma/config.yaml`.
+|An unexpected `REJECT` or `DROP` rule was found in the `iptables`, potentially blocking expected traffic. To suppress this for known-good custom chains, set `allowedIPTablesChains` under `nodeAgent.monitors.networking` in the Helm values or under `monitors.networking` in the config file at `/etc/nma/config.yaml`.
 
 |===
 

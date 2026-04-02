@@ -174,7 +174,7 @@ NetworkingReady:
     Description: >-
       An unexpected `REJECT` or `DROP` rule was found in the `iptables`,
       potentially blocking expected traffic. To suppress this for known-good
-      custom chains, set `allowedIPTablesChainPrefixes` under
+      custom chains, set `allowedIPTablesChains` under
       `nodeAgent.monitors.networking` in the Helm values or under
       `monitors.networking` in the config file at `/etc/nma/config.yaml`.
   LinkLocalExceeded:

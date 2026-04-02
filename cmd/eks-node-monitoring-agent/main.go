@@ -217,14 +217,14 @@ func run() error {
 	}
 
 	// Inject per-monitor configuration into monitors that support it
-	if prefixes := monitorConfig.GetAllowedIPTablesChainPrefixes(); len(prefixes) > 0 {
+	if chains := monitorConfig.GetAllowedIPTablesChains(); len(chains) > 0 {
 		for _, mon := range enabledMonitors {
-			type chainPrefixConfigurable interface {
-				SetAllowedIPTablesChainPrefixes([]string)
+			type chainConfigurable interface {
+				SetAllowedIPTablesChains([]string)
 			}
-			if c, ok := mon.(chainPrefixConfigurable); ok {
-				c.SetAllowedIPTablesChainPrefixes(prefixes)
-				logger.Info("configured allowed iptables chain prefixes", "monitor", mon.Name(), "prefixes", prefixes)
+			if c, ok := mon.(chainConfigurable); ok {
+				c.SetAllowedIPTablesChains(chains)
+				logger.Info("configured allowed iptables chains", "monitor", mon.Name(), "chains", chains)
 			}
 		}
 	}

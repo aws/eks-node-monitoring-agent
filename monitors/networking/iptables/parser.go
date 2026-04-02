@@ -74,7 +74,7 @@ func (r IPTablesRule) IsReject() bool {
 		r.rejectWith != ""
 }
 
-func (rule IPTablesRule) IsExpectedRejectRule(allowedChainPrefixes []string) bool {
+func (rule IPTablesRule) IsExpectedRejectRule(allowedChains []string) bool {
 	if rule.table == "KUBE-FORWARD" &&
 		slices.ContainsFunc(rule.matches, func(m Match) bool { return m.name == "conntrack" }) &&
 		rule.connectionState == "INVALID" {
@@ -99,8 +99,8 @@ func (rule IPTablesRule) IsExpectedRejectRule(allowedChainPrefixes []string) boo
 		// VPC CNI rule to block node-local pod access via link-local addresses
 		return true
 	}
-	for _, prefix := range allowedChainPrefixes {
-		if strings.TrimSpace(prefix) != "" && strings.HasPrefix(rule.table, prefix) {
+	for _, chain := range allowedChains {
+		if strings.TrimSpace(chain) != "" && rule.table == chain {
 			return true
 		}
 	}
