@@ -46,6 +46,11 @@ const (
 	interfaceMonitorPeriod = 5 * time.Minute
 	// we only need to store the interfaces from our previous monitor period
 	interfaceCacheTTL = interfaceMonitorPeriod * 2
+
+	// max duration between two observations of IPAMDNotRunning to indicate a fatal condition. depends
+	// on the handleIPAMD interval (currently 5m), so this should ideally be kept longer than that
+	// TODO: should preferably use a concept of a minimum rate for a condition in node exporter
+	ipamdNotRunningConsistencyDuration = 15 * time.Minute
 )
 
 type criIPDetails struct {
@@ -56,14 +61,15 @@ type criIPDetails struct {
 }
 
 type NetworkingMonitor struct {
-	manager            monitor.Manager
-	ctrdRuntimeService cri.RuntimeService
-	criIPCache         cache.Store // containerID -> IP and metadata
-	vpcCNIPodID        string      // may be empty if on Auto or if pod was not prev. observed
-	interfaceCache     cache.Store
-	log                logr.Logger
-	exec               osext.Exec
-	runtimeContext     *config.RuntimeContext
+	manager             monitor.Manager
+	ctrdRuntimeService  cri.RuntimeService
+	criIPCache          cache.Store // containerID -> IP and metadata
+	vpcCNIPodID         string      // may be empty if on Auto or if pod was not prev. observed
+	ipamdNotRunningTime time.Time   // the last time IPAMD was observed not running
+	interfaceCache      cache.Store
+	log                 logr.Logger
+	exec                osext.Exec
+	runtimeContext      *config.RuntimeContext
 }
 
 func (m *NetworkingMonitor) Name() string {
@@ -303,6 +309,12 @@ func (m *NetworkingMonitor) handleIPAMD() error {
 
 func (m *NetworkingMonitor) checkIPAMD(ipamdRunning bool) error {
 	if !ipamdRunning {
+		now := time.Now()
+		if now.Sub(m.ipamdNotRunningTime) > ipamdNotRunningConsistencyDuration {
+			m.log.Info("IPAMD not found running for the first time in consistency duration", "duration", ipamdNotRunningConsistencyDuration)
+			m.ipamdNotRunningTime = now
+			return nil
+		}
 		return m.manager.Notify(context.Background(),
 			reasons.IPAMDNotRunning.
 				Builder().
