@@ -42,6 +42,8 @@ By default all monitors are enabled. Individual monitors can be disabled via the
 
 ### Helm Values
 
+Each monitor supports `enabled: true/false` to enable or disable it:
+
 ```yaml
 nodeAgent:
   monitors:
@@ -49,6 +51,16 @@ nodeAgent:
       enabled: false
     neuron:
       enabled: false
+```
+
+The networking monitor additionally supports `allowedIPTablesChains` to suppress `UnexpectedRejectRule` warnings for rules in custom chains:
+
+```yaml
+nodeAgent:
+  monitors:
+    networking:
+      allowedIPTablesChains:
+        - "MY-CUSTOM-CHAIN"
 ```
 
 ### Config File Format
