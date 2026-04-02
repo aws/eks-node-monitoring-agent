@@ -221,6 +221,12 @@ func TestNetworkingPeriodic(t *testing.T) {
 			res: make(chan monitor.Condition, 5),
 		}
 		mon.Register(ctx, mockManager)
+		// First call resets the consistency timer and returns nil
+		if !assert.NoError(t, mon.checkIPAMD(false)) {
+			return
+		}
+		// Second call sees ipamdNotRunningTime was set recently (within the
+		// consistency duration), so it fires the notification.
 		if !assert.NoError(t, mon.checkIPAMD(false)) {
 			return
 		}
