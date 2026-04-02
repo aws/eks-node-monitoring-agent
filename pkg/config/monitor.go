@@ -15,7 +15,8 @@ const DefaultConfigPath = "/etc/nma/config.yaml"
 
 // MonitorSettings holds per-monitor configuration.
 type MonitorSettings struct {
-	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Enabled                      *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	AllowedIPTablesChainPrefixes []string `yaml:"allowedIPTablesChainPrefixes,omitempty" json:"allowedIPTablesChainPrefixes,omitempty"`
 }
 
 // IsEnabled returns true if the monitor is enabled.
@@ -46,6 +47,19 @@ func (mc *MonitorConfig) IsMonitorEnabled(pluginName string) bool {
 	return settings.IsEnabled()
 }
 
+// GetAllowedIPTablesChainPrefixes returns the allowed iptables chain prefixes
+// configured for the networking monitor.
+func (mc *MonitorConfig) GetAllowedIPTablesChainPrefixes() []string {
+	if mc == nil || mc.Monitors == nil {
+		return nil
+	}
+	settings, exists := mc.Monitors["networking"]
+	if !exists {
+		return nil
+	}
+	return settings.AllowedIPTablesChainPrefixes
+}
+
 // KnownPluginNames is the set of valid plugin names for validation.
 var KnownPluginNames = []string{
 	"kernel-monitor",
@@ -70,6 +84,18 @@ func (mc *MonitorConfig) Validate() error {
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
 		return fmt.Errorf("unknown monitor plugin name(s): %s", strings.Join(unknown, ", "))
+	}
+	for name, settings := range mc.Monitors {
+		if len(settings.AllowedIPTablesChainPrefixes) > 0 {
+			if name != "networking" {
+				return fmt.Errorf("allowedIPTablesChainPrefixes is only supported by the networking monitor, not %q", name)
+			}
+			for _, prefix := range settings.AllowedIPTablesChainPrefixes {
+				if prefix == "" {
+					return fmt.Errorf("allowedIPTablesChainPrefixes must not contain empty strings")
+				}
+			}
+		}
 	}
 	return nil
 }

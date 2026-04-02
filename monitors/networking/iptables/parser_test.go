@@ -28,7 +28,7 @@ func TestIPTablesRuleParser(t *testing.T) {
 		} {
 			rule, err := iptables.ParseIPTablesRule(ruleRaw)
 			assert.NoError(t, err)
-			assert.Truef(t, rule.IsExpectedRejectRule(), ruleRaw)
+			assert.Truef(t, rule.IsExpectedRejectRule(nil), ruleRaw)
 		}
 	})
 
@@ -43,7 +43,7 @@ func TestIPTablesRuleParser(t *testing.T) {
 		} {
 			rule, err := iptables.ParseIPTablesRule(ruleRaw)
 			assert.NoError(t, err)
-			assert.Truef(t, rule.IsExpectedRejectRule(), ruleRaw)
+			assert.Truef(t, rule.IsExpectedRejectRule(nil), ruleRaw)
 		}
 	})
 
@@ -53,7 +53,21 @@ func TestIPTablesRuleParser(t *testing.T) {
 		} {
 			rule, err := iptables.ParseIPTablesRule(ruleRaw)
 			assert.NoError(t, err)
-			assert.Truef(t, rule.IsExpectedRejectRule(), ruleRaw)
+			assert.Truef(t, rule.IsExpectedRejectRule(nil), ruleRaw)
+		}
+	})
+
+	t.Run("ExpectedRejectRuleCustomChainPrefix", func(t *testing.T) {
+		prefixes := []string{"MY-CUSTOM-", "CUSTOM-"}
+		for _, ruleRaw := range []string{
+			`-A MY-CUSTOM-CHAIN -s 169.254.172.0/22 -p tcp -m multiport --dports 20,21,989,990,137,139,445 -j DROP`,
+			`-A MY-CUSTOM-CHAIN -s 169.254.172.0/22 -d 10.0.0.0/8 -j DROP`,
+			`-A CUSTOM-CHAIN -j DROP`,
+		} {
+			rule, err := iptables.ParseIPTablesRule(ruleRaw)
+			assert.NoError(t, err)
+			assert.Falsef(t, rule.IsExpectedRejectRule(nil), "should not be expected without custom prefixes: %s", ruleRaw)
+			assert.Truef(t, rule.IsExpectedRejectRule(prefixes), "should be expected with custom prefixes: %s", ruleRaw)
 		}
 	})
 
@@ -63,7 +77,7 @@ func TestIPTablesRuleParser(t *testing.T) {
 		} {
 			rule, err := iptables.ParseIPTablesRule(ruleRaw)
 			assert.NoError(t, err)
-			assert.Falsef(t, rule.IsExpectedRejectRule(), ruleRaw)
+			assert.Falsef(t, rule.IsExpectedRejectRule(nil), ruleRaw)
 		}
 	})
 

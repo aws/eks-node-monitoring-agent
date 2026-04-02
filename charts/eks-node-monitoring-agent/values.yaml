@@ -94,6 +94,14 @@ nodeAgent:
   # -- Pod labels applied to the eks-node-monitoring-agent
   podLabels: {}
   # -- Per-monitor configuration keyed by plugin name. See the main README for details.
+  # Each monitor supports "enabled: true/false" to enable or disable it.
+  # The networking monitor additionally supports "allowedIPTablesChainPrefixes"
+  # to suppress UnexpectedRejectRule warnings for rules in custom chains.
+  # Example:
+  #   monitors:
+  #     networking:
+  #       allowedIPTablesChainPrefixes:
+  #         - "MY-CUSTOM-CHAIN-"
   monitors: {}
   # -- Pod annotations applied to the eks-node-monitoring-agent
   podAnnotations: {}

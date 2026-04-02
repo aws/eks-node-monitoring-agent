@@ -61,15 +61,16 @@ type criIPDetails struct {
 }
 
 type NetworkingMonitor struct {
-	manager             monitor.Manager
-	ctrdRuntimeService  cri.RuntimeService
-	criIPCache          cache.Store // containerID -> IP and metadata
-	vpcCNIPodID         string      // may be empty if on Auto or if pod was not prev. observed
-	ipamdNotRunningTime time.Time   // the last time IPAMD was observed not running
-	interfaceCache      cache.Store
-	log                 logr.Logger
-	exec                osext.Exec
-	runtimeContext      *config.RuntimeContext
+	manager                      monitor.Manager
+	ctrdRuntimeService           cri.RuntimeService
+	criIPCache                   cache.Store // containerID -> IP and metadata
+	vpcCNIPodID                  string      // may be empty if on Auto or if pod was not prev. observed
+	ipamdNotRunningTime          time.Time   // the last time IPAMD was observed not running
+	interfaceCache               cache.Store
+	log                          logr.Logger
+	exec                         osext.Exec
+	runtimeContext               *config.RuntimeContext
+	allowedIPTablesChainPrefixes []string
 }
 
 func (m *NetworkingMonitor) Name() string {
@@ -100,6 +101,16 @@ func WithRuntimeContext(runtimeContext *config.RuntimeContext) Option {
 	return func(m *NetworkingMonitor) {
 		m.runtimeContext = runtimeContext
 	}
+}
+
+func WithAllowedIPTablesChainPrefixes(prefixes []string) Option {
+	return func(m *NetworkingMonitor) {
+		m.allowedIPTablesChainPrefixes = prefixes
+	}
+}
+
+func (m *NetworkingMonitor) SetAllowedIPTablesChainPrefixes(prefixes []string) {
+	m.allowedIPTablesChainPrefixes = prefixes
 }
 
 func NewNetworkingMonitor(options ...Option) *NetworkingMonitor {
@@ -854,7 +865,7 @@ func (m *NetworkingMonitor) checkIPTables(rules []iptables.IPTablesRule) (merr e
 		// detects whenever there is a REJECT rule in iptables which is not
 		// expected. These can cause traffic to incorrectly be blocked, and are
 		// often part of some security-related third-party agent.
-		if rule.IsReject() && !rule.IsExpectedRejectRule() {
+		if rule.IsReject() && !rule.IsExpectedRejectRule(m.allowedIPTablesChainPrefixes) {
 			merr = errors.Join(merr, m.manager.Notify(context.TODO(),
 				reasons.UnexpectedRejectRule.
 					Builder().
