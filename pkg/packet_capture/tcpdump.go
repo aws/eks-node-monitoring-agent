@@ -55,9 +55,11 @@ func buildTcpdumpArgs(outputPath string, spec *v1alpha1.PacketCapture) []string 
 
 	if spec.Interface != "" {
 		args = append(args, "-i", spec.Interface)
+	} else {
+		// Default to "any" to capture all interfaces (including pod veth pairs)
+		// rather than tcpdump's default of the first non-loopback interface.
+		args = append(args, "-i", "any")
 	}
-	// When interface is empty, tcpdump defaults to the first non-loopback interface.
-	// To capture all interfaces (including pod veth pairs), set interface to "any".
 
 	// Filter expression must be the last argument per tcpdump convention
 	if spec.Filter != "" {
