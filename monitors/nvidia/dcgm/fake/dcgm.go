@@ -49,3 +49,13 @@ func (m *FakeDcgm) GetValuesSince(time.Time) ([]dcgmapi.FieldValue_v2, error) {
 func (m *FakeDcgm) GetDeviceCount() (uint, error) {
 	return m.DeviceCount, m.DeviceCountErr
 }
+
+// FakeExpectedGPUCountProvider is a test double for dcgm.ExpectedGPUCountProvider.
+type FakeExpectedGPUCountProvider struct {
+	Count uint
+	Err   error
+}
+
+func (f *FakeExpectedGPUCountProvider) GetExpectedGPUCount(_ context.Context) (uint, error) {
+	return f.Count, f.Err
+}
