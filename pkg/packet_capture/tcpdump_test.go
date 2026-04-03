@@ -59,8 +59,12 @@ func TestBuildTcpdumpArgs_WithoutInterfaces(t *testing.T) {
 		},
 	}
 	args := buildTcpdumpArgs("/tmp/capture.pcap", spec)
-	// When no interface specified, should default to "any"
-	assertFlagValue(t, args, "-i", "any")
+	// When no interface specified, -i flag should not be present (tcpdump uses its default)
+	for _, arg := range args {
+		if arg == "-i" {
+			t.Fatal("-i flag should not be present when interface is empty")
+		}
+	}
 }
 
 func TestBuildTcpdumpArgs_WithFilter(t *testing.T) {

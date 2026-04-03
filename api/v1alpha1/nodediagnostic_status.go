@@ -34,10 +34,10 @@ type CaptureStateRunning struct {
 }
 
 type CaptureStateCompleted struct {
-	Reason             string      `json:"reason"`
-	Message            string      `json:"message"`
-	StartedAt          metav1.Time `json:"startedAt"`
-	FinishedAt         metav1.Time `json:"finishedAt"`
+	Reason     string      `json:"reason"`
+	Message    string      `json:"message"`
+	StartedAt  metav1.Time `json:"startedAt"`
+	FinishedAt metav1.Time `json:"finishedAt"`
 	// CaptureID is the unique identifier for this capture, used for log correlation
 	// and S3 path isolation.
 	// +optional
