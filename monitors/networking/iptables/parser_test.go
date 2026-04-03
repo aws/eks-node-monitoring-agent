@@ -58,7 +58,7 @@ func TestIPTablesRuleParser(t *testing.T) {
 	})
 
 	t.Run("ExpectedRejectRuleCustomChain", func(t *testing.T) {
-		chains := []string{"MY-CUSTOM-CHAIN", "CUSTOM-CHAIN"}
+		chains := []string{"filter/MY-CUSTOM-CHAIN", "filter/CUSTOM-CHAIN"}
 		for _, ruleRaw := range []string{
 			`-A MY-CUSTOM-CHAIN -s 169.254.172.0/22 -p tcp -m multiport --dports 20,21,989,990,137,139,445 -j DROP`,
 			`-A MY-CUSTOM-CHAIN -s 169.254.172.0/22 -d 10.0.0.0/8 -j DROP`,
@@ -66,8 +66,11 @@ func TestIPTablesRuleParser(t *testing.T) {
 		} {
 			rule, err := iptables.ParseIPTablesRule(ruleRaw)
 			assert.NoError(t, err)
+			rule.IptablesTable = "filter"
+
 			assert.Falsef(t, rule.IsExpectedRejectRule(nil), "should not be expected without custom chains: %s", ruleRaw)
-			assert.Truef(t, rule.IsExpectedRejectRule(chains), "should be expected with custom chains: %s", ruleRaw)
+			assert.Truef(t, rule.IsExpectedRejectRule(chains), "should be expected with correct table/chain: %s", ruleRaw)
+			assert.Falsef(t, rule.IsExpectedRejectRule([]string{"nat/MY-CUSTOM-CHAIN", "nat/CUSTOM-CHAIN"}), "should not match when table differs: %s", ruleRaw)
 		}
 	})
 

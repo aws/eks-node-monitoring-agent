@@ -53,14 +53,14 @@ nodeAgent:
       enabled: false
 ```
 
-The networking monitor additionally supports `allowedIPTablesChains` to suppress `UnexpectedRejectRule` warnings for rules in custom chains:
+The networking monitor additionally supports `allowedIPTablesChains` to suppress `UnexpectedRejectRule` warnings for rules in custom chains. Entries must use `table/chain` format:
 
 ```yaml
 nodeAgent:
   monitors:
     networking:
       allowedIPTablesChains:
-        - "MY-CUSTOM-CHAIN"
+        - "filter/MY-CUSTOM-CHAIN"
 ```
 
 ### Config File Format

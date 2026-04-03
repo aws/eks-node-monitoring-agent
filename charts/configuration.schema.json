@@ -201,11 +201,11 @@
                 },
                 "allowedIPTablesChains": {
                     "type": "array",
-                    "description": "List of iptables chain names whose REJECT/DROP rules should not trigger an UnexpectedRejectRule event. Use this to suppress false positives from known-good custom chains.",
+                    "description": "List of iptables chains (in table/chain format, e.g. \"filter/MY-CUSTOM-CHAIN\") whose REJECT/DROP rules should not trigger an UnexpectedRejectRule event. Use this to suppress false positives from known-good custom chains.",
                     "default": [],
                     "items": {
                         "type": "string",
-                        "minLength": 1
+                        "pattern": "^[^/]+/[^/]+$"
                     }
                 }
             }

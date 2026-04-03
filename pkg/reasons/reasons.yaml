@@ -177,6 +177,7 @@ NetworkingReady:
       custom chains, set `allowedIPTablesChains` under
       `nodeAgent.monitors.networking` in the Helm values or under
       `monitors.networking` in the config file at `/etc/nma/config.yaml`.
+      Entries must use `table/chain` format (e.g. `filter/MY-CUSTOM-CHAIN`).
   LinkLocalExceeded:
     Template: 'LinkLocalExceeded'
     DefaultSeverity: 'Warning'

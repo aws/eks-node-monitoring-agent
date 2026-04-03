@@ -843,7 +843,12 @@ func (m *NetworkingMonitor) handleIPTables() (merr error) {
 			merr = errors.Join(merr, fmt.Errorf("failed command %q: %w", cmd, err))
 			continue
 		}
+		var currentTable string
 		for _, line := range strings.Split(string(out), "\n") {
+			if strings.HasPrefix(line, "*") {
+				currentTable = strings.TrimSpace(line[1:])
+				continue
+			}
 			// only look at rule lines
 			if !strings.HasPrefix(line, "-A") {
 				continue
@@ -851,6 +856,7 @@ func (m *NetworkingMonitor) handleIPTables() (merr error) {
 			if rule, err := iptables.ParseIPTablesRule(line); err != nil {
 				merr = errors.Join(merr, err)
 			} else {
+				rule.IptablesTable = currentTable
 				rules = append(rules, *rule)
 			}
 		}

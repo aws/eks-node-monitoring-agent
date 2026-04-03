@@ -20,6 +20,7 @@ type Match struct {
 }
 
 type IPTablesRule struct {
+	IptablesTable    string
 	table            string
 	source           string
 	comment          string
@@ -99,8 +100,13 @@ func (rule IPTablesRule) IsExpectedRejectRule(allowedChains []string) bool {
 		// VPC CNI rule to block node-local pod access via link-local addresses
 		return true
 	}
-	for _, chain := range allowedChains {
-		if strings.TrimSpace(chain) != "" && rule.table == chain {
+	for _, entry := range allowedChains {
+		// entries must use "table/chain" format (e.g. "filter/MY-CUSTOM-CHAIN")
+		table, chainName, ok := strings.Cut(entry, "/")
+		if !ok || strings.Count(entry, "/") != 1 || strings.TrimSpace(table) == "" || strings.TrimSpace(chainName) == "" {
+			continue
+		}
+		if rule.IptablesTable == table && rule.table == chainName {
 			return true
 		}
 	}

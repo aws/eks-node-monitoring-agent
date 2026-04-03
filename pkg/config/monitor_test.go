@@ -171,11 +171,11 @@ func TestGetAllowedIPTablesChains(t *testing.T) {
 		cfg := &config.MonitorConfig{
 			Monitors: map[string]config.MonitorSettings{
 				"networking": {
-					AllowedIPTablesChains: []string{"MY-CUSTOM-CHAIN", "CUSTOM-CHAIN"},
+					AllowedIPTablesChains: []string{"filter/MY-CUSTOM-CHAIN", "filter/CUSTOM-CHAIN"},
 				},
 			},
 		}
-		assert.Equal(t, []string{"MY-CUSTOM-CHAIN", "CUSTOM-CHAIN"}, cfg.GetAllowedIPTablesChains())
+		assert.Equal(t, []string{"filter/MY-CUSTOM-CHAIN", "filter/CUSTOM-CHAIN"}, cfg.GetAllowedIPTablesChains())
 	})
 }
 
@@ -187,7 +187,7 @@ func TestLoadMonitorConfig_AllowedIPTablesChains(t *testing.T) {
   networking:
     enabled: true
     allowedIPTablesChains:
-      - "MY-CUSTOM-CHAIN"
+      - "filter/MY-CUSTOM-CHAIN"
 `)
 	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
 
@@ -196,7 +196,7 @@ func TestLoadMonitorConfig_AllowedIPTablesChains(t *testing.T) {
 	require.NotNil(t, cfg)
 	assert.True(t, found)
 	assert.True(t, cfg.IsMonitorEnabled("networking"))
-	assert.Equal(t, []string{"MY-CUSTOM-CHAIN"}, cfg.GetAllowedIPTablesChains())
+	assert.Equal(t, []string{"filter/MY-CUSTOM-CHAIN"}, cfg.GetAllowedIPTablesChains())
 }
 
 func TestLoadMonitorConfig_EmptyChainRejected(t *testing.T) {
@@ -213,7 +213,7 @@ func TestLoadMonitorConfig_EmptyChainRejected(t *testing.T) {
 	cfg, _, err := config.LoadMonitorConfig(cfgPath)
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
-	assert.Contains(t, err.Error(), "allowedIPTablesChains must not contain empty or whitespace-only strings")
+	assert.Contains(t, err.Error(), "must use \"table/chain\" format")
 }
 
 func TestLoadMonitorConfig_WhitespaceOnlyChainRejected(t *testing.T) {
@@ -230,7 +230,58 @@ func TestLoadMonitorConfig_WhitespaceOnlyChainRejected(t *testing.T) {
 	cfg, _, err := config.LoadMonitorConfig(cfgPath)
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
-	assert.Contains(t, err.Error(), "allowedIPTablesChains must not contain empty or whitespace-only strings")
+	assert.Contains(t, err.Error(), "must not have leading or trailing whitespace")
+}
+
+func TestLoadMonitorConfig_UnqualifiedChainRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`monitors:
+  networking:
+    allowedIPTablesChains:
+      - "MY-CUSTOM-CHAIN"
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "must use \"table/chain\" format")
+}
+
+func TestLoadMonitorConfig_ChainWithExtraSlashRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`monitors:
+  networking:
+    allowedIPTablesChains:
+      - "filter/MY/CUSTOM-CHAIN"
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "must use \"table/chain\" format")
+}
+
+func TestLoadMonitorConfig_ChainWithSurroundingWhitespaceRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`monitors:
+  networking:
+    allowedIPTablesChains:
+      - " filter/MY-CUSTOM-CHAIN "
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "must not have leading or trailing whitespace")
 }
 
 func TestLoadMonitorConfig_AllowedIPTablesChainsOnNonNetworkingMonitorRejected(t *testing.T) {
@@ -240,7 +291,7 @@ func TestLoadMonitorConfig_AllowedIPTablesChainsOnNonNetworkingMonitorRejected(t
 	content := []byte(`monitors:
   kernel-monitor:
     allowedIPTablesChains:
-      - "MY-CUSTOM-CHAIN"
+      - "filter/MY-CUSTOM-CHAIN"
 `)
 	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
 

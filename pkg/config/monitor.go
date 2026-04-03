@@ -91,8 +91,12 @@ func (mc *MonitorConfig) Validate() error {
 				return fmt.Errorf("allowedIPTablesChains is only supported by the networking monitor, not %q", name)
 			}
 			for _, chain := range settings.AllowedIPTablesChains {
-				if strings.TrimSpace(chain) == "" {
-					return fmt.Errorf("allowedIPTablesChains must not contain empty or whitespace-only strings")
+				if strings.TrimSpace(chain) != chain {
+					return fmt.Errorf("allowedIPTablesChains entry %q must not have leading or trailing whitespace", chain)
+				}
+				table, chainName, ok := strings.Cut(chain, "/")
+				if !ok || strings.Count(chain, "/") != 1 || strings.TrimSpace(table) == "" || strings.TrimSpace(chainName) == "" {
+					return fmt.Errorf("allowedIPTablesChains entry %q must use \"table/chain\" format with non-empty table and chain (e.g. \"filter/MY-CUSTOM-CHAIN\")", chain)
 				}
 			}
 		}
