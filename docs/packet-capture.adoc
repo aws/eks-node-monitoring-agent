@@ -1,0 +1,79 @@
+[#packet-capture]
+== Packet capture
+
+The node monitoring agent supports on-demand packet capture via the `NodeDiagnostic` custom resource. The agent runs `tcpdump` on the node, rotates and compresses capture files, and uploads them to an S3 bucket using pre-signed POST credentials.
+
+[#packet-capture-spec]
+=== NodeDiagnostic spec
+
+The `packetCapture` field in the `NodeDiagnostic` spec controls capture behavior:
+
+[%header,cols="1,1,1,3"]
+|===
+
+|Field
+|Required
+|Default
+|Description
+
+|`duration`
+|Yes
+|—
+|How long to capture traffic. Maximum 1 hour. Examples: `15s`, `5m`, `30m`.
+
+|`upload.url`
+|Yes
+|—
+|S3 pre-signed POST URL.
+
+|`upload.fields`
+|Yes
+|—
+|Pre-signed POST form fields. The `key` field must contain `${filename}` as a placeholder.
+
+|`interface`
+|No
+|First non-loopback interface
+|Network interface to capture from (for example, `eth0`). If empty, tcpdump uses its default (typically the primary ENI). Set to `any` to capture all interfaces including pod veth pairs — required when filtering by pod IP.
+
+|`filter`
+|No
+|None
+|tcpdump filter expression. Example: `tcp port 443`.
+
+|`chunkSizeMB`
+|No
+|10
+|File rotation size in MB (1–100). Smaller values produce more files but reduce data loss on failure.
+
+|===
+
+[#packet-capture-status]
+=== Status
+
+The capture status is reported in `.status.captureStatuses[]` with `type: Packet`:
+
+* *Running* – Capture is in progress. Includes `captureID` and `startedAt`.
+* *Completed* with reason `Success` – Capture finished and all files uploaded.
+* *Completed* with reason `Failure` – Capture encountered errors (invalid duration, upload failures, etc.).
+
+The `observedGeneration` field in the completed status tracks which spec generation the capture corresponds to.
+
+[#packet-capture-behavior]
+=== Behavior
+
+* The maximum capture duration is 1 hour. Captures exceeding this limit are rejected.
+* Duration must be specified in a single unit: seconds (`s`), minutes (`m`), or hours (`h`). For example, use `90m` instead of `1h30m`.
+* Capture files are streamed to S3 during the capture, not buffered on disk until completion.
+* Each file is approximately `chunkSizeMB` in size before compression.
+* If disk usage on the node exceeds 90%, the capture terminates automatically.
+* Failed uploads are retried once. If the retry fails, the capture stops.
+* Editing the spec (for example, changing `duration` or `filter`) while a capture is running cancels the current capture immediately and starts a new one with the updated parameters.
+* Deleting the `NodeDiagnostic` resource while a capture is running stops the capture immediately. The tcpdump process is terminated and temporary files are cleaned up.
+* Each capture gets a unique `captureID` (UUID). Files are uploaded under a `<captureID>/` prefix within the S3 key path. For example, if the pre-signed POST key is `captures/i-0abc123/${filename}`, the uploaded files will be at:
++
+----
+s3://<bucket>/captures/i-0abc123/<captureID>/capture.pcap0000.gz
+s3://<bucket>/captures/i-0abc123/<captureID>/capture.pcap0001.gz
+...
+----
