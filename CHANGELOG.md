@@ -5,6 +5,33 @@ All notable changes to the EKS Node Monitoring Agent will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.6.3] - 2026-04-03
+
+### What's Changed
+
+#### Features
+- Add tcpdump packet capture support ([aea0cec](https://github.com/aws/eks-node-monitoring-agent/commit/aea0cec))
+- Reduce noisy logs on clusters with alternative CNIs ([a3d468b](https://github.com/aws/eks-node-monitoring-agent/commit/a3d468b))
+- Upgrade containerd from 1.7.8 to 2.2.1 ([d04fc2c](https://github.com/aws/eks-node-monitoring-agent/commit/d04fc2c))
+- Make probe and affinities configurable ([c54c7c8](https://github.com/aws/eks-node-monitoring-agent/commit/c54c7c8))
+
+#### Bug Fixes
+- Tolerate IPAMD pod teardown ([45f85de](https://github.com/aws/eks-node-monitoring-agent/commit/45f85de))
+- Short circuit in IPAMD proc lookup ([48e563c](https://github.com/aws/eks-node-monitoring-agent/commit/48e563c))
+- Tolerate IPAMD startup up to ipamd monitor interval ([93c547f](https://github.com/aws/eks-node-monitoring-agent/commit/93c547f))
+- Fix inconsistency between probe ports args in helm charts and addon configuration ([26869aa](https://github.com/aws/eks-node-monitoring-agent/commit/26869aa))
+
+#### Dependencies
+- Bump Go version to 1.26 ([78411a1](https://github.com/aws/eks-node-monitoring-agent/commit/78411a1))
+- Update Go dependencies ([dfee87e](https://github.com/aws/eks-node-monitoring-agent/commit/dfee87e))
+
+#### CI & Build
+- Add CI to update Go deps ([9a4d17e](https://github.com/aws/eks-node-monitoring-agent/commit/9a4d17e))
+- Automatically bump dcgm-exporter image version ([bed7e05](https://github.com/aws/eks-node-monitoring-agent/commit/bed7e05))
+- Add kubetest2 sweeper to handle clean up of stale leaked resources ([025c96c](https://github.com/aws/eks-node-monitoring-agent/commit/025c96c))
+- Optimize CI actions for e2e testing ([cdb2482](https://github.com/aws/eks-node-monitoring-agent/commit/cdb2482))
+- Run unit test on PR creation ([cbbf06e](https://github.com/aws/eks-node-monitoring-agent/commit/cbbf06e))
+
 ## [v1.6.2] - 2026-03-23
 
 ### What's Changed
@@ -69,6 +96,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### What's Changed
 - Update base DCGM image to 4.5.2-4.8.1-ubuntu22.04 to resolve CVEs ([1a2cda4](https://github.com/aws/eks-node-monitoring-agent/commit/1a2cda4))
 
+[v1.6.3]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.2...v1.6.3
 [v1.6.2]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.1...v1.6.2
 [v1.6.1]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.0...v1.6.1
 [v1.6.0]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.5.2...v1.6.0
