@@ -345,10 +345,10 @@ func (c *nodeDiagnosticController) handlePacketCapture(ctx context.Context, nd *
 			Type: v1alpha1.CaptureTypePacket,
 			State: v1alpha1.CaptureState{
 				Completed: &v1alpha1.CaptureStateCompleted{
-					Reason:     v1alpha1.CaptureStateFailure,
-					Message:    fmt.Sprintf("invalid or excessive duration %q (max %s). Delete this resource with: kubectl delete nodediagnostic %s", nd.Spec.PacketCapture.Duration, MaxCaptureDuration, nd.Name),
-					StartedAt:  metav1.Now(),
-					FinishedAt: metav1.Now(),
+					Reason:             v1alpha1.CaptureStateFailure,
+					Message:            fmt.Sprintf("invalid or excessive duration %q (max %s). Delete this resource with: kubectl delete nodediagnostic %s", nd.Spec.PacketCapture.Duration, MaxCaptureDuration, nd.Name),
+					StartedAt:          metav1.Now(),
+					FinishedAt:         metav1.Now(),
 					ObservedGeneration: nd.Generation,
 				},
 			},
