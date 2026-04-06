@@ -9,11 +9,15 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
+	"sync/atomic"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/google/uuid"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/tools/cache"
 	controllerruntime "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -35,18 +39,29 @@ type nodeDiagnosticController struct {
 	kubeClient     client.Client
 	nodeName       string
 	runtimeContext *config.RuntimeContext
+
+	// packetCancelFunc stores a pointer to the CancelFunc for the in-flight packet capture.
+	// It is accessed atomically so the informer event handler can cancel a blocked capture
+	// without racing with the Reconcile goroutine.
+	packetCancelFunc atomic.Pointer[context.CancelFunc]
+
+	// captureFunc is the function called to execute the packet capture. It defaults to
+	// captureAndUploadPackets but can be overridden in tests to avoid running tcpdump.
+	captureFunc func(ctx context.Context, nd *v1alpha1.NodeDiagnostic, captureID string) ([]error, error)
 }
 
 func NewNodeDiagnosticController(kubeClient client.Client, nodeName string, runtimeContext *config.RuntimeContext) *nodeDiagnosticController {
-	return &nodeDiagnosticController{
+	c := &nodeDiagnosticController{
 		kubeClient:     kubeClient,
 		nodeName:       nodeName,
 		runtimeContext: runtimeContext,
 	}
+	c.captureFunc = c.captureAndUploadPackets
+	return c
 }
 
 func (c *nodeDiagnosticController) Register(ctx context.Context, m controllerruntime.Manager) error {
-	return controllerruntime.NewControllerManagedBy(m).
+	if err := controllerruntime.NewControllerManagedBy(m).
 		Named("node-diagnostic").
 		For(&v1alpha1.NodeDiagnostic{}).
 		WithEventFilter(predicate.And(
@@ -63,7 +78,35 @@ func (c *nodeDiagnosticController) Register(ctx context.Context, m controllerrun
 			// the next item.
 			MaxConcurrentReconciles: 1,
 		}).
-		Complete(reconcile.AsReconciler(m.GetClient(), c))
+		Complete(reconcile.AsReconciler(m.GetClient(), c)); err != nil {
+		return err
+	}
+
+	// Register watch event handler for mid-capture cancellation.
+	// This runs outside the Reconcile queue, so it can cancel a blocked capture immediately.
+	// Use GetInformer (not GetInformerForKind) to ensure we get the same informer instance
+	// that controller-runtime uses for the controller's watch.
+	informer, err := m.GetCache().GetInformer(ctx, &v1alpha1.NodeDiagnostic{})
+	if err != nil {
+		return fmt.Errorf("failed to get informer for NodeDiagnostic: %w", err)
+	}
+
+	logger := log.FromContext(ctx).WithName("capture-cancel-watcher")
+	logger.Info("registering informer event handler for mid-capture cancellation")
+	reg, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		UpdateFunc: func(oldObj, newObj interface{}) {
+			c.handleSpecChange(logger, oldObj, newObj)
+		},
+		DeleteFunc: func(obj interface{}) {
+			c.handleDelete(logger, obj)
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("failed to add event handler: %w", err)
+	}
+	logger.Info("informer event handler registered", "hasSynced", reg.HasSynced())
+
+	return nil
 }
 
 func (c *nodeDiagnosticController) Reconcile(ctx context.Context, nodeDiagnostic *v1alpha1.NodeDiagnostic) (reconcile.Result, error) {
@@ -268,10 +311,31 @@ func (c *nodeDiagnosticController) handlePacketCapture(ctx context.Context, nd *
 		return nil
 	}
 
-	// Check if already completed — don't re-execute
+	// Check if already completed for this generation — don't re-execute unless spec changed
 	existingStatus := nd.Status.GetCaptureStatus(v1alpha1.CaptureTypePacket)
 	if existingStatus != nil && existingStatus.State.Completed != nil {
-		return nil
+		if existingStatus.State.Completed.ObservedGeneration == nd.Generation {
+			return nil
+		}
+		// Generation changed — user updated the spec, clear old status and re-execute
+		logger := log.FromContext(ctx)
+		logger.Info("spec changed (generation updated), re-executing packet capture",
+			"oldGeneration", existingStatus.State.Completed.ObservedGeneration,
+			"newGeneration", nd.Generation)
+	}
+
+	// Cancel any in-flight capture from a previous generation
+	var cancelledCaptureID string
+	if cancelFuncPtr := c.packetCancelFunc.Load(); cancelFuncPtr != nil {
+		if existingStatus != nil && existingStatus.State.Running != nil {
+			cancelledCaptureID = existingStatus.State.Running.CaptureID
+		}
+		log.FromContext(ctx).Info("cancelling previous packet capture", "previousCaptureID", cancelledCaptureID)
+		(*cancelFuncPtr)()
+		c.packetCancelFunc.Store(nil)
+	} else if existingStatus != nil && existingStatus.State.Running != nil {
+		// Informer already cancelled the capture; pick up the ID for the status message.
+		cancelledCaptureID = existingStatus.State.Running.CaptureID
 	}
 
 	// Validate duration is within bounds
@@ -281,10 +345,11 @@ func (c *nodeDiagnosticController) handlePacketCapture(ctx context.Context, nd *
 			Type: v1alpha1.CaptureTypePacket,
 			State: v1alpha1.CaptureState{
 				Completed: &v1alpha1.CaptureStateCompleted{
-					Reason:     v1alpha1.CaptureStateFailure,
-					Message:    fmt.Sprintf("invalid or excessive duration %q (max %s). Delete this resource with: kubectl delete nodediagnostic %s", nd.Spec.PacketCapture.Duration, MaxCaptureDuration, nd.Name),
-					StartedAt:  metav1.Now(),
-					FinishedAt: metav1.Now(),
+					Reason:             v1alpha1.CaptureStateFailure,
+					Message:            fmt.Sprintf("invalid or excessive duration %q (max %s). Delete this resource with: kubectl delete nodediagnostic %s", nd.Spec.PacketCapture.Duration, MaxCaptureDuration, nd.Name),
+					StartedAt:          metav1.Now(),
+					FinishedAt:         metav1.Now(),
+					ObservedGeneration: nd.Generation,
 				},
 			},
 		}
@@ -307,7 +372,7 @@ func (c *nodeDiagnosticController) handlePacketCapture(ctx context.Context, nd *
 	captureStatus := v1alpha1.CaptureStatus{
 		Type: v1alpha1.CaptureTypePacket,
 		State: v1alpha1.CaptureState{
-			Running: &v1alpha1.CaptureStateRunning{StartedAt: startTime},
+			Running: &v1alpha1.CaptureStateRunning{StartedAt: startTime, CaptureID: captureID},
 		},
 	}
 	stored := nd.DeepCopy()
@@ -316,16 +381,38 @@ func (c *nodeDiagnosticController) handlePacketCapture(ctx context.Context, nd *
 		return err
 	}
 
+	// Create cancellable context for this capture
+	captureCtx, cancelFunc := context.WithCancel(ctx)
+	c.packetCancelFunc.Store(&cancelFunc)
+
+	// Build cancel suffix for status messages
+	cancelNote := ""
+	if cancelledCaptureID != "" {
+		cancelNote = fmt.Sprintf(" Previous capture %s was cancelled.", cancelledCaptureID)
+	}
+
 	// Execute capture
-	uploadErrors, fatalErr := c.captureAndUploadPackets(ctx, nd)
+	uploadErrors, fatalErr := c.captureFunc(captureCtx, nd, captureID)
+	c.packetCancelFunc.Store(nil)
+
+	// Detect mid-capture cancellation (triggered by spec change or CR deletion via event handler).
+	// No status update needed: spec change will be handled by the next Reconcile,
+	// and CR deletion means the resource is already gone.
+	if captureCtx.Err() == context.Canceled {
+		logger.Info("packet capture cancelled", "captureID", captureID)
+		return nil
+	}
+
 	if fatalErr != nil {
 		logger.Error(fatalErr, "fatal error during packet capture")
 		captureStatus.State = v1alpha1.CaptureState{
 			Completed: &v1alpha1.CaptureStateCompleted{
-				Reason:     v1alpha1.CaptureStateFailure,
-				Message:    fmt.Sprintf("[captureID=%s] packet capture failed. Delete this resource with: kubectl delete nodediagnostic %s", captureID, nd.Name),
-				StartedAt:  startTime,
-				FinishedAt: metav1.Now(),
+				Reason:             v1alpha1.CaptureStateFailure,
+				Message:            fmt.Sprintf("packet capture failed.%s", cancelNote),
+				CaptureID:          captureID,
+				StartedAt:          startTime,
+				FinishedAt:         metav1.Now(),
+				ObservedGeneration: nd.Generation,
 			},
 		}
 		stored = nd.DeepCopy()
@@ -336,19 +423,23 @@ func (c *nodeDiagnosticController) handlePacketCapture(ctx context.Context, nd *
 	if len(uploadErrors) > 0 {
 		captureStatus.State = v1alpha1.CaptureState{
 			Completed: &v1alpha1.CaptureStateCompleted{
-				Reason:     v1alpha1.CaptureStateFailure,
-				Message:    fmt.Sprintf("[captureID=%s] packet capture completed but %d file uploads failed. Delete this resource with: kubectl delete nodediagnostic %s", captureID, len(uploadErrors), nd.Name),
-				StartedAt:  startTime,
-				FinishedAt: metav1.Now(),
+				Reason:             v1alpha1.CaptureStateFailure,
+				Message:            fmt.Sprintf("packet capture completed but %d file uploads failed.%s", len(uploadErrors), cancelNote),
+				CaptureID:          captureID,
+				StartedAt:          startTime,
+				FinishedAt:         metav1.Now(),
+				ObservedGeneration: nd.Generation,
 			},
 		}
 	} else {
 		captureStatus.State = v1alpha1.CaptureState{
 			Completed: &v1alpha1.CaptureStateCompleted{
-				Reason:     v1alpha1.CaptureStateSuccess,
-				Message:    fmt.Sprintf("[captureID=%s] packet capture completed successfully. Delete this resource with: kubectl delete nodediagnostic %s", captureID, nd.Name),
-				StartedAt:  startTime,
-				FinishedAt: metav1.Now(),
+				Reason:             v1alpha1.CaptureStateSuccess,
+				Message:            fmt.Sprintf("packet capture completed successfully.%s", cancelNote),
+				CaptureID:          captureID,
+				StartedAt:          startTime,
+				FinishedAt:         metav1.Now(),
+				ObservedGeneration: nd.Generation,
 			},
 		}
 	}
@@ -358,8 +449,59 @@ func (c *nodeDiagnosticController) handlePacketCapture(ctx context.Context, nd *
 	return c.kubeClient.Status().Patch(ctx, nd, client.MergeFrom(stored))
 }
 
+// handleSpecChange is called by the informer event handler when a NodeDiagnostic
+// is updated. It runs outside the Reconcile queue, allowing it to cancel a blocked
+// capture immediately when the spec changes.
+func (c *nodeDiagnosticController) handleSpecChange(logger logr.Logger, oldObj, newObj interface{}) {
+	newND, ok := newObj.(*v1alpha1.NodeDiagnostic)
+	if !ok || newND.GetName() != c.nodeName {
+		return
+	}
+	oldND, ok := oldObj.(*v1alpha1.NodeDiagnostic)
+	if !ok {
+		return
+	}
+
+	// Only trigger on spec changes (generation bump)
+	if oldND.Generation == newND.Generation {
+		return
+	}
+
+	cancelFuncPtr := c.packetCancelFunc.Load()
+	if cancelFuncPtr == nil {
+		logger.V(1).Info("spec changed but no active capture to cancel",
+			"oldGeneration", oldND.Generation,
+			"newGeneration", newND.Generation)
+		return
+	}
+
+	logger.Info("spec changed, cancelling active capture",
+		"oldGeneration", oldND.Generation,
+		"newGeneration", newND.Generation)
+	(*cancelFuncPtr)()
+}
+
+// handleDelete is called by the informer event handler when a NodeDiagnostic
+// is deleted. It cancels any in-flight capture so tcpdump doesn't keep running
+// after the CR is gone.
+func (c *nodeDiagnosticController) handleDelete(logger logr.Logger, obj interface{}) {
+	nd, ok := obj.(*v1alpha1.NodeDiagnostic)
+	if !ok || nd.GetName() != c.nodeName {
+		return
+	}
+
+	cancelFuncPtr := c.packetCancelFunc.Load()
+	if cancelFuncPtr == nil {
+		logger.V(1).Info("CR deleted but no active capture to cancel")
+		return
+	}
+
+	logger.Info("CR deleted, cancelling active capture")
+	(*cancelFuncPtr)()
+}
+
 // captureAndUploadPackets creates a temp directory, runs the packet capture, and returns errors.
-func (c *nodeDiagnosticController) captureAndUploadPackets(ctx context.Context, nd *v1alpha1.NodeDiagnostic) ([]error, error) {
+func (c *nodeDiagnosticController) captureAndUploadPackets(ctx context.Context, nd *v1alpha1.NodeDiagnostic, captureID string) ([]error, error) {
 	log := log.FromContext(ctx)
 
 	captureDir, err := os.MkdirTemp("", "eks-packet-capture-*")
@@ -372,13 +514,23 @@ func (c *nodeDiagnosticController) captureAndUploadPackets(ctx context.Context, 
 		}
 	}()
 
+	// Inject captureID into upload key: ${filename} → <captureID>/${filename}
+	fields := make(map[string]string, len(nd.Spec.PacketCapture.Upload.Fields))
+	for k, v := range nd.Spec.PacketCapture.Upload.Fields {
+		if k == "key" {
+			v = strings.ReplaceAll(v, packet_capture.S3PresignedFilenamePlaceholder,
+				captureID+"/"+packet_capture.S3PresignedFilenamePlaceholder)
+		}
+		fields[k] = v
+	}
+
 	capturer := packet_capture.NewTcpdumpCapturer()
 	config := packet_capture.Config{
 		OutputPath: captureDir,
 		Spec:       nd.Spec.PacketCapture,
 		UploadConfig: &packet_capture.UploadConfig{
 			URL:    nd.Spec.PacketCapture.Upload.URL,
-			Fields: nd.Spec.PacketCapture.Upload.Fields,
+			Fields: fields,
 		},
 	}
 

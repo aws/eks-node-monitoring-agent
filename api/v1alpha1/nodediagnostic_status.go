@@ -27,6 +27,10 @@ type CaptureState struct {
 
 type CaptureStateRunning struct {
 	StartedAt metav1.Time `json:"startedAt"`
+	// CaptureID is the unique identifier for this capture session.
+	// Only set for packet captures.
+	// +optional
+	CaptureID string `json:"captureID,omitempty"`
 }
 
 type CaptureStateCompleted struct {
@@ -34,6 +38,14 @@ type CaptureStateCompleted struct {
 	Message    string      `json:"message"`
 	StartedAt  metav1.Time `json:"startedAt"`
 	FinishedAt metav1.Time `json:"finishedAt"`
+	// CaptureID is the unique identifier for this capture, used for log correlation
+	// and S3 path isolation.
+	// +optional
+	CaptureID string `json:"captureID,omitempty"`
+	// ObservedGeneration records which spec generation this capture executed against.
+	// Used to detect spec changes and allow re-execution without delete + recreate.
+	// +optional
+	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 }
 
 const (

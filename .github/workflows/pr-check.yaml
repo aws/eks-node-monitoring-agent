@@ -11,3 +11,13 @@ jobs:
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
     - run: hack/check-generate.sh
+
+  unit-test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # 4.2.2
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: go.mod
+    - run: sudo apt-get update && sudo apt-get install -y libsystemd-dev
+    - run: make test
