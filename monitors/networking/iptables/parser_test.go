@@ -74,6 +74,14 @@ func TestIPTablesRuleParser(t *testing.T) {
 		}
 	})
 
+	t.Run("MalformedAllowedChainEntryIgnored", func(t *testing.T) {
+		rule, err := iptables.ParseIPTablesRule(`-A MY-CUSTOM-CHAIN -j DROP`)
+		assert.NoError(t, err)
+		rule.IptablesTable = "filter"
+		assert.False(t, rule.IsExpectedRejectRule([]string{"MY-CUSTOM-CHAIN"}),
+			"entry without table prefix should not match")
+	})
+
 	t.Run("NotExpectedRejectRule", func(t *testing.T) {
 		for _, ruleRaw := range []string{
 			`-A NOT-KUBE -m conntrack --ctstate INVALID`,
