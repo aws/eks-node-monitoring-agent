@@ -6,25 +6,27 @@ import (
 	"time"
 
 	dcgmapi "github.com/NVIDIA/go-dcgm/pkg/dcgm"
+
+	"github.com/aws/eks-node-monitoring-agent/pkg/instanceinfo"
 )
 
 func NewDCGMSystem(dcgmClient DCGM, diagType dcgmapi.DiagType) *DCGMSystem {
 	return &DCGMSystem{
 		dcgm:                    dcgmClient,
 		diagType:                diagType,
-		expectedGPUCountProvider: NewEC2ExpectedGPUCountProvider(),
+		instanceTypeInfoProvider: instanceinfo.NewInstanceTypeInfoProvider(),
 		// TODO: consider exposing this parameter.
 		fieldValueWindow: 5 * time.Minute,
 	}
 }
 
-// NewDCGMSystemWithExpectedGPUCountProvider creates a DCGMSystem with a custom
-// ExpectedGPUCountProvider, primarily for testing.
-func NewDCGMSystemWithExpectedGPUCountProvider(dcgmClient DCGM, diagType dcgmapi.DiagType, provider ExpectedGPUCountProvider) *DCGMSystem {
+// NewDCGMSystemWithInstanceTypeInfoProvider creates a DCGMSystem with a custom
+// InstanceTypeInfoProvider, primarily for testing.
+func NewDCGMSystemWithInstanceTypeInfoProvider(dcgmClient DCGM, diagType dcgmapi.DiagType, provider instanceinfo.InstanceTypeInfoProvider) *DCGMSystem {
 	return &DCGMSystem{
 		dcgm:                    dcgmClient,
 		diagType:                diagType,
-		expectedGPUCountProvider: provider,
+		instanceTypeInfoProvider: provider,
 		fieldValueWindow:         5 * time.Minute,
 	}
 }
@@ -32,7 +34,7 @@ func NewDCGMSystemWithExpectedGPUCountProvider(dcgmClient DCGM, diagType dcgmapi
 type DCGMSystem struct {
 	dcgm                    DCGM
 	diagType                dcgmapi.DiagType
-	expectedGPUCountProvider ExpectedGPUCountProvider
+	instanceTypeInfoProvider instanceinfo.InstanceTypeInfoProvider
 
 	// fieldValueWindow is the time window used to fetch changes in field
 	// identifiers watched by dcgm.

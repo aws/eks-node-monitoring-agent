@@ -8,6 +8,7 @@ import (
 
 	dcgmapi "github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/dcgm"
+	"github.com/aws/eks-node-monitoring-agent/pkg/instanceinfo"
 )
 
 var _ dcgm.DCGM = &FakeDcgm{}
@@ -50,12 +51,12 @@ func (m *FakeDcgm) GetDeviceCount() (uint, error) {
 	return m.DeviceCount, m.DeviceCountErr
 }
 
-// FakeExpectedGPUCountProvider is a test double for dcgm.ExpectedGPUCountProvider.
-type FakeExpectedGPUCountProvider struct {
-	Count uint
-	Err   error
+// FakeInstanceTypeInfoProvider is a test double for instanceinfo.InstanceTypeInfoProvider.
+type FakeInstanceTypeInfoProvider struct {
+	Info *instanceinfo.InstanceInfo
+	Err  error
 }
 
-func (f *FakeExpectedGPUCountProvider) GetExpectedGPUCount(_ context.Context) (uint, error) {
-	return f.Count, f.Err
+func (f *FakeInstanceTypeInfoProvider) GetInstanceInfo(_ context.Context) (*instanceinfo.InstanceInfo, error) {
+	return f.Info, f.Err
 }
