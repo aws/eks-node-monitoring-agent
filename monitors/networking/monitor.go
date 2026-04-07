@@ -61,15 +61,16 @@ type criIPDetails struct {
 }
 
 type NetworkingMonitor struct {
-	manager             monitor.Manager
-	ctrdRuntimeService  cri.RuntimeService
-	criIPCache          cache.Store // containerID -> IP and metadata
-	vpcCNIPodID         string      // may be empty if on Auto or if pod was not prev. observed
-	ipamdNotRunningTime time.Time   // the last time IPAMD was observed not running
-	interfaceCache      cache.Store
-	log                 logr.Logger
-	exec                osext.Exec
-	runtimeContext      *config.RuntimeContext
+	manager               monitor.Manager
+	ctrdRuntimeService    cri.RuntimeService
+	criIPCache            cache.Store // containerID -> IP and metadata
+	vpcCNIPodID           string      // may be empty if on Auto or if pod was not prev. observed
+	ipamdNotRunningTime   time.Time   // the last time IPAMD was observed not running
+	interfaceCache        cache.Store
+	log                   logr.Logger
+	exec                  osext.Exec
+	runtimeContext        *config.RuntimeContext
+	allowedIPTablesChains []string
 }
 
 func (m *NetworkingMonitor) Name() string {
@@ -100,6 +101,10 @@ func WithRuntimeContext(runtimeContext *config.RuntimeContext) Option {
 	return func(m *NetworkingMonitor) {
 		m.runtimeContext = runtimeContext
 	}
+}
+
+func (m *NetworkingMonitor) SetAllowedIPTablesChains(chains []string) {
+	m.allowedIPTablesChains = chains
 }
 
 func NewNetworkingMonitor(options ...Option) *NetworkingMonitor {
@@ -832,7 +837,12 @@ func (m *NetworkingMonitor) handleIPTables() (merr error) {
 			merr = errors.Join(merr, fmt.Errorf("failed command %q: %w", cmd, err))
 			continue
 		}
+		var currentTable string
 		for _, line := range strings.Split(string(out), "\n") {
+			if strings.HasPrefix(line, "*") {
+				currentTable = strings.TrimSpace(line[1:])
+				continue
+			}
 			// only look at rule lines
 			if !strings.HasPrefix(line, "-A") {
 				continue
@@ -840,6 +850,7 @@ func (m *NetworkingMonitor) handleIPTables() (merr error) {
 			if rule, err := iptables.ParseIPTablesRule(line); err != nil {
 				merr = errors.Join(merr, err)
 			} else {
+				rule.IptablesTable = currentTable
 				rules = append(rules, *rule)
 			}
 		}
@@ -854,7 +865,7 @@ func (m *NetworkingMonitor) checkIPTables(rules []iptables.IPTablesRule) (merr e
 		// detects whenever there is a REJECT rule in iptables which is not
 		// expected. These can cause traffic to incorrectly be blocked, and are
 		// often part of some security-related third-party agent.
-		if rule.IsReject() && !rule.IsExpectedRejectRule() {
+		if rule.IsReject() && !rule.IsExpectedRejectRule(m.allowedIPTablesChains) {
 			merr = errors.Join(merr, m.manager.Notify(context.TODO(),
 				reasons.UnexpectedRejectRule.
 					Builder().
