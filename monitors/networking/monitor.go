@@ -973,7 +973,10 @@ func (m *NetworkingMonitor) isVPCCNIInstalled() (string, bool, error) {
 		return "", false, fmt.Errorf("failed to check for VPC CNI pod logs dir: %w", err)
 	}
 	for _, path := range dirs {
-		if strings.Contains(path.Name(), "aws-node") {
+		// TODO: make this check stricter, e.g. by trying to get a pod with that name
+		// and ensuring it has an owner reference to the aws-node DaemonSet on each
+		// discovery of a new pod
+		if strings.Contains(path.Name(), "_aws-node-") {
 			return path.Name(), true, nil
 		}
 	}
