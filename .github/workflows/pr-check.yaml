@@ -5,6 +5,8 @@ on:
       - opened
       - reopened
       - synchronize
+permissions:
+  contents: read
 jobs:
   check-generate:
     runs-on: ubuntu-latest
