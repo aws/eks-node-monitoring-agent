@@ -293,6 +293,7 @@ func (m *NetworkingMonitor) handleIPAMD() error {
 			// to run immediately. gives at least the IPAMD monitor interval
 			// as startup toleration (currently ~5m)
 			m.vpcCNIPodID = podName
+			m.ipamdNotRunningTime = time.Time{}
 			m.log.Info("New VPC CNI pod detected", "podName", podName)
 			return nil
 		}
@@ -316,7 +317,7 @@ func (m *NetworkingMonitor) checkIPAMD(ipamdRunning bool) error {
 	if !ipamdRunning {
 		now := time.Now()
 		if now.Sub(m.ipamdNotRunningTime) > ipamdNotRunningConsistencyDuration {
-			m.log.Info("IPAMD not found running for the first time in consistency duration", "duration", ipamdNotRunningConsistencyDuration)
+			m.log.Info("IPAMD not found running for the first time in consistency duration", "durationSeconds", ipamdNotRunningConsistencyDuration)
 			m.ipamdNotRunningTime = now
 			return nil
 		}
@@ -968,16 +969,30 @@ func (m *NetworkingMonitor) handleMACAddressPolicy() error {
 // returns a string containing the name of the pod and a boolean indiciating if it's present
 // or an error if it could not be checked
 func (m *NetworkingMonitor) isVPCCNIInstalled() (string, bool, error) {
+	var candidatePodIDs []string
 	dirs, err := os.ReadDir(config.PodLogsDirPath)
 	if err != nil {
 		return "", false, fmt.Errorf("failed to check for VPC CNI pod logs dir: %w", err)
 	}
 	for _, path := range dirs {
-		// TODO: make this check stricter, e.g. by trying to get a pod with that name
-		// and ensuring it has an owner reference to the aws-node DaemonSet on each
-		// discovery of a new pod
+		// this is only a first filter as it may match other pods, e.g. the aws-node-termination-handler
 		if strings.Contains(path.Name(), "_aws-node-") {
-			return path.Name(), true, nil
+			if path.Name() == m.vpcCNIPodID {
+				return path.Name(), true, nil
+			}
+			candidatePodIDs = append(candidatePodIDs, path.Name())
+		}
+	}
+
+	for _, candidate := range candidatePodIDs {
+		containerDirs, err := os.ReadDir(filepath.Join(config.PodLogsDirPath, candidate))
+		if err != nil {
+			return "", false, fmt.Errorf("failed to identify aws-node pod: %w", err)
+		}
+		for _, containerDir := range containerDirs {
+			if containerDir.Name() == "aws-vpc-cni-init" {
+				return candidate, true, nil
+			}
 		}
 	}
 	return "", false, nil
