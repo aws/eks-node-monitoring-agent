@@ -606,7 +606,7 @@ func TestHandleMACAddressPolicy(t *testing.T) {
 
 		// Create mock pod logs directory with aws-node
 		tmpDir := t.TempDir()
-		awsNodeDir := filepath.Join(tmpDir, "kube-system_aws-node-12345")
+		awsNodeDir := filepath.Join(tmpDir, "kube-system_aws-node-12345", "aws-vpc-cni-init")
 		os.MkdirAll(awsNodeDir, 0755)
 		originalPodLogsDir := config.PodLogsDirPath
 		config.PodLogsDirPath = tmpDir
@@ -652,7 +652,7 @@ func TestHandleMACAddressPolicy(t *testing.T) {
 
 		// Create mock pod logs directory with aws-node
 		tmpDir := t.TempDir()
-		awsNodeDir := filepath.Join(tmpDir, "kube-system_aws-node-12345")
+		awsNodeDir := filepath.Join(tmpDir, "kube-system_aws-node-12345", "aws-vpc-cni-init")
 		os.MkdirAll(awsNodeDir, 0755)
 		originalPodLogsDir := config.PodLogsDirPath
 		config.PodLogsDirPath = tmpDir
