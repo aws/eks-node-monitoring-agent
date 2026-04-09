@@ -154,7 +154,7 @@ func (c *nodeDiagnosticController) handleLogCapture(ctx context.Context, nodeDia
 		captureStatus.State = v1alpha1.CaptureState{
 			Completed: &v1alpha1.CaptureStateCompleted{
 				Reason:     v1alpha1.CaptureStateFailure,
-				Message:    "fatal error during log collection process",
+				Message:    fmt.Sprint("fatal error during log collection process", err),
 				StartedAt:  captureStatus.State.Running.StartedAt,
 				FinishedAt: metav1.Now(),
 			},
@@ -268,7 +268,7 @@ func (c *nodeDiagnosticController) handleLogCapture(ctx context.Context, nodeDia
 		captureStatus.State = v1alpha1.CaptureState{
 			Completed: &v1alpha1.CaptureStateCompleted{
 				Reason:     v1alpha1.CaptureStateFailure,
-				Message:    "fatal error during log upload process",
+				Message:    fmt.Sprint("fatal error during log upload process", err),
 				StartedAt:  captureStatus.State.Running.StartedAt,
 				FinishedAt: metav1.Now(),
 			},
