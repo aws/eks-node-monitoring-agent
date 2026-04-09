@@ -13,7 +13,7 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/dcgm"
 	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/dcgm/fake"
-	"github.com/aws/eks-node-monitoring-agent/pkg/instanceinfo"
+	"github.com/aws/eks-node-monitoring-agent/internal/pkg/instanceinfo"
 )
 
 func TestDeviceCount(t *testing.T) {
