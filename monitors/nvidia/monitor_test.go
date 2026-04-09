@@ -87,7 +87,7 @@ func TestNvidiaMonitor(t *testing.T) {
 		nvidiaMonitor, mockDcgm := newMonitorWithDcgm()
 		mgr := newMockManager()
 		nvidiaMonitor.Register(ctx, mgr)
-		xidCode := uint(13)
+		xidCode := uint(46)
 
 		mockDcgm.PolicyChan <- dcgmapi.PolicyViolation{
 			Condition: dcgmapi.XidPolicy,
