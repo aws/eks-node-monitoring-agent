@@ -57,6 +57,7 @@ The following table lists the configurable parameters for this chart and their d
 | nameOverride | string | `"eks-node-monitoring-agent"` | A name override for the chart |
 | nodeAgent.additionalArgs | list | `["--metrics-address=:8003"]` | List of additional container arguments for the eks-node-monitoring-agent |
 | nodeAgent.affinity | object | see [`values.yaml`](./values.yaml) | Map of pod affinities for the eks-node-monitoring-agent |
+| nodeAgent.env | object | `{}` | Container environment for the eks-node-monitoring-agent |
 | nodeAgent.image.account | string | `"602401143452"` | ECR repository account number for the eks-node-monitoring-agent |
 | nodeAgent.image.containerRegistry | string | `""` | Full container registry URL override (e.g., 602401143452.dkr.ecr.us-west-2.amazonaws.com). When set, this takes precedence over account/endpoint/region/domain fields. |
 | nodeAgent.image.domain | string | `"amazonaws.com"` | ECR repository domain for the eks-node-monitoring-agent |
