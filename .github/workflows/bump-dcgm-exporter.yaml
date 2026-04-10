@@ -13,6 +13,7 @@ permissions:
 
 jobs:
   bump-dcgm-exporter:
+    if: ${{ github.repository == 'aws/eks-node-monitoring-agent' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
