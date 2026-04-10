@@ -43,6 +43,25 @@ func (s *DCGMSystem) DeviceCount(ctx context.Context) ([]monitor.Condition, erro
 		)
 	}
 
+	// Compare the detected GPU count against the expected count for the EC2
+	// instance type. This catches cases where a GPU fails to enumerate on the
+	// PCIe bus at boot — both DCGM and /dev will agree on the (wrong) lower
+	// count, so the check above won't fire.
+	if s.instanceTypeInfoProvider != nil {
+		info, err := s.instanceTypeInfoProvider.GetInstanceInfo(ctx)
+		if err != nil {
+			logger.V(2).Info("could not determine expected GPU count for validation", "error", err)
+		} else if gpuDeviceCount < info.GPUCount {
+			conditions = append(conditions,
+				reasons.NvidiaDeviceCountMismatch.
+					Builder().
+					Message(fmt.Sprintf("expected %d GPUs for this instance type but only %d were detected — possible hardware failure",
+						info.GPUCount, gpuDeviceCount)).
+					Build(),
+			)
+		}
+	}
+
 	return conditions, nil
 }
 
