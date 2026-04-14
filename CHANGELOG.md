@@ -5,6 +5,28 @@ All notable changes to the EKS Node Monitoring Agent will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.6.4] - 2026-04-10
+
+### What's Changed
+
+#### Features
+- Allow users to allowlist custom iptables rules ([601a439](https://github.com/aws/eks-node-monitoring-agent/commit/601a4390664aa526d736d6d67aa4efde9662b996))
+- Update well known XID codes ([4e89770](https://github.com/aws/eks-node-monitoring-agent/commit/4e89770c5cb345e16e7a2515c808bd2617d721bb))
+
+#### Bug Fixes
+- Bubble up S3 Upload errors to ND failure message ([1eeb36f](https://github.com/aws/eks-node-monitoring-agent/commit/1eeb36ffd35b26cf6add81730b871b59a83e8da9))
+- Enforce VPC CNI pod name as a prefix ([165bf5e](https://github.com/aws/eks-node-monitoring-agent/commit/165bf5e83b70be59e9c9e1042496d1b471123b09))
+- Ensure VPC CNI pod by init container ([993719d](https://github.com/aws/eks-node-monitoring-agent/commit/993719df643837ce650d0e47ea24d4ee5b341a95))
+
+#### Dependencies
+- Bump up the go version to 1.26.2 ([d0cb78a](https://github.com/aws/eks-node-monitoring-agent/commit/d0cb78a2115155d1fe52fe1cd6408d5e4bd48fe8))
+- Update Go dependencies ([4cd1272](https://github.com/aws/eks-node-monitoring-agent/commit/4cd127250695f31a47fa09fd2d392ec003e914c9))
+
+#### CI & Build
+- Add CI to auto-update GPU list ([e85832c](https://github.com/aws/eks-node-monitoring-agent/commit/e85832c0e3796e7d7549e8d41c725a7b291b67f9))
+- Add minimal permissions block to restrict GITHUB_TOKEN to read-only access ([e70f80e](https://github.com/aws/eks-node-monitoring-agent/commit/e70f80e5436c4f4c5069444f14b6cc5726bea4b2))
+- CI runs only in parent repo ([11bacd6](https://github.com/aws/eks-node-monitoring-agent/commit/11bacd64a0b958dba289e2ad33dc409ba1104b7a))
+
 ## [v1.6.3] - 2026-04-03
 
 ### What's Changed
@@ -96,6 +118,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### What's Changed
 - Update base DCGM image to 4.5.2-4.8.1-ubuntu22.04 to resolve CVEs ([1a2cda4](https://github.com/aws/eks-node-monitoring-agent/commit/1a2cda4))
 
+[v1.6.4]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.3...v1.6.4
 [v1.6.3]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.2...v1.6.3
 [v1.6.2]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.1...v1.6.2
 [v1.6.1]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.0...v1.6.1
