@@ -322,6 +322,21 @@ AcceleratedHardwareReady:
     DefaultSeverity: 'Warning'
     Description: >-
       A non-critical GPU error occurred.
+  FabricManagerNotRunning:
+    Template: 'FabricManagerNotRunning'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      The NVIDIA Fabric Manager service is not running on this NVSwitch-equipped
+      instance. Fabric Manager is required for multi-GPU NVLink communication.
+      Without it, multi-GPU workloads will fail or silently degrade.
+  NvidiaFabricError:
+    Template: 'NvidiaFabricError'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      One or more GPUs reported a non-success fabric status, indicating NVSwitch
+      fabric training failure. Affected GPUs cannot participate in multi-GPU
+      NVLink communication. This condition persists across reboots and requires
+      instance replacement.
   NeuronDMAError:
     Template: 'NeuronDMAError'
     DefaultSeverity: 'Fatal'
