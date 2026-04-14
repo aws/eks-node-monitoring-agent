@@ -103,8 +103,10 @@ func WithRuntimeContext(runtimeContext *config.RuntimeContext) Option {
 	}
 }
 
-func (m *NetworkingMonitor) SetAllowedIPTablesChains(chains []string) {
-	m.allowedIPTablesChains = chains
+func WithAllowedIPTablesChains(chains []string) Option {
+	return func(m *NetworkingMonitor) {
+		m.allowedIPTablesChains = chains
+	}
 }
 
 func NewNetworkingMonitor(options ...Option) *NetworkingMonitor {

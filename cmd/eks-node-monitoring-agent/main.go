@@ -36,12 +36,12 @@ import (
 
 	// Import monitor packages to trigger auto-registration via init()
 	_ "github.com/aws/eks-node-monitoring-agent/monitors/kernel"
-	_ "github.com/aws/eks-node-monitoring-agent/monitors/networking"
 	_ "github.com/aws/eks-node-monitoring-agent/monitors/neuron"
 	_ "github.com/aws/eks-node-monitoring-agent/monitors/nvidia"
 	_ "github.com/aws/eks-node-monitoring-agent/monitors/storage"
 
 	// Import monitors that require explicit registration (can't use init())
+	"github.com/aws/eks-node-monitoring-agent/monitors/networking"
 	"github.com/aws/eks-node-monitoring-agent/monitors/runtime"
 	// Import observer packages to register observers
 	_ "github.com/aws/eks-node-monitoring-agent/pkg/observer"
@@ -197,6 +197,13 @@ func run() error {
 		logger.Info("monitor config file not found, all monitors will be enabled by default", "path", config.DefaultConfigPath)
 	}
 
+	// Register networking monitor plugin with its typed settings (requires config to be loaded first)
+	networkingPlugin := networking.NewPlugin(monitorConfig.GetNetworkingSettings())
+	if err := registry.ValidateAndRegister(networkingPlugin); err != nil {
+		logger.Error(err, "failed to register networking monitor plugin")
+		return err
+	}
+
 	// Filter plugins by configuration and log effective state
 	allPlugins := registry.GlobalRegistry().List()
 	var enabledMonitors []monitor.Monitor
@@ -214,19 +221,6 @@ func run() error {
 
 	if len(disabledNames) > 0 {
 		logger.Info("monitors disabled by configuration", "plugins", disabledNames)
-	}
-
-	// Inject per-monitor configuration into monitors that support it
-	if chains := monitorConfig.GetAllowedIPTablesChains(); len(chains) > 0 {
-		for _, mon := range enabledMonitors {
-			type chainConfigurable interface {
-				SetAllowedIPTablesChains([]string)
-			}
-			if c, ok := mon.(chainConfigurable); ok {
-				c.SetAllowedIPTablesChains(chains)
-				logger.Info("configured allowed iptables chains", "monitor", mon.Name(), "chains", chains)
-			}
-		}
 	}
 
 	if len(enabledMonitors) == 0 {
