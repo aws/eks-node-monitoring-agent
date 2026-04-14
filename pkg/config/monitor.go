@@ -17,7 +17,7 @@ type MonitorSettings struct {
 }
 
 // IsEnabled returns true if the monitor is enabled.
-// Defaults to true when Enabled is nil (not explicitly set) to ensure backward compatibility.
+// Defaults to true when Enabled is nil.
 func (ms MonitorSettings) IsEnabled() bool {
 	if ms.Enabled == nil {
 		return true
@@ -26,17 +26,12 @@ func (ms MonitorSettings) IsEnabled() bool {
 }
 
 // NetworkingMonitorSettings extends MonitorSettings with networking-specific fields.
-// It embeds MonitorSettings so that the common `enabled` field is promoted,
-// and adds fields that only apply to the networking monitor.
 type NetworkingMonitorSettings struct {
 	MonitorSettings
 	AllowedIPTablesChains []string `yaml:"allowedIPTablesChains,omitempty" json:"allowedIPTablesChains,omitempty"`
 }
 
-// MonitorsConfig holds per-monitor configuration with a typed field per monitor.
-// Using a concrete struct (rather than map[string]MonitorSettings) ensures that
-// monitor-specific fields are only visible on the monitors that support them,
-// and that unknown monitor names in YAML are rejected at parse time.
+// MonitorsConfig holds per-monitor configuration, with a dedicated field per monitor.
 type MonitorsConfig struct {
 	Kernel     MonitorSettings           `yaml:"kernel-monitor,omitempty" json:"kernel-monitor,omitempty"`
 	Networking NetworkingMonitorSettings `yaml:"networking,omitempty" json:"networking,omitempty"`
@@ -85,7 +80,7 @@ func (mc *MonitorConfig) IsMonitorEnabled(pluginName string) bool {
 	}
 }
 
-// GetNetworkingSettings returns the typed settings for the networking monitor.
+// GetNetworkingSettings returns the settings for the networking monitor.
 func (mc *MonitorConfig) GetNetworkingSettings() NetworkingMonitorSettings {
 	if mc == nil {
 		return NetworkingMonitorSettings{}
