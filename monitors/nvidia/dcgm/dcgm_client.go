@@ -192,6 +192,9 @@ func (d *dcgmHelper) Reconcile(ctx context.Context) (bool, error) {
 			// SXID errors caused by the NVSwitch.
 			dcgmapi.DCGM_FI_DEV_NVSWITCH_FATAL_ERRORS,
 			dcgmapi.DCGM_FI_DEV_NVSWITCH_NON_FATAL_ERRORS,
+			// Fabric Manager status and GPU fabric health for NVSwitch instances.
+			dcgmapi.DCGM_FI_DEV_FABRIC_MANAGER_STATUS,
+			dcgmapi.DCGM_FI_DEV_FABRIC_HEALTH_MASK,
 		})
 		if err != nil {
 			return false, err
