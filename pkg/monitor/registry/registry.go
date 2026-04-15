@@ -101,10 +101,3 @@ func GlobalRegistry() Registry {
 func Register(plugin MonitorPlugin) error {
 	return globalRegistry.Register(plugin)
 }
-
-// MustRegister registers a plugin or panics on error
-func MustRegister(plugin MonitorPlugin) {
-	if err := Register(plugin); err != nil {
-		panic(fmt.Sprintf("failed to register plugin: %v", err))
-	}
-}

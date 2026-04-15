@@ -25,20 +25,45 @@ func (ms MonitorSettings) IsEnabled() bool {
 	return *ms.Enabled
 }
 
-// NetworkingMonitorSettings extends MonitorSettings with networking-specific fields.
+// KernelMonitorSettings holds settings for the kernel monitor.
+type KernelMonitorSettings struct {
+	MonitorSettings
+}
+
+// NetworkingMonitorSettings holds settings for the networking monitor.
 type NetworkingMonitorSettings struct {
 	MonitorSettings
 	AllowedIPTablesChains []string `yaml:"allowedIPTablesChains,omitempty" json:"allowedIPTablesChains,omitempty"`
 }
 
+// StorageMonitorSettings holds settings for the storage monitor.
+type StorageMonitorSettings struct {
+	MonitorSettings
+}
+
+// NvidiaMonitorSettings holds settings for the nvidia monitor.
+type NvidiaMonitorSettings struct {
+	MonitorSettings
+}
+
+// NeuronMonitorSettings holds settings for the neuron monitor.
+type NeuronMonitorSettings struct {
+	MonitorSettings
+}
+
+// RuntimeMonitorSettings holds settings for the runtime monitor.
+type RuntimeMonitorSettings struct {
+	MonitorSettings
+}
+
 // MonitorsConfig holds per-monitor configuration, with a dedicated field per monitor.
 type MonitorsConfig struct {
-	Kernel     MonitorSettings           `yaml:"kernel-monitor,omitempty" json:"kernel-monitor,omitempty"`
+	Kernel     KernelMonitorSettings     `yaml:"kernel-monitor,omitempty" json:"kernel-monitor,omitempty"`
 	Networking NetworkingMonitorSettings `yaml:"networking,omitempty" json:"networking,omitempty"`
-	Storage    MonitorSettings           `yaml:"storage-monitor,omitempty" json:"storage-monitor,omitempty"`
-	Nvidia     MonitorSettings           `yaml:"nvidia,omitempty" json:"nvidia,omitempty"`
-	Neuron     MonitorSettings           `yaml:"neuron,omitempty" json:"neuron,omitempty"`
-	Runtime    MonitorSettings           `yaml:"runtime,omitempty" json:"runtime,omitempty"`
+	Storage    StorageMonitorSettings    `yaml:"storage-monitor,omitempty" json:"storage-monitor,omitempty"`
+	Nvidia     NvidiaMonitorSettings     `yaml:"nvidia,omitempty" json:"nvidia,omitempty"`
+	Neuron     NeuronMonitorSettings     `yaml:"neuron,omitempty" json:"neuron,omitempty"`
+	Runtime    RuntimeMonitorSettings    `yaml:"runtime,omitempty" json:"runtime,omitempty"`
 }
 
 // MonitorConfig is the top-level configuration structure.
@@ -57,7 +82,7 @@ var KnownPluginNames = []string{
 }
 
 // IsMonitorEnabled checks if a given plugin is enabled.
-// Returns true if the config is nil or the plugin name is unknown.
+// Returns true if the config is nil. Panics if pluginName is not a known plugin.
 func (mc *MonitorConfig) IsMonitorEnabled(pluginName string) bool {
 	if mc == nil {
 		return true
@@ -76,8 +101,16 @@ func (mc *MonitorConfig) IsMonitorEnabled(pluginName string) bool {
 	case "runtime":
 		return mc.Monitors.Runtime.IsEnabled()
 	default:
-		return true
+		panic("IsMonitorEnabled: unknown plugin name: " + pluginName)
 	}
+}
+
+// GetKernelSettings returns the settings for the kernel monitor.
+func (mc *MonitorConfig) GetKernelSettings() KernelMonitorSettings {
+	if mc == nil {
+		return KernelMonitorSettings{}
+	}
+	return mc.Monitors.Kernel
 }
 
 // GetNetworkingSettings returns the settings for the networking monitor.
@@ -86,6 +119,38 @@ func (mc *MonitorConfig) GetNetworkingSettings() NetworkingMonitorSettings {
 		return NetworkingMonitorSettings{}
 	}
 	return mc.Monitors.Networking
+}
+
+// GetStorageSettings returns the settings for the storage monitor.
+func (mc *MonitorConfig) GetStorageSettings() StorageMonitorSettings {
+	if mc == nil {
+		return StorageMonitorSettings{}
+	}
+	return mc.Monitors.Storage
+}
+
+// GetNvidiaSettings returns the settings for the Nvidia monitor.
+func (mc *MonitorConfig) GetNvidiaSettings() NvidiaMonitorSettings {
+	if mc == nil {
+		return NvidiaMonitorSettings{}
+	}
+	return mc.Monitors.Nvidia
+}
+
+// GetNeuronSettings returns the settings for the Neuron monitor.
+func (mc *MonitorConfig) GetNeuronSettings() NeuronMonitorSettings {
+	if mc == nil {
+		return NeuronMonitorSettings{}
+	}
+	return mc.Monitors.Neuron
+}
+
+// GetRuntimeSettings returns the settings for the runtime monitor.
+func (mc *MonitorConfig) GetRuntimeSettings() RuntimeMonitorSettings {
+	if mc == nil {
+		return RuntimeMonitorSettings{}
+	}
+	return mc.Monitors.Runtime
 }
 
 // Validate checks the semantic validity of settings not covered by strict YAML parsing.

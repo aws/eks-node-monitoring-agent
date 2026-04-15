@@ -171,7 +171,7 @@ func TestGetNetworkingSettings(t *testing.T) {
 	t.Run("NoNetworkingEntry", func(t *testing.T) {
 		cfg := &config.MonitorConfig{
 			Monitors: config.MonitorsConfig{
-				Kernel: config.MonitorSettings{Enabled: boolPtr(true)},
+				Kernel: config.KernelMonitorSettings{MonitorSettings: config.MonitorSettings{Enabled: boolPtr(true)}},
 			},
 		}
 		assert.Empty(t, cfg.GetNetworkingSettings().AllowedIPTablesChains)
