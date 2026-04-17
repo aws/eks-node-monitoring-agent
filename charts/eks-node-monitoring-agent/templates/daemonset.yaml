@@ -53,8 +53,7 @@ spec:
               containerPort: 8003
               protocol: TCP
           args:
-            - --probe-address=:8002
-            - --metrics-address=:8003
+            - --probe-address=:{{ .Values.nodeAgent.probePort | default 8002 }}
             {{- with .Values.nodeAgent.additionalArgs }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -68,7 +67,11 @@ spec:
           livenessProbe:
             httpGet:
               path: /healthz
-              port: 8002
+              port: {{ .Values.nodeAgent.probePort | default 8002 }}
+          {{- with .Values.nodeAgent.resizePolicy }}
+          resizePolicy:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- with .Values.nodeAgent.resources }}
           resources:
             {{- toYaml . | nindent 12 }}
@@ -78,7 +81,18 @@ spec:
           volumeMounts:
             - name: host-root
               mountPath: /host
+            {{- if .Values.nodeAgent.monitors }}
+            - name: monitor-config
+              mountPath: /etc/nma
+              readOnly: true
+            {{- end }}
       volumes:
         - name: host-root
           hostPath:
             path: /
+        {{- if .Values.nodeAgent.monitors }}
+        - name: monitor-config
+          configMap:
+            name: {{ include "eks-node-monitoring-agent.fullname" . }}-monitor-config
+            optional: true
+        {{- end }}

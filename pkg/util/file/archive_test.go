@@ -1,58 +1,28 @@
-package file_test
+package file
 
 import (
-	"archive/tar"
-	"compress/gzip"
-	"io"
 	"os"
-	"path"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/aws/eks-node-monitoring-agent/pkg/util/file"
+	"github.com/stretchr/testify/require"
 )
 
-func TestTarValid(t *testing.T) {
-	expectedFileName := "example.txt"
-	expectedBytes := []byte("example")
+func TestGzipFile_Success(t *testing.T) {
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "test.pcap")
+	require.NoError(t, os.WriteFile(srcPath, []byte("test pcap data"), 0644))
 
-	logDir := t.TempDir()
+	err := GzipFile(srcPath)
+	require.NoError(t, err)
 
-	if err := os.WriteFile(path.Join(logDir, expectedFileName), expectedBytes, 0644); err != nil {
-		t.Fatal(err)
-	}
+	// Original should be deleted
+	_, statErr := os.Stat(srcPath)
+	assert.True(t, os.IsNotExist(statErr), "original file should be deleted")
 
-	archiveReader, err := file.TarGzipDir(logDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	gz, err := gzip.NewReader(archiveReader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer gz.Close()
-	reader := tar.NewReader(gz)
-
-	header, err := reader.Next()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	fileBytes := make([]byte, len(expectedBytes))
-	if _, err := reader.Read(fileBytes); err != nil && err != io.EOF {
-		t.Fatal(err)
-	}
-
-	assert.Equal(t, header.Name, expectedFileName)
-	assert.Equal(t, fileBytes, expectedBytes)
-
-	if err := os.RemoveAll(logDir); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestEnsureParentExists(t *testing.T) {
-	assert.NoError(t, file.EnsureParentExists("/tmp/foo", 0o755))
-	assert.Error(t, file.EnsureParentExists("/non-existent-path/foo", 0o755))
+	// .gz should exist
+	gzPath := srcPath + ".gz"
+	_, statErr = os.Stat(gzPath)
+	assert.NoError(t, statErr, ".gz file should exist")
 }

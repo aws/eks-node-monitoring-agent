@@ -24,6 +24,10 @@ var (
         template:        "DCGMHealthCode%d",
         defaultSeverity: "Fatal",
     }
+    FabricManagerNotRunning = ReasonMeta{
+        template:        "FabricManagerNotRunning",
+        defaultSeverity: "Fatal",
+    }
     NeuronDMAError = ReasonMeta{
         template:        "NeuronDMAError",
         defaultSeverity: "Fatal",
@@ -42,10 +46,14 @@ var (
     }
     NvidiaDeviceCountMismatch = ReasonMeta{
         template:        "NvidiaDeviceCountMismatch",
-        defaultSeverity: "Warning",
+        defaultSeverity: "Fatal",
     }
     NvidiaDoubleBitError = ReasonMeta{
         template:        "NvidiaDoubleBitError",
+        defaultSeverity: "Fatal",
+    }
+    NvidiaFabricError = ReasonMeta{
+        template:        "NvidiaFabricError",
         defaultSeverity: "Fatal",
     }
     NvidiaNCCLError = ReasonMeta{

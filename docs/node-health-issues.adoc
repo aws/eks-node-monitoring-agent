@@ -41,6 +41,10 @@ If auto repair is enabled, the repair actions that are listed start 10 minutes a
 |Condition
 |A DCGM health check failed in a fatal manner.
 
+|FabricManagerNotRunning
+|Condition
+|The NVIDIA Fabric Manager service is not running on this NVSwitch-equipped instance. Fabric Manager is required for multi-GPU NVLink communication. Without it, multi-GPU workloads will fail or silently degrade.
+
 |NeuronDMAError
 |Condition
 |A DMA engine encountered an unrecoverable error.
@@ -58,12 +62,16 @@ If auto repair is enabled, the repair actions that are listed start 10 minutes a
 |An on-chip SRAM encountered a parity error and produced incorrect results.
 
 |NvidiaDeviceCountMismatch
-|Event
-|The number of GPUs visible through NVML is inconsistent with the NVIDIA device count on the filesystem.
+|Condition
+|The number of GPUs detected on the node does not match the expected count, which indicates hardware failure or driver issues requiring investigation.
 
 |NvidiaDoubleBitError
 |Condition
 |A double bit error was produced by the GPU driver.
+
+|NvidiaFabricError
+|Condition
+|One or more GPUs reported a non-success fabric status, indicating NVSwitch fabric training failure. Affected GPUs cannot participate in multi-GPU NVLink communication. This condition persists across reboots and requires instance replacement.
 
 |NvidiaNCCLError
 |Event
@@ -301,7 +309,7 @@ The monitoring condition is `NetworkingReady` for issues in the following table 
 
 |UnexpectedRejectRule
 |Event
-|An unexpected `REJECT` or `DROP` rule was found in the `iptables`, potentially blocking expected traffic.
+|An unexpected `REJECT` or `DROP` rule was found in the `iptables`, potentially blocking expected traffic. To suppress this for known-good custom chains, set `allowedIPTablesChains` under `nodeAgent.monitors.networking` in the Helm values or under `monitors.networking` in the config file at `/etc/nma/config.yaml`. Entries must use `table/chain` format (e.g. `filter/MY-CUSTOM-CHAIN`).
 
 |===
 

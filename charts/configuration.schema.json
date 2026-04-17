@@ -9,21 +9,25 @@
             "additionalProperties": false,
             "properties": {
                 "global": {
-                    "$ref": "$/definitions/Global"
+                    "$ref": "#/definitions/Global"
                 },
-                "monitoringAgent": {
-                    "$ref": "#/definitions/MonitoringAgent"
+                "nodeAgent": {
+                    "$ref": "#/definitions/NodeAgent"
                 },
                 "dcgmAgent": {
                     "$ref": "#/definitions/DCGMAgent"
                 }
             }
         },
-        "MonitoringAgent": {
-            "title": "MonitoringAgent",
+        "NodeAgent": {
+            "title": "NodeAgent",
             "type": "object",
             "additionalProperties": false,
             "properties": {
+                "affinity": {
+                    "type": "object",
+                    "description": "Map of pod affinities for the eks-node-monitoring-agent"
+                },
                 "additionalArgs": {
                     "type": "array",
                     "description": "Additional arguments passed to the eks node monitoring agent pod",
@@ -42,11 +46,44 @@
                     "description": "Labels applied to the eks node monitoring agent pod. These labels are merged with any global pod labels, with component specific labels taking precedence in the case of a conflict.",
                     "default": {}
                 },
+                "probePort": {
+                    "type": "integer",
+                    "description": "Health probe port for the eks node monitoring agent. Used for both the --probe-address arg and the liveness probe.",
+                    "default": 8002
+                },
                 "resources": {
                     "$ref": "#/definitions/Resources"
                 },
+                "resizePolicy": {
+                    "$ref": "#/definitions/ResizePolicy"
+                },
                 "tolerations": {
                     "$ref": "#/definitions/Tolerations"
+                },
+                "monitors": {
+                    "type": "object",
+                    "description": "Per-monitor configuration keyed by plugin name",
+                    "additionalProperties": false,
+                    "properties": {
+                        "kernel-monitor": {
+                            "$ref": "#/definitions/MonitorSettings"
+                        },
+                        "networking": {
+                            "$ref": "#/definitions/NetworkingMonitorSettings"
+                        },
+                        "storage-monitor": {
+                            "$ref": "#/definitions/MonitorSettings"
+                        },
+                        "nvidia": {
+                            "$ref": "#/definitions/MonitorSettings"
+                        },
+                        "neuron": {
+                            "$ref": "#/definitions/MonitorSettings"
+                        },
+                        "runtime": {
+                            "$ref": "#/definitions/MonitorSettings"
+                        }
+                    }
                 }
             }
         },
@@ -55,6 +92,10 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
+                "affinity": {
+                    "type": "object",
+                    "description": "Map of dcgm pod affinities"
+                },
                 "podAnnotations": {
                     "$ref": "#/definitions/StringMap",
                     "description": "Annotations applied to the eks node monitoring agent pod. These annotations are merged with any global pod annotations, with component specific annotations taking precedence in the case of a conflict.",
@@ -67,6 +108,9 @@
                 },
                 "resources": {
                     "$ref": "#/definitions/Resources"
+                },
+                "resizePolicy": {
+                    "$ref": "#/definitions/ResizePolicy"
                 },
                 "tolerations": {
                     "$ref": "#/definitions/Tolerations"
@@ -116,11 +160,67 @@
                 }
             }
         },
+        "ResizePolicy": {
+            "title": "ResizePolicy",
+            "type": "array",
+            "description": "Container resize policy for in-place pod vertical scaling (requires Kubernetes 1.33+)",
+            "default": [],
+            "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                    "resourceName": {
+                        "type": "string",
+                        "enum": ["cpu", "memory"]
+                    },
+                    "restartPolicy": {
+                        "type": "string",
+                        "enum": ["NotRequired", "RestartContainer"]
+                    }
+                },
+                "required": ["resourceName", "restartPolicy"]
+            }
+        },
         "Tolerations": {
             "title": "Tolerations",
             "type": "array",
             "items": {
                 "type": "object"
+            }
+        },
+        "NetworkingMonitorSettings": {
+            "title": "NetworkingMonitorSettings",
+            "type": "object",
+            "description": "Per-monitor settings for the networking monitor",
+            "additionalProperties": false,
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "description": "Whether this monitor is enabled",
+                    "default": true
+                },
+                "allowedIPTablesChains": {
+                    "type": "array",
+                    "description": "List of iptables chains (in table/chain format, e.g. \"filter/MY-CUSTOM-CHAIN\") whose REJECT/DROP rules should not trigger an UnexpectedRejectRule event. Use this to suppress false positives from known-good custom chains.",
+                    "default": [],
+                    "items": {
+                        "type": "string",
+                        "pattern": "^[^/]+/[^/]+$"
+                    }
+                }
+            }
+        },
+        "MonitorSettings": {
+            "title": "MonitorSettings",
+            "type": "object",
+            "description": "Per-monitor settings",
+            "additionalProperties": false,
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "description": "Whether this monitor is enabled",
+                    "default": true
+                }
             }
         },
         "StringMap": {

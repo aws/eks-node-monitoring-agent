@@ -3,8 +3,8 @@ package iptables_test
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/aws/eks-node-monitoring-agent/monitors/networking/iptables"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestIPTablesRuleParser(t *testing.T) {
@@ -26,11 +26,60 @@ func TestIPTablesRuleParser(t *testing.T) {
 			`-A KUBE-FIREWALL -m comment --comment "kubernetes firewall for dropping marked packets" -m mark --mark 0x8000/0x8000 -j DROP`,
 			`-A KUBE-SERVICES -d 10.100.31.155/32 -p tcp -m comment --comment "kube-system/aws-load-balancer-webhook-service:webhook-server has no endpoints" -m tcp --dport 443 -j REJECT --reject-with icmp-port-unreachable`,
 		} {
-
 			rule, err := iptables.ParseIPTablesRule(ruleRaw)
 			assert.NoError(t, err)
-			assert.Truef(t, rule.IsExpectedRejectRule(), ruleRaw)
+			assert.Truef(t, rule.IsExpectedRejectRule(nil), ruleRaw)
 		}
+	})
+
+	t.Run("ExpectedRejectRuleCalico", func(t *testing.T) {
+		for _, ruleRaw := range []string{
+			`-A cali-PREROUTING -m comment --comment "cali:uvipz_NmQPrGYnTB" -m mark --mark 0x80000/0x80000 -m rpfilter --validmark --invert -j DROP`,
+			`-A cali-INPUT -p udp -m comment --comment "cali:EDCNTTxYfggApx8C" -m comment --comment "Drop IPv4 VXLAN packets from non-allowed hosts" -m multiport --dports 4789 -m addrtype --dst-type LOCAL -j DROP`,
+			`-A cali-from-wl-dispatch -m comment --comment "cali:zTj6P0TIgYvgz-md" -m comment --comment "Unknown interface" -j DROP`,
+			`-A cali-to-wl-dispatch -m comment --comment "cali:7KNphB1nNHw80nIO" -m comment --comment "Unknown interface" -j DROP`,
+			`-A cali-tw-eni59dda123e85 -m comment --comment "cali:WZhY19FJlqRWkTTm" -m comment --comment "Drop if no profiles matched" -j DROP`,
+			`-A cali-cidr-block -d 10.96.0.0/17 -m comment --comment "cali:abc123" -j DROP`,
+		} {
+			rule, err := iptables.ParseIPTablesRule(ruleRaw)
+			assert.NoError(t, err)
+			assert.Truef(t, rule.IsExpectedRejectRule(nil), ruleRaw)
+		}
+	})
+
+	t.Run("ExpectedRejectRuleVPCCNI", func(t *testing.T) {
+		for _, ruleRaw := range []string{
+			`-A FORWARD -d 169.254.172.0/22 -m conntrack --ctstate NEW -m comment --comment "Block Node Local Pod access via IPv4" -j REJECT --reject-with icmp-port-unreachable`,
+		} {
+			rule, err := iptables.ParseIPTablesRule(ruleRaw)
+			assert.NoError(t, err)
+			assert.Truef(t, rule.IsExpectedRejectRule(nil), ruleRaw)
+		}
+	})
+
+	t.Run("ExpectedRejectRuleCustomChain", func(t *testing.T) {
+		chains := []string{"filter/MY-CUSTOM-CHAIN", "filter/CUSTOM-CHAIN"}
+		for _, ruleRaw := range []string{
+			`-A MY-CUSTOM-CHAIN -s 169.254.172.0/22 -p tcp -m multiport --dports 20,21,989,990,137,139,445 -j DROP`,
+			`-A MY-CUSTOM-CHAIN -s 169.254.172.0/22 -d 10.0.0.0/8 -j DROP`,
+			`-A CUSTOM-CHAIN -j DROP`,
+		} {
+			rule, err := iptables.ParseIPTablesRule(ruleRaw)
+			assert.NoError(t, err)
+			rule.IptablesTable = "filter"
+
+			assert.Falsef(t, rule.IsExpectedRejectRule(nil), "should not be expected without custom chains: %s", ruleRaw)
+			assert.Truef(t, rule.IsExpectedRejectRule(chains), "should be expected with correct table/chain: %s", ruleRaw)
+			assert.Falsef(t, rule.IsExpectedRejectRule([]string{"nat/MY-CUSTOM-CHAIN", "nat/CUSTOM-CHAIN"}), "should not match when table differs: %s", ruleRaw)
+		}
+	})
+
+	t.Run("MalformedAllowedChainEntryIgnored", func(t *testing.T) {
+		rule, err := iptables.ParseIPTablesRule(`-A MY-CUSTOM-CHAIN -j DROP`)
+		assert.NoError(t, err)
+		rule.IptablesTable = "filter"
+		assert.False(t, rule.IsExpectedRejectRule([]string{"MY-CUSTOM-CHAIN"}),
+			"entry without table prefix should not match")
 	})
 
 	t.Run("NotExpectedRejectRule", func(t *testing.T) {
@@ -39,7 +88,7 @@ func TestIPTablesRuleParser(t *testing.T) {
 		} {
 			rule, err := iptables.ParseIPTablesRule(ruleRaw)
 			assert.NoError(t, err)
-			assert.Falsef(t, rule.IsExpectedRejectRule(), ruleRaw)
+			assert.Falsef(t, rule.IsExpectedRejectRule(nil), ruleRaw)
 		}
 	})
 

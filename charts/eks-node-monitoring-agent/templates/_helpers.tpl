@@ -36,7 +36,6 @@ Common selector labels
 */}}
 {{- define "eks-node-monitoring-agent.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "eks-node-monitoring-agent.name" . }}
-helm.sh/chart: {{ include "eks-node-monitoring-agent.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
@@ -45,6 +44,7 @@ Common labels
 */}}
 {{- define "eks-node-monitoring-agent.labels" -}}
 {{ include "eks-node-monitoring-agent.selectorLabels" . }}
+helm.sh/chart: {{ include "eks-node-monitoring-agent.name" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
@@ -70,6 +70,8 @@ We use the dcgm-exporter image from the eks/observability.
 {{- define "dcgm-exporter.image" -}}
 {{- if .Values.dcgmAgent.image.override }}
 {{- .Values.dcgmAgent.image.override }}
+{{- else if .Values.dcgmAgent.image.containerRegistry }}
+{{- printf "%s/eks/observability/dcgm-exporter:%s" .Values.dcgmAgent.image.containerRegistry .Values.dcgmAgent.image.tag -}}
 {{- else }}
 {{- printf "%s.dkr.%s.%s.%s/eks/observability/dcgm-exporter:%s" .Values.dcgmAgent.image.account .Values.dcgmAgent.image.endpoint .Values.dcgmAgent.image.region .Values.dcgmAgent.image.domain .Values.dcgmAgent.image.tag -}}
 {{- end -}}
@@ -81,6 +83,8 @@ Get the current NMA image for a region.
 {{- define "eks-node-monitoring-agent.image" -}}
 {{- if .Values.nodeAgent.image.override }}
 {{- .Values.nodeAgent.image.override }}
+{{- else if .Values.nodeAgent.image.containerRegistry }}
+{{- printf "%s/eks/eks-node-monitoring-agent:%s" .Values.nodeAgent.image.containerRegistry .Values.nodeAgent.image.tag }}
 {{- else }}
 {{- printf "%s.dkr.%s.%s.%s/eks/eks-node-monitoring-agent:%s" .Values.nodeAgent.image.account .Values.nodeAgent.image.endpoint .Values.nodeAgent.image.region .Values.nodeAgent.image.domain .Values.nodeAgent.image.tag }}
 {{- end -}}

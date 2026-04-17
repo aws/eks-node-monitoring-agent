@@ -90,6 +90,7 @@ var collectorMap = map[v1alpha1.LogCategory][]collect.Collector{
 		&collect.Disk{},
 		&collect.Kernel{},
 		&collect.SELinux{},
+		&collect.AutoMode{},
 		&collect.System{},
 		&collect.Throttles{},
 	},

@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	nodeconditions "github.com/aws/eks-node-monitoring-agent/pkg/conditions"
+	"github.com/aws/eks-node-monitoring-agent/pkg/util/validation"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -21,8 +23,9 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/types"
 )
 
-func NvidiaMonitor() types.Feature {
+func NvidiaMonitor(awsCfg aws.Config) types.Feature {
 	var targetNode *corev1.Node
+	ec2Client := ec2.NewFromConfig(awsCfg)
 
 	return features.New("NvidiaMonitor").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
@@ -68,7 +71,65 @@ func NvidiaMonitor() types.Feature {
 			}
 			return ctx
 		}).
+		Assess("NodeReplacement", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			oldNodeName := targetNode.Name
+			t.Logf("terminating node %q to mimic node repair", oldNodeName)
+
+			instanceId, err := validation.ParseProviderID(targetNode.Spec.ProviderID)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			if _, err := ec2Client.TerminateInstances(ctx, &ec2.TerminateInstancesInput{
+				InstanceIds: []string{instanceId},
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			t.Logf("deleting node object %q from cluster", oldNodeName)
+			if err := cfg.Client().Resources().Delete(ctx, targetNode); err != nil {
+				t.Fatal(err)
+			}
+
+			t.Logf("waiting for node object %q to be deleted from cluster", oldNodeName)
+			if err := wait.For(
+				conditions.New(cfg.Client().Resources()).ResourceDeleted(targetNode),
+				wait.WithTimeout(5*time.Minute),
+				wait.WithContext(ctx),
+			); err != nil {
+				t.Fatal(err)
+			}
+
+			t.Log("waiting for a new nvidia node to join the cluster...")
+			if err := wait.For(func(ctx context.Context) (bool, error) {
+				var nodeList corev1.NodeList
+				if err := cfg.Client().Resources().List(ctx, &nodeList); err != nil {
+					return false, err
+				}
+				for _, node := range nodeList.Items {
+					if node.Name == oldNodeName {
+						continue
+					}
+					// exclude nodes that are being deleted
+					if node.DeletionTimestamp != nil {
+						continue
+					}
+					condition := GetNodeStatusCondition(&node, func(nc corev1.NodeCondition) bool { return nc.Type == nodeconditions.AcceleratedHardwareReady })
+					if condition != nil && condition.Status == corev1.ConditionTrue && strings.Contains(condition.Message, "Nvidia") {
+						targetNode = &node
+						t.Logf("targetting new node %q for subsequent tests", targetNode.Name)
+						return true, nil
+					}
+				}
+				return false, nil
+			}, wait.WithTimeout(10*time.Minute), wait.WithInterval(10*time.Second)); err != nil {
+				t.Fatal(err)
+			}
+
+			return ctx
+		}).
 		Assess("DCGMError", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			startTime := metav1.Now()
 			// try to find dcgm-server pods to recreate a DCGM failure
 			if _, ok := getDcgmPod(ctx, t, cfg, targetNode.Name); !ok {
 				t.Skip("dcgm-server pod does not exist. skipping test to mock DCGM failure.")
@@ -108,7 +169,7 @@ func NvidiaMonitor() types.Feature {
 			if err := wait.For(
 				nodeConditionWaiter(ctx,
 					conditions.New(cfg.Client().Resources()), targetNode,
-					time.Now(), nodeconditions.AcceleratedHardwareReady, "DCGMError"),
+					startTime.Time, nodeconditions.AcceleratedHardwareReady, "DCGMError"),
 				wait.WithTimeout(5*time.Minute),
 				wait.WithContext(ctx),
 			); err != nil {

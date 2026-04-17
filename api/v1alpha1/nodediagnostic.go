@@ -29,7 +29,8 @@ type NodeDiagnosticList struct {
 }
 
 type NodeDiagnosticSpec struct {
-	*LogCapture `json:"logCapture,omitempty"`
+	*LogCapture    `json:"logCapture,omitempty"`
+	*PacketCapture `json:"packetCapture,omitempty"`
 }
 
 type NodeDiagnosticStatus struct {
@@ -49,6 +50,7 @@ type LogCapture struct {
 }
 
 // UploadDestination is a URL describing where to deliver a diagnostic artifact.
+// This can be set to "node" to temporarily store logs on the node for later collection.
 type UploadDestination string
 
 // LogCategory is a grouping of log sources to read from when performing a
@@ -64,3 +66,55 @@ const (
 	LogCategorySystem     = "System"
 	LogCategoryAll        = "All"
 )
+
+// PacketCaptureMode defines the capture implementation to use
+type PacketCaptureMode string
+
+const (
+	ModeTcpdump PacketCaptureMode = "tcpdump"
+)
+
+// PacketCapture defines configuration for capturing network traffic
+type PacketCapture struct {
+	// Mode specifies which implementation to use
+	// +kubebuilder:validation:Enum=tcpdump
+	// +optional
+	// +kubebuilder:default=tcpdump
+	Mode PacketCaptureMode `json:"mode"`
+
+	// Upload provides upload configuration using presigned POST
+	// +kubebuilder:validation:Required
+	Upload PacketCaptureUpload `json:"upload"`
+
+	// Interface specifies which network interface to capture from
+	// If empty, captures from all interfaces (equivalent to "any")
+	// +optional
+	Interface string `json:"interface,omitempty"`
+
+	// Duration specifies how long to capture traffic
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Pattern=^\d+[smh]$
+	Duration string `json:"duration"`
+
+	// Filter specifies capture filter expression (tcpdump syntax)
+	// +optional
+	Filter string `json:"filter,omitempty"`
+
+	// ChunkSizeMB is the max size of each capture file in MB before rotation
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=100
+	// +kubebuilder:default=10
+	// +optional
+	ChunkSizeMB int `json:"chunkSizeMB,omitempty"`
+}
+
+// PacketCaptureUpload defines upload config using presigned POST
+type PacketCaptureUpload struct {
+	// URL is the S3 bucket endpoint URL
+	// +kubebuilder:validation:Required
+	URL string `json:"url"`
+
+	// Fields contains form fields from presigned POST
+	// +kubebuilder:validation:Required
+	Fields map[string]string `json:"fields"`
+}

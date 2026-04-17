@@ -66,11 +66,62 @@ spec:
                       type: string
                     type: array
                   destination:
-                    description: UploadDestination is a URL describing where to deliver
-                      a diagnostic artifact.
+                    description: |-
+                      UploadDestination is a URL describing where to deliver a diagnostic artifact.
+                      This can be set to "node" to temporarily store logs on the node for later collection.
                     type: string
                 required:
                 - destination
+                type: object
+              packetCapture:
+                description: PacketCapture defines configuration for capturing network
+                  traffic
+                properties:
+                  chunkSizeMB:
+                    default: 10
+                    description: ChunkSizeMB is the max size of each capture file
+                      in MB before rotation
+                    maximum: 100
+                    minimum: 1
+                    type: integer
+                  duration:
+                    description: Duration specifies how long to capture traffic
+                    pattern: ^\d+[smh]$
+                    type: string
+                  filter:
+                    description: Filter specifies capture filter expression (tcpdump
+                      syntax)
+                    type: string
+                  interface:
+                    description: |-
+                      Interface specifies which network interface to capture from
+                      If empty, captures from all interfaces (equivalent to "any")
+                    type: string
+                  mode:
+                    default: tcpdump
+                    description: Mode specifies which implementation to use
+                    enum:
+                    - tcpdump
+                    type: string
+                  upload:
+                    description: Upload provides upload configuration using presigned
+                      POST
+                    properties:
+                      fields:
+                        additionalProperties:
+                          type: string
+                        description: Fields contains form fields from presigned POST
+                        type: object
+                      url:
+                        description: URL is the S3 bucket endpoint URL
+                        type: string
+                    required:
+                    - fields
+                    - url
+                    type: object
+                required:
+                - duration
+                - upload
                 type: object
             type: object
           status:
@@ -84,11 +135,22 @@ spec:
                       properties:
                         completed:
                           properties:
+                            captureID:
+                              description: |-
+                                CaptureID is the unique identifier for this capture, used for log correlation
+                                and S3 path isolation.
+                              type: string
                             finishedAt:
                               format: date-time
                               type: string
                             message:
                               type: string
+                            observedGeneration:
+                              description: |-
+                                ObservedGeneration records which spec generation this capture executed against.
+                                Used to detect spec changes and allow re-execution without delete + recreate.
+                              format: int64
+                              type: integer
                             reason:
                               type: string
                             startedAt:
@@ -102,6 +164,11 @@ spec:
                           type: object
                         running:
                           properties:
+                            captureID:
+                              description: |-
+                                CaptureID is the unique identifier for this capture session.
+                                Only set for packet captures.
+                              type: string
                             startedAt:
                               format: date-time
                               type: string
@@ -190,9 +257,9 @@ metadata:
   namespace: kube-system
   labels:
     app.kubernetes.io/name: eks-node-monitoring-agent
-    helm.sh/chart: eks-node-monitoring-agent
     app.kubernetes.io/instance: eks-node-monitoring-agent
-    app.kubernetes.io/version: "1.5.2"
+    helm.sh/chart: eks-node-monitoring-agent
+    app.kubernetes.io/version: "1.6.4"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
 ---
@@ -203,9 +270,9 @@ metadata:
   name: eks-node-monitoring-agent
   labels:
     app.kubernetes.io/name: eks-node-monitoring-agent
-    helm.sh/chart: eks-node-monitoring-agent
     app.kubernetes.io/instance: eks-node-monitoring-agent
-    app.kubernetes.io/version: "1.5.2"
+    helm.sh/chart: eks-node-monitoring-agent
+    app.kubernetes.io/version: "1.6.4"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
 rules:
@@ -234,9 +301,9 @@ metadata:
   name: eks-node-monitoring-agent
   labels:
     app.kubernetes.io/name: eks-node-monitoring-agent
-    helm.sh/chart: eks-node-monitoring-agent
     app.kubernetes.io/instance: eks-node-monitoring-agent
-    app.kubernetes.io/version: "1.5.2"
+    helm.sh/chart: eks-node-monitoring-agent
+    app.kubernetes.io/version: "1.6.4"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
 roleRef:
@@ -256,16 +323,15 @@ metadata:
   namespace: kube-system
   labels:
     app.kubernetes.io/name: eks-node-monitoring-agent
-    helm.sh/chart: eks-node-monitoring-agent
     app.kubernetes.io/instance: eks-node-monitoring-agent
-    app.kubernetes.io/version: "1.5.2"
+    helm.sh/chart: eks-node-monitoring-agent
+    app.kubernetes.io/version: "1.6.4"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
 spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: eks-node-monitoring-agent
-      helm.sh/chart: eks-node-monitoring-agent
       app.kubernetes.io/instance: eks-node-monitoring-agent
   updateStrategy:
     rollingUpdate:
@@ -275,9 +341,9 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: eks-node-monitoring-agent
-        helm.sh/chart: eks-node-monitoring-agent
         app.kubernetes.io/instance: eks-node-monitoring-agent
-        app.kubernetes.io/version: "1.5.2"
+        helm.sh/chart: eks-node-monitoring-agent
+        app.kubernetes.io/version: "1.6.4"
         app.kubernetes.io/managed-by: Helm
         app.kubernetes.io/component: controller
     spec:
@@ -401,13 +467,13 @@ spec:
                 - g5.48xlarge
                 - g5.4xlarge
                 - g5.8xlarge
+                - g5.xlarge
                 - g5g.16xlarge
                 - g5g.2xlarge
                 - g5g.4xlarge
                 - g5g.8xlarge
                 - g5g.metal
                 - g5g.xlarge
-                - g5.xlarge
                 - g6.12xlarge
                 - g6.16xlarge
                 - g6.24xlarge
@@ -415,6 +481,7 @@ spec:
                 - g6.48xlarge
                 - g6.4xlarge
                 - g6.8xlarge
+                - g6.xlarge
                 - g6e.12xlarge
                 - g6e.16xlarge
                 - g6e.24xlarge
@@ -427,7 +494,12 @@ spec:
                 - g6f.4xlarge
                 - g6f.large
                 - g6f.xlarge
-                - g6.xlarge
+                - g7e.12xlarge
+                - g7e.24xlarge
+                - g7e.2xlarge
+                - g7e.48xlarge
+                - g7e.4xlarge
+                - g7e.8xlarge
                 - gr6.4xlarge
                 - gr6.8xlarge
                 - gr6f.4xlarge
@@ -467,7 +539,7 @@ spec:
       priorityClassName: system-node-critical
       containers:
         - name: eks-node-monitoring-agent-dcgm
-          image: {{ .Image }}
+          image: 602401143452.dkr.ecr.us-west-2.amazonaws.com/eks/observability/dcgm-exporter:4.5.2-4.8.1-ubuntu22.04
           imagePullPolicy: IfNotPresent
           command: ["/bin/sh"]
           args: ["-c", "nv-hostengine -n -b ALL || true; sleep infinity"]
