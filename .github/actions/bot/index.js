@@ -10,9 +10,7 @@ async function bot(core, github, context, uuid) {
     }
     console.log("Comment found in payload");
 
-    // Authorize based on repository collaborator permission, not org membership.
-    // The `aws` org is self-enrollment, so `author_association` is not a sufficient
-    // trust signal for triggering CI that assumes IAM roles.
+    // Ensure triggering actor has write access
     const author = payload.comment.user.login;
     let permission;
     try {
@@ -23,14 +21,14 @@ async function bot(core, github, context, uuid) {
         });
         permission = resp.data.permission;
     } catch (error) {
-        console.log(`Failed to get permission level for ${author}: ${error.message}`);
+        console.log(`Failed to get permission level: ${error.message}`);
         return;
     }
     if (!["write", "admin"].includes(permission)) {
-        console.log(`Comment author is not authorized: ${author} (permission: ${permission})`);
+        console.log("Comment author is not authorized");
         return;
     }
-    console.log(`Comment author is authorized: ${author} (permission: ${permission})`);
+    console.log("Comment author is authorized");
 
     let commands;
     try {
