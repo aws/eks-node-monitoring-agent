@@ -10,15 +10,27 @@ async function bot(core, github, context, uuid) {
     }
     console.log("Comment found in payload");
 
-    // user's org membership must be public for the author_association to be MEMBER
-    // go to the org's member page, find yourself, and set the visibility to public
+    // Authorize based on repository collaborator permission, not org membership.
+    // The `aws` org is self-enrollment, so `author_association` is not a sufficient
+    // trust signal for triggering CI that assumes IAM roles.
     const author = payload.comment.user.login;
-    const authorized = ["OWNER", "MEMBER"].includes(payload.comment.author_association);
-    if (!authorized) {
-        console.log(`Comment author is not authorized: ${author}`);
+    let permission;
+    try {
+        const resp = await github.rest.repos.getCollaboratorPermissionLevel({
+            owner: payload.repository.owner.login,
+            repo: payload.repository.name,
+            username: author
+        });
+        permission = resp.data.permission;
+    } catch (error) {
+        console.log(`Failed to get permission level for ${author}: ${error.message}`);
         return;
     }
-    console.log(`Comment author is authorized: ${author}`);
+    if (!["write", "admin"].includes(permission)) {
+        console.log(`Comment author is not authorized: ${author} (permission: ${permission})`);
+        return;
+    }
+    console.log(`Comment author is authorized: ${author} (permission: ${permission})`);
 
     let commands;
     try {
