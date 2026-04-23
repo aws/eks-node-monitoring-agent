@@ -11,13 +11,7 @@ import (
 )
 
 func NewDCGMSystem(dcgmClient DCGM, diagType dcgmapi.DiagType) *DCGMSystem {
-	return &DCGMSystem{
-		dcgm:                    dcgmClient,
-		diagType:                diagType,
-		instanceTypeInfoProvider: instanceinfo.NewInstanceTypeInfoProvider(),
-		// TODO: consider exposing this parameter.
-		fieldValueWindow: 5 * time.Minute,
-	}
+	return NewDCGMSystemWithInstanceTypeInfoProvider(dcgmClient, diagType, instanceinfo.NewInstanceTypeInfoProvider())
 }
 
 // NewDCGMSystemWithInstanceTypeInfoProvider creates a DCGMSystem with a custom

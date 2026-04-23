@@ -25,7 +25,7 @@ func TestLoadEmbeddedInstanceInfo(t *testing.T) {
 		t.Run(tt.instanceType, func(t *testing.T) {
 			info, ok := lookup[tt.instanceType]
 			assert.True(t, ok, "instance type %s should be in embedded data", tt.instanceType)
-			assert.Equal(t, tt.expectedGPUs, info.GPUCount)
+			assert.Equal(t, tt.expectedGPUs, info.NvidiaGPUCount)
 			assert.Equal(t, tt.instanceType, info.InstanceType)
 		})
 	}

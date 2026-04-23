@@ -53,7 +53,7 @@ func TestDeviceCountExpectedMismatch(t *testing.T) {
 		// DCGM sees 3, /dev has 3 (so existing check passes), but instance type expects 4.
 		mockDcgm := &fake.FakeDcgm{DeviceCount: 3}
 		fakeProvider := &fake.FakeInstanceTypeInfoProvider{
-			Info: &instanceinfo.InstanceInfo{InstanceType: "g6e.12xlarge", GPUCount: 4},
+			Info: &instanceinfo.InstanceInfo{InstanceType: "g6e.12xlarge", NvidiaGPUCount: 4},
 		}
 		dcgmSystem := dcgm.NewDCGMSystemWithInstanceTypeInfoProvider(mockDcgm, dcgm.GetDiagType(), fakeProvider)
 		conditions, err := dcgmSystem.DeviceCount(context.TODO())
@@ -76,7 +76,7 @@ func TestDeviceCountExpectedMismatch(t *testing.T) {
 	t.Run("NoConditionWhenCountMatches", func(t *testing.T) {
 		mockDcgm := &fake.FakeDcgm{DeviceCount: 4}
 		fakeProvider := &fake.FakeInstanceTypeInfoProvider{
-			Info: &instanceinfo.InstanceInfo{InstanceType: "g6e.12xlarge", GPUCount: 4},
+			Info: &instanceinfo.InstanceInfo{InstanceType: "g6e.12xlarge", NvidiaGPUCount: 4},
 		}
 		dcgmSystem := dcgm.NewDCGMSystemWithInstanceTypeInfoProvider(mockDcgm, dcgm.GetDiagType(), fakeProvider)
 		conditions, err := dcgmSystem.DeviceCount(context.TODO())

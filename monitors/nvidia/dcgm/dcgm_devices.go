@@ -51,12 +51,12 @@ func (s *DCGMSystem) DeviceCount(ctx context.Context) ([]monitor.Condition, erro
 		info, err := s.instanceTypeInfoProvider.GetInstanceInfo(ctx)
 		if err != nil {
 			logger.V(2).Info("could not determine expected GPU count for validation", "error", err)
-		} else if gpuDeviceCount < info.GPUCount {
+		} else if gpuDeviceCount < info.NvidiaGPUCount {
 			conditions = append(conditions,
 				reasons.NvidiaDeviceCountMismatch.
 					Builder().
 					Message(fmt.Sprintf("expected %d GPUs for this instance type but only %d were detected — possible hardware failure",
-						info.GPUCount, gpuDeviceCount)).
+						info.NvidiaGPUCount, gpuDeviceCount)).
 					Build(),
 			)
 		}

@@ -33,8 +33,8 @@ import (
 // Only entries where at least one field beyond InstanceType is non-zero
 // are written to the JSONL.
 type instanceInfo struct {
-	InstanceType string `json:"instanceType"`
-	GPUCount     uint   `json:"gpuCount,omitempty"`
+	InstanceType  string `json:"instanceType"`
+	NvidiaGPUCount uint  `json:"nvidiaGpuCount,omitempty"`
 }
 
 const outputPath = "internal/pkg/instanceinfo/instance-info.jsonl"
@@ -116,8 +116,8 @@ func collectInstanceInfo(it ec2types.InstanceTypeInfo) instanceInfo {
 
 	if it.GpuInfo != nil {
 		for _, gpu := range it.GpuInfo.Gpus {
-			if gpu.Count != nil {
-				info.GPUCount += uint(*gpu.Count)
+			if gpu.Count != nil && gpu.Manufacturer != nil && *gpu.Manufacturer == "NVIDIA" {
+				info.NvidiaGPUCount += uint(*gpu.Count)
 			}
 		}
 	}

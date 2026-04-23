@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/feature/ec2/imds"
@@ -23,8 +22,8 @@ var instanceInfoData []byte
 // Add new fields here as needed — existing JSONL entries without the
 // field will unmarshal to the zero value.
 type InstanceInfo struct {
-	InstanceType string `json:"instanceType"`
-	GPUCount     uint   `json:"gpuCount"`
+	InstanceType  string `json:"instanceType"`
+	NvidiaGPUCount uint  `json:"nvidiaGpuCount"`
 }
 
 // InstanceTypeInfoProvider returns hardware information about the current EC2 instance type.
@@ -43,15 +42,11 @@ func NewInstanceTypeInfoProvider() *ec2InstanceTypeInfoProvider {
 }
 
 type ec2InstanceTypeInfoProvider struct {
-	mu             sync.Mutex
 	info           *InstanceInfo
 	embeddedLookup map[string]InstanceInfo
 }
 
 func (p *ec2InstanceTypeInfoProvider) GetInstanceInfo(ctx context.Context) (*InstanceInfo, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-
 	if p.info != nil {
 		return p.info, nil
 	}
@@ -117,8 +112,8 @@ func getInstanceInfoFromEC2API(ctx context.Context, instanceType string) (*Insta
 
 	if gpuInfo := resp.InstanceTypes[0].GpuInfo; gpuInfo != nil {
 		for _, gpu := range gpuInfo.Gpus {
-			if gpu.Count != nil {
-				info.GPUCount += uint(*gpu.Count)
+			if gpu.Count != nil && gpu.Manufacturer != nil && *gpu.Manufacturer == "NVIDIA" {
+				info.NvidiaGPUCount += uint(*gpu.Count)
 			}
 		}
 	}
