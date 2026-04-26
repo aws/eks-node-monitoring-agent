@@ -10,6 +10,7 @@ runs:
     - uses: actions/setup-go@v5
       with:
         go-version: stable
+        cache: false
     - shell: bash
       run: |
         export PATH=${PATH}:$(go env GOPATH)/bin
