@@ -216,6 +216,19 @@ func run() error {
 		logger.Info("monitors disabled by configuration", "plugins", disabledNames)
 	}
 
+	// Inject per-monitor configuration into monitors that support it
+	if chains := monitorConfig.GetAllowedIPTablesChains(); len(chains) > 0 {
+		for _, mon := range enabledMonitors {
+			type chainConfigurable interface {
+				SetAllowedIPTablesChains([]string)
+			}
+			if c, ok := mon.(chainConfigurable); ok {
+				c.SetAllowedIPTablesChains(chains)
+				logger.Info("configured allowed iptables chains", "monitor", mon.Name(), "chains", chains)
+			}
+		}
+	}
+
 	if len(enabledMonitors) == 0 {
 		logger.Info("all monitors are disabled by configuration, NMA will not perform any monitoring")
 	} else {

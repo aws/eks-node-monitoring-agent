@@ -15,7 +15,8 @@ const DefaultConfigPath = "/etc/nma/config.yaml"
 
 // MonitorSettings holds per-monitor configuration.
 type MonitorSettings struct {
-	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Enabled               *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	AllowedIPTablesChains []string `yaml:"allowedIPTablesChains,omitempty" json:"allowedIPTablesChains,omitempty"`
 }
 
 // IsEnabled returns true if the monitor is enabled.
@@ -46,6 +47,19 @@ func (mc *MonitorConfig) IsMonitorEnabled(pluginName string) bool {
 	return settings.IsEnabled()
 }
 
+// GetAllowedIPTablesChains returns the allowed iptables chains
+// configured for the networking monitor.
+func (mc *MonitorConfig) GetAllowedIPTablesChains() []string {
+	if mc == nil || mc.Monitors == nil {
+		return nil
+	}
+	settings, exists := mc.Monitors["networking"]
+	if !exists {
+		return nil
+	}
+	return settings.AllowedIPTablesChains
+}
+
 // KnownPluginNames is the set of valid plugin names for validation.
 var KnownPluginNames = []string{
 	"kernel-monitor",
@@ -70,6 +84,22 @@ func (mc *MonitorConfig) Validate() error {
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
 		return fmt.Errorf("unknown monitor plugin name(s): %s", strings.Join(unknown, ", "))
+	}
+	for name, settings := range mc.Monitors {
+		if len(settings.AllowedIPTablesChains) > 0 {
+			if name != "networking" {
+				return fmt.Errorf("allowedIPTablesChains is only supported by the networking monitor, not %q", name)
+			}
+			for _, chain := range settings.AllowedIPTablesChains {
+				if strings.TrimSpace(chain) != chain {
+					return fmt.Errorf("allowedIPTablesChains entry %q must not have leading or trailing whitespace", chain)
+				}
+				table, chainName, ok := strings.Cut(chain, "/")
+				if !ok || strings.Count(chain, "/") != 1 || strings.TrimSpace(table) == "" || strings.TrimSpace(chainName) == "" {
+					return fmt.Errorf("allowedIPTablesChains entry %q must use \"table/chain\" format with non-empty table and chain (e.g. \"filter/MY-CUSTOM-CHAIN\")", chain)
+				}
+			}
+		}
 	}
 	return nil
 }

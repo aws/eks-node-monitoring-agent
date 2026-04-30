@@ -62,6 +62,8 @@ jobs:
       run: |
         echo 'ci_step_name_prefix=CI:' >> $GITHUB_OUTPUT
         if [ -z "${{ inputs.k8s_versions }}" ]; then
+          echo "kubernetes_versions=$(aws eks describe-cluster-versions | jq -c '[.clusterVersions | map(.clusterVersion) | sort_by(split(".") | map(tonumber)) | last]')" >> $GITHUB_OUTPUT
+        elif [ "${{ inputs.k8s_versions }}" = "all" ]; then
           echo "kubernetes_versions=$(aws eks describe-cluster-versions | jq -c '.clusterVersions | map(.clusterVersion)')" >> $GITHUB_OUTPUT
         else
           echo "kubernetes_versions=$(jq -Rn --arg input '${{ inputs.k8s_versions }}' '($input | split(","))' | jq -c .)" >> $GITHUB_OUTPUT

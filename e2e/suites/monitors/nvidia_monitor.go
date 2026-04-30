@@ -23,6 +23,11 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/types"
 )
 
+const (
+	computeTypeLabelKey = "eks.amazonaws.com/compute-type"
+	computeTypeAuto = "auto"
+)
+
 func NvidiaMonitor(awsCfg aws.Config) types.Feature {
 	var targetNode *corev1.Node
 	ec2Client := ec2.NewFromConfig(awsCfg)
@@ -73,17 +78,26 @@ func NvidiaMonitor(awsCfg aws.Config) types.Feature {
 		}).
 		Assess("NodeReplacement", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
 			oldNodeName := targetNode.Name
-			t.Logf("terminating node %q to mimic node repair", oldNodeName)
 
-			instanceId, err := validation.ParseProviderID(targetNode.Spec.ProviderID)
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			if _, err := ec2Client.TerminateInstances(ctx, &ec2.TerminateInstancesInput{
-				InstanceIds: []string{instanceId},
-			}); err != nil {
-				t.Fatal(err)
+			// On EKS Auto mode, the EC2 instance is owned by an AWS-managed
+			// service principal and customer roles are explicitly denied
+			// ec2:TerminateInstances. Instead, deleting the Node object lets
+			// Karpenter's termination finalizer drain and terminate the
+			// backing instance. On MNG/self-managed nodes, we terminate the
+			// instance directly to mimic a node repair event.
+			if targetNode.Labels[computeTypeLabelKey] == computeTypeAuto {
+				t.Logf("auto mode node detected; skipping direct EC2 termination and relying on karpenter finalizer on node delete")
+			} else {
+				t.Logf("terminating node %q to mimic node repair", oldNodeName)
+				instanceId, err := validation.ParseProviderID(targetNode.Spec.ProviderID)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := ec2Client.TerminateInstances(ctx, &ec2.TerminateInstancesInput{
+					InstanceIds: []string{instanceId},
+				}); err != nil {
+					t.Fatal(err)
+				}
 			}
 
 			t.Logf("deleting node object %q from cluster", oldNodeName)

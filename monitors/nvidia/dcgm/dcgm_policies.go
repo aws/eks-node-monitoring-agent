@@ -24,7 +24,7 @@ import (
 //
 // Users can customize this behavior by modifying the list or implementing custom XID handling
 // logic based on their specific GPU workload requirements and operational policies.
-var WellKnownXidCodes = []uint{13, 31, 48, 63, 64, 74, 79, 94, 95, 119, 120, 121, 140}
+var WellKnownXidCodes = []uint{46, 48, 54, 62, 63, 64, 74, 79, 95, 109, 110, 119, 120, 140}
 
 func (s *DCGMSystem) Policies(ctx context.Context) ([]monitor.Condition, error) {
 	condition := s.handle(ctx)

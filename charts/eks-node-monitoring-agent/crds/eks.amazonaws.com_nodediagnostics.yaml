@@ -71,6 +71,56 @@ spec:
                 required:
                 - destination
                 type: object
+              packetCapture:
+                description: PacketCapture defines configuration for capturing network
+                  traffic
+                properties:
+                  chunkSizeMB:
+                    default: 10
+                    description: ChunkSizeMB is the max size of each capture file
+                      in MB before rotation
+                    maximum: 100
+                    minimum: 1
+                    type: integer
+                  duration:
+                    description: Duration specifies how long to capture traffic
+                    pattern: ^\d+[smh]$
+                    type: string
+                  filter:
+                    description: Filter specifies capture filter expression (tcpdump
+                      syntax)
+                    type: string
+                  interface:
+                    description: |-
+                      Interface specifies which network interface to capture from
+                      If empty, captures from all interfaces (equivalent to "any")
+                    type: string
+                  mode:
+                    default: tcpdump
+                    description: Mode specifies which implementation to use
+                    enum:
+                    - tcpdump
+                    type: string
+                  upload:
+                    description: Upload provides upload configuration using presigned
+                      POST
+                    properties:
+                      fields:
+                        additionalProperties:
+                          type: string
+                        description: Fields contains form fields from presigned POST
+                        type: object
+                      url:
+                        description: URL is the S3 bucket endpoint URL
+                        type: string
+                    required:
+                    - fields
+                    - url
+                    type: object
+                required:
+                - duration
+                - upload
+                type: object
             type: object
           status:
             properties:
@@ -83,11 +133,22 @@ spec:
                       properties:
                         completed:
                           properties:
+                            captureID:
+                              description: |-
+                                CaptureID is the unique identifier for this capture, used for log correlation
+                                and S3 path isolation.
+                              type: string
                             finishedAt:
                               format: date-time
                               type: string
                             message:
                               type: string
+                            observedGeneration:
+                              description: |-
+                                ObservedGeneration records which spec generation this capture executed against.
+                                Used to detect spec changes and allow re-execution without delete + recreate.
+                              format: int64
+                              type: integer
                             reason:
                               type: string
                             startedAt:
@@ -101,6 +162,11 @@ spec:
                           type: object
                         running:
                           properties:
+                            captureID:
+                              description: |-
+                                CaptureID is the unique identifier for this capture session.
+                                Only set for packet captures.
+                              type: string
                             startedAt:
                               format: date-time
                               type: string
