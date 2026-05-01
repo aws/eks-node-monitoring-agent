@@ -404,3 +404,10 @@ StorageReady:
       The XFS Average Cluster size is small, indicating excessive free space
       fragmentation. This can prevent file creation despite available inodes or
       free space.
+  InstanceStoreIOError:
+    Template: 'InstanceStoreIOError'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      An I/O error was detected on a block device, indicating a failed physical
+      drive (instance store) or EBS volume. This can cause data loss and
+      application failures.

@@ -78,9 +78,15 @@ func (m *StorageMonitor) Register(ctx context.Context, mgr monitor.Manager) erro
 		return err
 	}
 
+	dmesg, err := mgr.Subscribe(resource.ResourceTypeDmesg, []resource.Part{})
+	if err != nil {
+		return err
+	}
+
 	for _, handler := range []interface{ Start(context.Context) error }{
 		util.NewChannelHandler(m.handleVarLogMessages, var_log_messages),
 		util.NewChannelHandler(m.handleKubeletLogs, kubelet_logs),
+		util.NewChannelHandler(m.handleBlockDeviceIOErrors, dmesg),
 		util.NewChannelHandler(func(time.Time) error { return m.handleXFS() }, util.TimeTickWithJitterContext(ctx, 10*time.Minute)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleIODelays() }, util.TimeTickWithJitterContext(ctx, 10*time.Minute)),
 	} {
@@ -141,6 +147,42 @@ func (m *StorageMonitor) handleKubeletLogs(line string) error {
 		)
 	}
 	return nil
+}
+
+// Regex patterns for detecting I/O errors on block devices
+// Matches patterns like:
+// - "end_request: I/O error, dev sde, sector 52428288"
+// - "Buffer I/O error on device md0, logical block 209713024"
+// - "blk_update_request: I/O error, dev nvme1n1, sector 12345"
+var (
+	ioErrorEndRequest = regexp.MustCompile(`end_request: I/O error, dev ([a-z0-9]+), sector ([0-9]+)`)
+	ioErrorBufferIO   = regexp.MustCompile(`Buffer I/O error on device ([a-z0-9]+), logical block ([0-9]+)`)
+	ioErrorBlkUpdate  = regexp.MustCompile(`blk_update_request: I/O error, dev ([a-z0-9]+), sector ([0-9]+)`)
+)
+
+func (m *StorageMonitor) handleBlockDeviceIOErrors(line string) error {
+	var device string
+	var location string
+
+	if matches := ioErrorEndRequest.FindStringSubmatch(line); len(matches) > 2 {
+		device = matches[1]
+		location = fmt.Sprintf("sector %s", matches[2])
+	} else if matches := ioErrorBufferIO.FindStringSubmatch(line); len(matches) > 2 {
+		device = matches[1]
+		location = fmt.Sprintf("logical block %s", matches[2])
+	} else if matches := ioErrorBlkUpdate.FindStringSubmatch(line); len(matches) > 2 {
+		device = matches[1]
+		location = fmt.Sprintf("sector %s", matches[2])
+	} else {
+		return nil
+	}
+
+	return m.manager.Notify(context.Background(),
+		reasons.InstanceStoreIOError.
+			Builder().
+			Message(fmt.Sprintf("I/O error detected on block device %s at %s, indicating a failed physical drive or EBS volume", device, location)).
+			Build(),
+	)
 }
 
 // ~~~~ XFS ~~~~

@@ -349,6 +349,10 @@ The monitoring condition is `StorageReady` for issues in the following table tha
 |Event
 |Input or output delay detected in a process, potentially indicating insufficient input-output provisioning if excessive.
 
+|InstanceStoreIOError
+|Condition
+|An I/O error was detected on a block device, indicating a failed physical drive (instance store) or EBS volume. This can cause data loss and application failures.
+
 |KubeletDiskUsageSlow
 |Event
 |The `kubelet` is reporting slow disk usage while trying to access the filesystem. This potentially indicates insufficient disk input-output or filesystem issues.
