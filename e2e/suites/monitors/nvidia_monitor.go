@@ -25,7 +25,7 @@ import (
 
 const (
 	computeTypeLabelKey = "eks.amazonaws.com/compute-type"
-	computeTypeAuto = "auto"
+	computeTypeAuto     = "auto"
 )
 
 func NvidiaMonitor(awsCfg aws.Config) types.Feature {
