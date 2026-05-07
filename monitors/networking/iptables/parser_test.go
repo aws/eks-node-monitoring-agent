@@ -57,6 +57,23 @@ func TestIPTablesRuleParser(t *testing.T) {
 		}
 	})
 
+	t.Run("ExpectedRejectRuleKubeProxyIPVS", func(t *testing.T) {
+		// kube-proxy (IPVS mode) manages KUBE-IPVS-FILTER and KUBE-IPVS-OUT-FILTER,
+		// and manages KUBE-SOURCE-RANGES-FIREWALL whenever any Service sets
+		// spec.loadBalancerSourceRanges. The chains are flushed and rewritten by
+		// kube-proxy on every sync, so matching on the chain name is sufficient.
+		//   https://github.com/aws/eks-node-monitoring-agent/issues/150
+		for _, ruleRaw := range []string{
+			`-A KUBE-IPVS-FILTER -m conntrack --ctstate NEW -m set --match-set KUBE-IPVS-IPS dst -j REJECT --reject-with icmp-port-unreachable`,
+			`-A KUBE-IPVS-OUT-FILTER -s 10.0.0.1 -m ipvs --vaddr 10.0.0.1 --vproto tcp --vport 443 -j DROP`,
+			`-A KUBE-SOURCE-RANGES-FIREWALL -j DROP`,
+		} {
+			rule, err := iptables.ParseIPTablesRule(ruleRaw)
+			assert.NoError(t, err)
+			assert.Truef(t, rule.IsExpectedRejectRule(nil), ruleRaw)
+		}
+	})
+
 	t.Run("ExpectedRejectRuleCustomChain", func(t *testing.T) {
 		chains := []string{"filter/MY-CUSTOM-CHAIN", "filter/CUSTOM-CHAIN"}
 		for _, ruleRaw := range []string{
