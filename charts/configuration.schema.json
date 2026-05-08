@@ -51,6 +51,14 @@
                     "description": "Health probe port for the eks node monitoring agent. Used for both the --probe-address arg and the liveness probe.",
                     "default": 8002
                 },
+                "livenessProbe": {
+                    "$ref": "#/definitions/Probe",
+                    "description": "Liveness probe timing for the eks node monitoring agent. Path and port are derived from probePort; supply timing fields to override Kubernetes defaults."
+                },
+                "startupProbe": {
+                    "$ref": "#/definitions/Probe",
+                    "description": "Optional startup probe for the eks node monitoring agent. When unset, no startup probe is rendered. Path and port are derived from probePort."
+                },
                 "resources": {
                     "$ref": "#/definitions/Resources"
                 },
@@ -157,6 +165,34 @@
                 },
                 "cpu": {
                     "type": "string"
+                }
+            }
+        },
+        "Probe": {
+            "title": "Probe",
+            "type": "object",
+            "description": "Probe timing fields. Path and port are derived from probePort.",
+            "additionalProperties": false,
+            "properties": {
+                "initialDelaySeconds": {
+                    "type": "integer",
+                    "minimum": 0
+                },
+                "timeoutSeconds": {
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "periodSeconds": {
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "successThreshold": {
+                    "type": "integer",
+                    "minimum": 1
+                },
+                "failureThreshold": {
+                    "type": "integer",
+                    "minimum": 1
                 }
             }
         },
