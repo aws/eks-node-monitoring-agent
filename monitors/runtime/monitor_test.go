@@ -301,7 +301,7 @@ func TestCheckContainerdWarnings_OldDeprecationsFiltered(t *testing.T) {
 // TestNewPlugin tests the plugin factory function
 func TestNewPlugin(t *testing.T) {
 	node := &corev1.Node{ObjectMeta: v1.ObjectMeta{Name: "test-node"}}
-	plugin := NewPlugin(node, fakeClient)
+	plugin := NewPlugin(config.RuntimeMonitorSettings{}, node, fakeClient)
 
 	assert.NotNil(t, plugin)
 	assert.Equal(t, "runtime", plugin.Name())

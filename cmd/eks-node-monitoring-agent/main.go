@@ -34,15 +34,12 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/pkg/manager"
 	"github.com/aws/eks-node-monitoring-agent/pkg/monitor/registry"
 
-	// Import monitor packages to trigger auto-registration via init()
-	_ "github.com/aws/eks-node-monitoring-agent/monitors/kernel"
-	_ "github.com/aws/eks-node-monitoring-agent/monitors/networking"
-	_ "github.com/aws/eks-node-monitoring-agent/monitors/neuron"
-	_ "github.com/aws/eks-node-monitoring-agent/monitors/nvidia"
-	_ "github.com/aws/eks-node-monitoring-agent/monitors/storage"
-
-	// Import monitors that require explicit registration (can't use init())
+	"github.com/aws/eks-node-monitoring-agent/monitors/kernel"
+	"github.com/aws/eks-node-monitoring-agent/monitors/networking"
+	"github.com/aws/eks-node-monitoring-agent/monitors/neuron"
+	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia"
 	"github.com/aws/eks-node-monitoring-agent/monitors/runtime"
+	"github.com/aws/eks-node-monitoring-agent/monitors/storage"
 	// Import observer packages to register observers
 	_ "github.com/aws/eks-node-monitoring-agent/pkg/observer"
 )
@@ -180,13 +177,6 @@ func run() error {
 		bootstrapper.Bootstrap(ctx)
 	}
 
-	// Register runtime monitor plugin manually (requires node and kubeClient dependencies)
-	runtimePlugin := runtime.NewPlugin(nodeTemplate.DeepCopy(), monitoringKubeClient)
-	if err := registry.ValidateAndRegister(runtimePlugin); err != nil {
-		logger.Error(err, "failed to register runtime monitor plugin")
-		return err
-	}
-
 	// Load monitor configuration from ConfigMap mount
 	monitorConfig, configFound, err := config.LoadMonitorConfig(config.DefaultConfigPath)
 	if err != nil {
@@ -195,6 +185,24 @@ func run() error {
 	}
 	if !configFound {
 		logger.Info("monitor config file not found, all monitors will be enabled by default", "path", config.DefaultConfigPath)
+	}
+
+	// Register all monitor plugins with their typed settings.
+	for _, registration := range []struct {
+		name   string
+		plugin registry.MonitorPlugin
+	}{
+		{"kernel-monitor", kernel.NewPlugin(monitorConfig.GetKernelSettings())},
+		{"networking", networking.NewPlugin(monitorConfig.GetNetworkingSettings())},
+		{"storage-monitor", storage.NewPlugin(monitorConfig.GetStorageSettings())},
+		{"nvidia", nvidia.NewPlugin(monitorConfig.GetNvidiaSettings())},
+		{"neuron", neuron.NewPlugin(monitorConfig.GetNeuronSettings())},
+		{"runtime", runtime.NewPlugin(monitorConfig.GetRuntimeSettings(), nodeTemplate.DeepCopy(), monitoringKubeClient)},
+	} {
+		if err := registry.ValidateAndRegister(registration.plugin); err != nil {
+			logger.Error(err, "failed to register monitor plugin", "plugin", registration.name)
+			return err
+		}
 	}
 
 	// Filter plugins by configuration and log effective state
@@ -214,19 +222,6 @@ func run() error {
 
 	if len(disabledNames) > 0 {
 		logger.Info("monitors disabled by configuration", "plugins", disabledNames)
-	}
-
-	// Inject per-monitor configuration into monitors that support it
-	if chains := monitorConfig.GetAllowedIPTablesChains(); len(chains) > 0 {
-		for _, mon := range enabledMonitors {
-			type chainConfigurable interface {
-				SetAllowedIPTablesChains([]string)
-			}
-			if c, ok := mon.(chainConfigurable); ok {
-				c.SetAllowedIPTablesChains(chains)
-				logger.Info("configured allowed iptables chains", "monitor", mon.Name(), "chains", chains)
-			}
-		}
 	}
 
 	if len(enabledMonitors) == 0 {

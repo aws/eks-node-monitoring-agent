@@ -20,7 +20,7 @@ func TestLoadMonitorConfig_NonExistentFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, cfg)
 	assert.False(t, found, "expected found to be false for non-existent file")
-	// Default config: all monitors enabled (empty map).
+	// Default config: all monitors enabled (zero-value MonitorsConfig).
 	assert.Empty(t, cfg.Monitors)
 	// Every known plugin should be enabled by default.
 	for _, name := range config.KnownPluginNames {
@@ -45,7 +45,7 @@ func TestLoadMonitorConfig_ValidFileOneDisabled(t *testing.T) {
 
 	// kernel-monitor should be explicitly disabled.
 	assert.False(t, cfg.IsMonitorEnabled("kernel-monitor"))
-	// Other monitors should remain enabled (absent from map → default true).
+	// Other monitors should remain enabled (absent from config → default true).
 	assert.True(t, cfg.IsMonitorEnabled("networking"))
 	assert.True(t, cfg.IsMonitorEnabled("storage-monitor"))
 	assert.True(t, cfg.IsMonitorEnabled("nvidia"))
@@ -79,8 +79,9 @@ func TestLoadMonitorConfig_UnknownPluginName(t *testing.T) {
 	cfg, _, err := config.LoadMonitorConfig(cfgPath)
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
+	// Unknown monitor names are now caught at parse time by strict YAML unmarshaling.
 	assert.Contains(t, err.Error(), "unknown-plugin")
-	assert.Contains(t, err.Error(), "validating monitor config")
+	assert.Contains(t, err.Error(), "parsing monitor config")
 }
 
 func TestLoadMonitorConfig_EmptyFile(t *testing.T) {
@@ -106,26 +107,30 @@ func TestIsMonitorEnabled_NilConfig(t *testing.T) {
 	assert.True(t, cfg.IsMonitorEnabled("networking"))
 }
 
-func TestIsMonitorEnabled_EmptyMap(t *testing.T) {
+func TestIsMonitorEnabled_ZeroValueConfig(t *testing.T) {
 	cfg := &config.MonitorConfig{}
 	assert.True(t, cfg.IsMonitorEnabled("kernel-monitor"))
 	assert.True(t, cfg.IsMonitorEnabled("networking"))
 }
 
 func TestIsMonitorEnabled_AbsentPlugin(t *testing.T) {
+	// networking is explicitly disabled; kernel-monitor is absent (zero value) → enabled.
 	cfg := &config.MonitorConfig{
-		Monitors: map[string]config.MonitorSettings{
-			"networking": {Enabled: boolPtr(false)},
+		Monitors: config.MonitorsConfig{
+			Networking: config.NetworkingMonitorSettings{
+				MonitorSettings: config.MonitorSettings{Enabled: boolPtr(false)},
+			},
 		},
 	}
-	// kernel-monitor is absent from the map → should be enabled.
 	assert.True(t, cfg.IsMonitorEnabled("kernel-monitor"))
 }
 
 func TestIsMonitorEnabled_ExplicitlyEnabled(t *testing.T) {
 	cfg := &config.MonitorConfig{
-		Monitors: map[string]config.MonitorSettings{
-			"networking": {Enabled: boolPtr(true)},
+		Monitors: config.MonitorsConfig{
+			Networking: config.NetworkingMonitorSettings{
+				MonitorSettings: config.MonitorSettings{Enabled: boolPtr(true)},
+			},
 		},
 	}
 	assert.True(t, cfg.IsMonitorEnabled("networking"))
@@ -133,8 +138,10 @@ func TestIsMonitorEnabled_ExplicitlyEnabled(t *testing.T) {
 
 func TestIsMonitorEnabled_ExplicitlyDisabled(t *testing.T) {
 	cfg := &config.MonitorConfig{
-		Monitors: map[string]config.MonitorSettings{
-			"networking": {Enabled: boolPtr(false)},
+		Monitors: config.MonitorsConfig{
+			Networking: config.NetworkingMonitorSettings{
+				MonitorSettings: config.MonitorSettings{Enabled: boolPtr(false)},
+			},
 		},
 	}
 	assert.False(t, cfg.IsMonitorEnabled("networking"))
@@ -142,40 +149,42 @@ func TestIsMonitorEnabled_ExplicitlyDisabled(t *testing.T) {
 
 func TestIsMonitorEnabled_NilEnabled(t *testing.T) {
 	cfg := &config.MonitorConfig{
-		Monitors: map[string]config.MonitorSettings{
-			"networking": {Enabled: nil},
+		Monitors: config.MonitorsConfig{
+			Networking: config.NetworkingMonitorSettings{
+				MonitorSettings: config.MonitorSettings{Enabled: nil},
+			},
 		},
 	}
 	// nil Enabled → defaults to true.
 	assert.True(t, cfg.IsMonitorEnabled("networking"))
 }
 
-func TestGetAllowedIPTablesChains(t *testing.T) {
+func TestGetNetworkingSettings(t *testing.T) {
 	t.Run("NilConfig", func(t *testing.T) {
 		var cfg *config.MonitorConfig
-		assert.Nil(t, cfg.GetAllowedIPTablesChains())
+		assert.Empty(t, cfg.GetNetworkingSettings().AllowedIPTablesChains)
 	})
-	t.Run("EmptyMap", func(t *testing.T) {
+	t.Run("ZeroValueConfig", func(t *testing.T) {
 		cfg := &config.MonitorConfig{}
-		assert.Nil(t, cfg.GetAllowedIPTablesChains())
+		assert.Empty(t, cfg.GetNetworkingSettings().AllowedIPTablesChains)
 	})
 	t.Run("NoNetworkingEntry", func(t *testing.T) {
 		cfg := &config.MonitorConfig{
-			Monitors: map[string]config.MonitorSettings{
-				"kernel-monitor": {Enabled: boolPtr(true)},
+			Monitors: config.MonitorsConfig{
+				Kernel: config.KernelMonitorSettings{MonitorSettings: config.MonitorSettings{Enabled: boolPtr(true)}},
 			},
 		}
-		assert.Nil(t, cfg.GetAllowedIPTablesChains())
+		assert.Empty(t, cfg.GetNetworkingSettings().AllowedIPTablesChains)
 	})
 	t.Run("WithChains", func(t *testing.T) {
 		cfg := &config.MonitorConfig{
-			Monitors: map[string]config.MonitorSettings{
-				"networking": {
+			Monitors: config.MonitorsConfig{
+				Networking: config.NetworkingMonitorSettings{
 					AllowedIPTablesChains: []string{"filter/MY-CUSTOM-CHAIN", "filter/CUSTOM-CHAIN"},
 				},
 			},
 		}
-		assert.Equal(t, []string{"filter/MY-CUSTOM-CHAIN", "filter/CUSTOM-CHAIN"}, cfg.GetAllowedIPTablesChains())
+		assert.Equal(t, []string{"filter/MY-CUSTOM-CHAIN", "filter/CUSTOM-CHAIN"}, cfg.GetNetworkingSettings().AllowedIPTablesChains)
 	})
 }
 
@@ -196,7 +205,7 @@ func TestLoadMonitorConfig_AllowedIPTablesChains(t *testing.T) {
 	require.NotNil(t, cfg)
 	assert.True(t, found)
 	assert.True(t, cfg.IsMonitorEnabled("networking"))
-	assert.Equal(t, []string{"filter/MY-CUSTOM-CHAIN"}, cfg.GetAllowedIPTablesChains())
+	assert.Equal(t, []string{"filter/MY-CUSTOM-CHAIN"}, cfg.GetNetworkingSettings().AllowedIPTablesChains)
 }
 
 func TestLoadMonitorConfig_EmptyChainRejected(t *testing.T) {
@@ -298,8 +307,10 @@ func TestLoadMonitorConfig_AllowedIPTablesChainsOnNonNetworkingMonitorRejected(t
 	cfg, _, err := config.LoadMonitorConfig(cfgPath)
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
-	assert.Contains(t, err.Error(), "allowedIPTablesChains is only supported by the networking monitor")
-	assert.Contains(t, err.Error(), "kernel-monitor")
+	// allowedIPTablesChains is not a field of MonitorSettings (the type for kernel-monitor),
+	// so it is now rejected at parse time by strict YAML unmarshaling.
+	assert.Contains(t, err.Error(), "allowedIPTablesChains")
+	assert.Contains(t, err.Error(), "parsing monitor config")
 }
 
 func TestLoadMonitorConfig_StrictUnmarshalRejectsUnknownFields(t *testing.T) {
