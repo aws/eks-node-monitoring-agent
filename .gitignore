@@ -6,3 +6,6 @@ go.work.sum
 
 # VSCode
 .vscode
+
+# graphify code knowledge graph output
+graphify-out

@@ -93,6 +93,17 @@ func (rule IPTablesRule) IsExpectedRejectRule(allowedChains []string) bool {
 			strings.Contains(rule.rejectWith, "icmp-port-unreachable")) {
 		// kube service with no endpoints
 		return true
+	} else if rule.table == "KUBE-IPVS-FILTER" || rule.table == "KUBE-IPVS-OUT-FILTER" {
+		// kube-proxy (IPVS mode) installs these chains to reject or drop traffic
+		// destined for service VIPs on the main netns and to block node access to
+		// load balancer VIPs. The chains are fully managed by kube-proxy and
+		// flushed on every sync.
+		return true
+	} else if rule.table == "KUBE-SOURCE-RANGES-FIREWALL" {
+		// kube-proxy installs this chain when a Service sets
+		// spec.loadBalancerSourceRanges. It drops packets from source IPs that
+		// are not in the allowed ranges.
+		return true
 	} else if strings.HasPrefix(rule.table, "cali-") {
 		// Calico managed chains use DROP rules as part of normal network policy enforcement
 		return true
