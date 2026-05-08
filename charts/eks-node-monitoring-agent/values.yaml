@@ -78,8 +78,12 @@ nodeAgent:
       cpu: 10m
       memory: 30Mi
     limits:
-      cpu: 250m
+      cpu: 500m
       memory: 200Mi
+  # -- Liveness probe timing for the eks-node-monitoring-agent. Path and port are derived from probePort.
+  livenessProbe: {}
+  # -- Optional startup probe for the eks-node-monitoring-agent. When unset, no startup probe is rendered.
+  startupProbe: {}
   # -- Container resize policy for in-place pod vertical scaling (requires Kubernetes 1.33+)
   resizePolicy: []
   # -- Container Security context for the eks-node-monitoring-agent

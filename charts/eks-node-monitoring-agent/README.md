@@ -64,13 +64,15 @@ The following table lists the configurable parameters for this chart and their d
 | nodeAgent.image.pullPolicy | string | `"IfNotPresent"` | Container pull policyfor the eks-node-monitoring-agent |
 | nodeAgent.image.region | string | `"us-west-2"` | ECR repository region for the eks-node-monitoring-agent |
 | nodeAgent.image.tag | string | `"v1.6.4-eksbuild.1"` | Image tag for the eks-node-monitoring-agent |
+| nodeAgent.livenessProbe | object | `{}` | Liveness probe timing for the eks-node-monitoring-agent. Path and port are derived from probePort. |
 | nodeAgent.monitors | object | `{}` | Per-monitor configuration keyed by plugin name. See the main README for details. |
 | nodeAgent.podAnnotations | object | `{}` | Pod annotations applied to the eks-node-monitoring-agent |
 | nodeAgent.podLabels | object | `{}` | Pod labels applied to the eks-node-monitoring-agent |
 | nodeAgent.probePort | int | `8002` | Health probe port for the eks-node-monitoring-agent. Used for both the --probe-address arg and the liveness probe. |
 | nodeAgent.resizePolicy | list | `[]` | Container resize policy for in-place pod vertical scaling (requires Kubernetes 1.33+) |
-| nodeAgent.resources | object | `{"limits":{"cpu":"250m","memory":"200Mi"},"requests":{"cpu":"10m","memory":"30Mi"}}` | Container resources for the eks-node-monitoring-agent |
+| nodeAgent.resources | object | `{"limits":{"cpu":"500m","memory":"200Mi"},"requests":{"cpu":"10m","memory":"30Mi"}}` | Container resources for the eks-node-monitoring-agent |
 | nodeAgent.securityContext | object | `{"capabilities":{"add":["NET_ADMIN"]},"privileged":true}` | Container Security context for the eks-node-monitoring-agent |
+| nodeAgent.startupProbe | object | `{}` | Optional startup probe for the eks-node-monitoring-agent. When unset, no startup probe is rendered. |
 | nodeAgent.tolerations | list | `[{"operator":"Exists"}]` | Deployment tolerations for the eks-node-monitoring-agent |
 | updateStrategy | object | `{"rollingUpdate":{"maxUnavailable":"10%"},"type":"RollingUpdate"}` | Update strategy for all daemon sets |
 
