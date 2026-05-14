@@ -9,3 +9,6 @@ go.work.sum
 
 # graphify code knowledge graph output
 graphify-out
+
+# Kiro
+.kiro
