@@ -288,6 +288,10 @@ var (
         template:        "IODelays",
         defaultSeverity: "Warning",
     }
+    InstanceStoreIOError = ReasonMeta{
+        template:        "InstanceStoreIOError",
+        defaultSeverity: "Fatal",
+    }
     KubeletDiskUsageSlow = ReasonMeta{
         template:        "KubeletDiskUsageSlow",
         defaultSeverity: "Warning",
