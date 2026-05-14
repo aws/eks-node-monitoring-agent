@@ -34,37 +34,37 @@ import (
 //
 // Resolution Bucket Reference (from NVIDIA XID Catalog):
 //
-//   RESET_GPU: Terminate all GPU processes and reset the GPU using "nvidia-smi -r".
-//     If the error persists after reset, a node reboot is required. If it persists
-//     after reboot, the hardware should be replaced.
+//	RESET_GPU: Terminate all GPU processes and reset the GPU using "nvidia-smi -r".
+//	  If the error persists after reset, a node reboot is required. If it persists
+//	  after reboot, the hardware should be replaced.
 //
-//   WORKFLOW_XID_48: Reset the GPU. After reset, check SRAM DBE thresholds via
-//     nvidia-smi (sram_threshold_exceeded) or NSM Msg Type 0x3, Cmd Code 0x7D, bit 0.
-//     If the threshold flag is set, run field diagnostics. Persistent errors indicate
-//     hardware degradation requiring RMA.
+//	WORKFLOW_XID_48: Reset the GPU. After reset, check SRAM DBE thresholds via
+//	  nvidia-smi (sram_threshold_exceeded) or NSM Msg Type 0x3, Cmd Code 0x7D, bit 0.
+//	  If the threshold flag is set, run field diagnostics. Persistent errors indicate
+//	  hardware degradation requiring RMA.
 //
-//   WORKFLOW_NVLINK_ERR: Reset the GPU or reboot the node. Use "nvidia-smi nvlink" for
-//     additional details on link errors. If the error recurs after reset/reboot, the
-//     hardware should be replaced.
+//	WORKFLOW_NVLINK_ERR: Reset the GPU or reboot the node. Use "nvidia-smi nvlink" for
+//	  additional details on link errors. If the error recurs after reset/reboot, the
+//	  hardware should be replaced.
 //
-//   RESTART_BM: The GPU is no longer accessible over PCIe. A full power cycle
-//     (bare-metal restart) is required. This typically indicates PCIe link hardware failure.
+//	RESTART_BM: The GPU is no longer accessible over PCIe. A full power cycle
+//	  (bare-metal restart) is required. This typically indicates PCIe link hardware failure.
 //
-//   CHECK_MECHANICALS: Verify physical connections to the GPU board. Typically indicates
-//     auxiliary power connectors are not properly seated.
+//	CHECK_MECHANICALS: Verify physical connections to the GPU board. Typically indicates
+//	  auxiliary power connectors are not properly seated.
 //
-//   RESTART_VM: Restart the virtual machine or instance. On EKS this maps to node
-//     replacement since instances cannot be restarted in place.
+//	RESTART_VM: Restart the virtual machine or instance. On EKS this maps to node
+//	  replacement since instances cannot be restarted in place.
 //
-//   CONTACT_SUPPORT: No automated recovery is possible. The error requires investigation
-//     by the hardware vendor. On EKS this maps to node replacement since the GPU is in
-//     an unrecoverable state.
+//	CONTACT_SUPPORT: No automated recovery is possible. The error requires investigation
+//	  by the hardware vendor. On EKS this maps to node replacement since the GPU is in
+//	  an unrecoverable state.
 //
-//   IGNORE: The event is informational per NVIDIA's guidance. However, for XID 63
-//     (memory remapping), EC2 recommends replacing the instance because repeated
-//     remapping events indicate degrading GPU memory that will eventually exhaust
-//     available remapping resources (escalating to XID 64). We include XID 63 in the
-//     well-known list to align with EC2's recommendation of proactive replacement.
+//	IGNORE: The event is informational per NVIDIA's guidance. However, for XID 63
+//	  (memory remapping), EC2 recommends replacing the instance because repeated
+//	  remapping events indicate degrading GPU memory that will eventually exhaust
+//	  available remapping resources (escalating to XID 64). We include XID 63 in the
+//	  well-known list to align with EC2's recommendation of proactive replacement.
 //
 // Well-Known XID Codes:
 //
