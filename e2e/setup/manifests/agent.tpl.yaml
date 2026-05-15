@@ -379,6 +379,10 @@ spec:
         - name: eks-node-monitoring-agent
           image: {{ .Image }}
           imagePullPolicy: IfNotPresent
+          ports:
+            - name: metrics
+              containerPort: 8003
+              protocol: TCP
           args:
             - --probe-address=:8002
             - --metrics-address=:8003
