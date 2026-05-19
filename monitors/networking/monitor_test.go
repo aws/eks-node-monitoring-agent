@@ -13,6 +13,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"k8s.io/client-go/tools/cache"
+	cri "k8s.io/cri-api/pkg/apis"
+	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 	"github.com/aws/eks-node-monitoring-agent/api/monitor/resource"
@@ -706,7 +708,7 @@ func TestCheckIPAMD_CacheExpiry(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 
-	mon := NewNetworkingMonitor()
+	mon := NewNetworkingMonitor(WithRuntimeService(&fakeRuntimeService{}))
 	mockManager := &mockManager{
 		obs: observer.BaseObserver{},
 		res: make(chan monitor.Condition, 5),
@@ -777,4 +779,62 @@ func TestUtils(t *testing.T) {
 		assert.Len(t, stats, 115)
 		assert.Equal(t, 11072, stats[BandwidthInExceeded])
 	})
+}
+
+// fakeRuntimeService is a stub cri.RuntimeService that records PodSandboxStatus
+// calls and returns a canned response. Other interface methods inherit the
+// embedded nil and panic if invoked, surfacing unexpected dependencies.
+type fakeRuntimeService struct {
+	cri.RuntimeService
+
+	statusResp *runtimeapi.PodSandboxStatusResponse
+	calls      int
+}
+
+func (f *fakeRuntimeService) PodSandboxStatus(ctx context.Context, podSandboxID string, verbose bool) (*runtimeapi.PodSandboxStatusResponse, error) {
+	f.calls++
+	return f.statusResp, nil
+}
+
+func TestCheckIPAMD_DetectsInconsistentIP(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("HOST_ROOT", tmpDir)
+	checkpointDir := filepath.Join(tmpDir, "var", "run", "aws-node")
+	if err := os.MkdirAll(checkpointDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	checkpointData := `{"allocations":[{"containerID":"c1","ipv4":"10.0.0.1"}]}`
+	if err := os.WriteFile(filepath.Join(checkpointDir, "ipam.json"), []byte(checkpointData), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	fake := &fakeRuntimeService{
+		statusResp: &runtimeapi.PodSandboxStatusResponse{
+			Status: &runtimeapi.PodSandboxStatus{
+				Network: &runtimeapi.PodSandboxNetworkStatus{Ip: "10.0.0.99"},
+				Metadata: &runtimeapi.PodSandboxMetadata{
+					Name:      "test-pod",
+					Namespace: "default",
+				},
+			},
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	mon := NewNetworkingMonitor(WithRuntimeService(fake))
+	mockManager := &mockManager{
+		obs: observer.BaseObserver{},
+		res: make(chan monitor.Condition, 1),
+	}
+	mon.Register(ctx, mockManager)
+
+	assert.NoError(t, mon.checkIPAMD(true))
+	select {
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	case got := <-mockManager.res:
+		assert.Equal(t, "IPAMDInconsistentState", got.Reason)
+	}
 }
