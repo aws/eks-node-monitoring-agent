@@ -66,7 +66,7 @@ func TestFields(t *testing.T) {
 
 	t.Run("FabricManagerStatusSuccess", func(t *testing.T) {
 		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_FABRIC_MANAGER_STATUS}
-		fieldValue.Status = dcgmapi.DCGM_ST_BADPARAM
+		fieldValue.Status = dcgmapi.DCGM_ST_OK
 		binary.LittleEndian.PutUint64(fieldValue.Value[:], 3) // DcgmFMStatusSuccess
 		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}}
 		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
@@ -77,7 +77,7 @@ func TestFields(t *testing.T) {
 
 	t.Run("FabricManagerStatusNotSupported", func(t *testing.T) {
 		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_FABRIC_MANAGER_STATUS}
-		fieldValue.Status = dcgmapi.DCGM_ST_BADPARAM
+		fieldValue.Status = dcgmapi.DCGM_ST_OK
 		binary.LittleEndian.PutUint64(fieldValue.Value[:], 0) // DcgmFMStatusNotSupported
 		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}}
 		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
@@ -88,7 +88,7 @@ func TestFields(t *testing.T) {
 
 	t.Run("FabricManagerStatusInProgress", func(t *testing.T) {
 		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_FABRIC_MANAGER_STATUS}
-		fieldValue.Status = dcgmapi.DCGM_ST_BADPARAM
+		fieldValue.Status = dcgmapi.DCGM_ST_OK
 		binary.LittleEndian.PutUint64(fieldValue.Value[:], 2) // DcgmFMStatusInProgress
 		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}}
 		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
@@ -99,7 +99,7 @@ func TestFields(t *testing.T) {
 
 	t.Run("FabricManagerStatusFailure", func(t *testing.T) {
 		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_FABRIC_MANAGER_STATUS}
-		fieldValue.Status = dcgmapi.DCGM_ST_BADPARAM
+		fieldValue.Status = dcgmapi.DCGM_ST_OK
 		binary.LittleEndian.PutUint64(fieldValue.Value[:], 4) // DcgmFMStatusFailure
 		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}}
 		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
@@ -114,7 +114,7 @@ func TestFields(t *testing.T) {
 
 	t.Run("FabricManagerStatusNotStarted", func(t *testing.T) {
 		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_FABRIC_MANAGER_STATUS}
-		fieldValue.Status = dcgmapi.DCGM_ST_BADPARAM
+		fieldValue.Status = dcgmapi.DCGM_ST_OK
 		binary.LittleEndian.PutUint64(fieldValue.Value[:], 1) // DcgmFMStatusNotStarted
 		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}}
 		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
@@ -125,7 +125,7 @@ func TestFields(t *testing.T) {
 
 	t.Run("FabricHealthMaskFailure", func(t *testing.T) {
 		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_FABRIC_HEALTH_MASK}
-		fieldValue.Status = dcgmapi.DCGM_ST_BADPARAM
+		fieldValue.Status = dcgmapi.DCGM_ST_OK
 		binary.LittleEndian.PutUint64(fieldValue.Value[:], 1) // non-zero = failure
 		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}}
 		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
@@ -140,7 +140,7 @@ func TestFields(t *testing.T) {
 
 	t.Run("FabricHealthMaskHealthy", func(t *testing.T) {
 		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_FABRIC_HEALTH_MASK}
-		fieldValue.Status = dcgmapi.DCGM_ST_BADPARAM
+		fieldValue.Status = dcgmapi.DCGM_ST_OK
 		binary.LittleEndian.PutUint64(fieldValue.Value[:], 0) // zero = healthy
 		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}}
 		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
