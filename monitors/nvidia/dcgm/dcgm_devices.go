@@ -11,6 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
+	"github.com/aws/eks-node-monitoring-agent/internal/pkg/instanceinfo"
 	"github.com/aws/eks-node-monitoring-agent/pkg/config"
 	"github.com/aws/eks-node-monitoring-agent/pkg/reasons"
 )
@@ -49,7 +50,9 @@ func (s *DCGMSystem) DeviceCount(ctx context.Context) ([]monitor.Condition, erro
 	// count, so the check above won't fire.
 	if s.instanceTypeInfoProvider != nil {
 		info, err := s.instanceTypeInfoProvider.GetInstanceInfo(ctx)
-		if err != nil {
+		if errors.Is(err, instanceinfo.ErrUnknownInstanceType) {
+			logger.V(4).Info("instance type not in embedded lookup, skipping GPU count validation", "error", err)
+		} else if err != nil {
 			logger.V(2).Info("could not determine expected GPU count for validation", "error", err)
 		} else if gpuDeviceCount < info.NvidiaGPUCount {
 			conditions = append(conditions,

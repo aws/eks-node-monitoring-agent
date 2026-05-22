@@ -6,24 +6,29 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/feature/ec2/imds"
-	"github.com/aws/aws-sdk-go-v2/service/ec2"
-	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 )
 
 //go:embed instance-info.jsonl
 var instanceInfoData []byte
 
+// ErrUnknownInstanceType is returned when the instance type is not found in
+// the embedded lookup table. Callers can use errors.Is to distinguish this
+// from transient failures (e.g. IMDS unavailable).
+var ErrUnknownInstanceType = errors.New("unknown instance type")
+
 // InstanceInfo contains hardware metadata for an EC2 instance type.
 // Add new fields here as needed — existing JSONL entries without the
 // field will unmarshal to the zero value.
 type InstanceInfo struct {
-	InstanceType  string `json:"instanceType"`
-	NvidiaGPUCount uint  `json:"nvidiaGpuCount"`
+	InstanceType   string `json:"instanceType"`
+	NvidiaGPUCount uint   `json:"nvidiaGpuCount"`
 }
 
 // InstanceTypeInfoProvider returns hardware information about the current EC2 instance type.
@@ -32,9 +37,8 @@ type InstanceTypeInfoProvider interface {
 }
 
 // NewInstanceTypeInfoProvider returns a provider that resolves instance info
-// by first checking an embedded lookup table and falling back to the EC2
-// DescribeInstanceTypes API. The result is cached after the first successful
-// resolution.
+// from an embedded lookup table. The result is cached after the first
+// successful resolution.
 func NewInstanceTypeInfoProvider() *ec2InstanceTypeInfoProvider {
 	return &ec2InstanceTypeInfoProvider{
 		embeddedLookup: loadEmbeddedInstanceInfo(),
@@ -42,11 +46,23 @@ func NewInstanceTypeInfoProvider() *ec2InstanceTypeInfoProvider {
 }
 
 type ec2InstanceTypeInfoProvider struct {
+	mu             sync.RWMutex
 	info           *InstanceInfo
 	embeddedLookup map[string]InstanceInfo
 }
 
 func (p *ec2InstanceTypeInfoProvider) GetInstanceInfo(ctx context.Context) (*InstanceInfo, error) {
+	p.mu.RLock()
+	if p.info != nil {
+		defer p.mu.RUnlock()
+		return p.info, nil
+	}
+	p.mu.RUnlock()
+
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Double-check after acquiring write lock.
 	if p.info != nil {
 		return p.info, nil
 	}
@@ -56,19 +72,12 @@ func (p *ec2InstanceTypeInfoProvider) GetInstanceInfo(ctx context.Context) (*Ins
 		return nil, err
 	}
 
-	// Try embedded lookup first — no API call needed.
-	if info, ok := p.embeddedLookup[instanceType]; ok {
-		p.info = &info
-		return p.info, nil
+	info, ok := p.embeddedLookup[instanceType]
+	if !ok {
+		return nil, fmt.Errorf("%w: %s", ErrUnknownInstanceType, instanceType)
 	}
 
-	// Fall back to EC2 API for unknown instance types.
-	info, err := getInstanceInfoFromEC2API(ctx, instanceType)
-	if err != nil {
-		return nil, err
-	}
-
-	p.info = info
+	p.info = &info
 	return p.info, nil
 }
 
@@ -90,35 +99,6 @@ func getInstanceTypeFromIMDS(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("failed to read IMDS response: %w", err)
 	}
 	return string(body), nil
-}
-
-func getInstanceInfoFromEC2API(ctx context.Context, instanceType string) (*InstanceInfo, error) {
-	cfg, err := config.LoadDefaultConfig(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to load AWS config: %w", err)
-	}
-	ec2Client := ec2.NewFromConfig(cfg)
-	resp, err := ec2Client.DescribeInstanceTypes(ctx, &ec2.DescribeInstanceTypesInput{
-		InstanceTypes: []ec2types.InstanceType{ec2types.InstanceType(instanceType)},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to describe instance type %s: %w", instanceType, err)
-	}
-	if len(resp.InstanceTypes) == 0 {
-		return nil, fmt.Errorf("no results returned for instance type %s", instanceType)
-	}
-
-	info := &InstanceInfo{InstanceType: instanceType}
-
-	if gpuInfo := resp.InstanceTypes[0].GpuInfo; gpuInfo != nil {
-		for _, gpu := range gpuInfo.Gpus {
-			if gpu.Count != nil && gpu.Manufacturer != nil && *gpu.Manufacturer == "NVIDIA" {
-				info.NvidiaGPUCount += uint(*gpu.Count)
-			}
-		}
-	}
-
-	return info, nil
 }
 
 func loadEmbeddedInstanceInfo() map[string]InstanceInfo {

@@ -35,6 +35,7 @@
 {"instanceType":"g6e.4xlarge","nvidiaGpuCount":1}
 {"instanceType":"g6e.8xlarge","nvidiaGpuCount":1}
 {"instanceType":"g6e.xlarge","nvidiaGpuCount":1}
+{"instanceType":"g7.48xlarge","nvidiaGpuCount":8}
 {"instanceType":"g7e.12xlarge","nvidiaGpuCount":2}
 {"instanceType":"g7e.24xlarge","nvidiaGpuCount":4}
 {"instanceType":"g7e.2xlarge","nvidiaGpuCount":1}
