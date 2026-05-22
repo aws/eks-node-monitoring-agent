@@ -7,8 +7,8 @@ import (
 	"time"
 
 	dcgmapi "github.com/NVIDIA/go-dcgm/pkg/dcgm"
-	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/dcgm"
 	"github.com/aws/eks-node-monitoring-agent/internal/pkg/instanceinfo"
+	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/dcgm"
 )
 
 var _ dcgm.DCGM = &FakeDcgm{}

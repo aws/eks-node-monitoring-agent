@@ -33,8 +33,8 @@ import (
 // Only entries where at least one field beyond InstanceType is non-zero
 // are written to the JSONL.
 type instanceInfo struct {
-	InstanceType  string `json:"instanceType"`
-	NvidiaGPUCount uint  `json:"nvidiaGpuCount,omitempty"`
+	InstanceType   string `json:"instanceType"`
+	NvidiaGPUCount uint   `json:"nvidiaGpuCount,omitempty"`
 }
 
 const outputPath = "internal/pkg/instanceinfo/instance-info.jsonl"
