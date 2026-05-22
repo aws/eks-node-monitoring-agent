@@ -18,16 +18,16 @@ func NewDCGMSystem(dcgmClient DCGM, diagType dcgmapi.DiagType) *DCGMSystem {
 // InstanceTypeInfoProvider, primarily for testing.
 func NewDCGMSystemWithInstanceTypeInfoProvider(dcgmClient DCGM, diagType dcgmapi.DiagType, provider instanceinfo.InstanceTypeInfoProvider) *DCGMSystem {
 	return &DCGMSystem{
-		dcgm:                    dcgmClient,
-		diagType:                diagType,
+		dcgm:                     dcgmClient,
+		diagType:                 diagType,
 		instanceTypeInfoProvider: provider,
 		fieldValueWindow:         5 * time.Minute,
 	}
 }
 
 type DCGMSystem struct {
-	dcgm                    DCGM
-	diagType                dcgmapi.DiagType
+	dcgm                     DCGM
+	diagType                 dcgmapi.DiagType
 	instanceTypeInfoProvider instanceinfo.InstanceTypeInfoProvider
 
 	// fieldValueWindow is the time window used to fetch changes in field
