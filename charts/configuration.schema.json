@@ -69,7 +69,7 @@
                             "$ref": "#/definitions/MonitorSettings"
                         },
                         "networking": {
-                            "$ref": "#/definitions/MonitorSettings"
+                            "$ref": "#/definitions/NetworkingMonitorSettings"
                         },
                         "storage-monitor": {
                             "$ref": "#/definitions/MonitorSettings"
@@ -186,6 +186,28 @@
             "type": "array",
             "items": {
                 "type": "object"
+            }
+        },
+        "NetworkingMonitorSettings": {
+            "title": "NetworkingMonitorSettings",
+            "type": "object",
+            "description": "Per-monitor settings for the networking monitor",
+            "additionalProperties": false,
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "description": "Whether this monitor is enabled",
+                    "default": true
+                },
+                "allowedIPTablesChains": {
+                    "type": "array",
+                    "description": "List of iptables chains (in table/chain format, e.g. \"filter/MY-CUSTOM-CHAIN\") whose REJECT/DROP rules should not trigger an UnexpectedRejectRule event. Use this to suppress false positives from known-good custom chains.",
+                    "default": [],
+                    "items": {
+                        "type": "string",
+                        "pattern": "^[^/]+/[^/]+$"
+                    }
+                }
             }
         },
         "MonitorSettings": {

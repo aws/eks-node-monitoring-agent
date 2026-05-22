@@ -15,13 +15,13 @@ import (
 	"strings"
 	"time"
 
-	cri "github.com/containerd/containerd/v2/integration/cri-api/pkg/apis"
-	"github.com/containerd/containerd/v2/integration/remote"
 	"github.com/coreos/go-systemd/v22/dbus"
 	"github.com/go-logr/logr"
 	"github.com/shirou/gopsutil/v4/process"
 	"golang.org/x/time/rate"
 	"k8s.io/client-go/tools/cache"
+	cri "k8s.io/cri-api/pkg/apis"
+	criclient "k8s.io/cri-client/pkg"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
@@ -46,6 +46,11 @@ const (
 	interfaceMonitorPeriod = 5 * time.Minute
 	// we only need to store the interfaces from our previous monitor period
 	interfaceCacheTTL = interfaceMonitorPeriod * 2
+
+	// max duration between two observations of IPAMDNotRunning to indicate a fatal condition. depends
+	// on the handleIPAMD interval (currently 5m), so this should ideally be kept longer than that
+	// TODO: should preferably use a concept of a minimum rate for a condition in node exporter
+	ipamdNotRunningConsistencyDuration = 15 * time.Minute
 )
 
 type criIPDetails struct {
@@ -56,14 +61,16 @@ type criIPDetails struct {
 }
 
 type NetworkingMonitor struct {
-	manager            monitor.Manager
-	ctrdRuntimeService cri.RuntimeService
-	criIPCache         cache.Store // containerID -> IP and metadata
-	vpcCNIPodID        string      // may be empty if on Auto or if pod was not prev. observed
-	interfaceCache     cache.Store
-	log                logr.Logger
-	exec               osext.Exec
-	runtimeContext     *config.RuntimeContext
+	manager               monitor.Manager
+	ctrdRuntimeService    cri.RuntimeService
+	criIPCache            cache.Store // containerID -> IP and metadata
+	vpcCNIPodID           string      // may be empty if on Auto or if pod was not prev. observed
+	ipamdNotRunningTime   time.Time   // the last time IPAMD was observed not running
+	interfaceCache        cache.Store
+	log                   logr.Logger
+	exec                  osext.Exec
+	runtimeContext        *config.RuntimeContext
+	allowedIPTablesChains []string
 }
 
 func (m *NetworkingMonitor) Name() string {
@@ -94,6 +101,18 @@ func WithRuntimeContext(runtimeContext *config.RuntimeContext) Option {
 	return func(m *NetworkingMonitor) {
 		m.runtimeContext = runtimeContext
 	}
+}
+
+// WithRuntimeService injects a CRI RuntimeService client. When set, checkIPAMD
+// will use it instead of dialing the CRI endpoint. Intended for tests.
+func WithRuntimeService(svc cri.RuntimeService) Option {
+	return func(m *NetworkingMonitor) {
+		m.ctrdRuntimeService = svc
+	}
+}
+
+func (m *NetworkingMonitor) SetAllowedIPTablesChains(chains []string) {
+	m.allowedIPTablesChains = chains
 }
 
 func NewNetworkingMonitor(options ...Option) *NetworkingMonitor {
@@ -282,6 +301,7 @@ func (m *NetworkingMonitor) handleIPAMD() error {
 			// to run immediately. gives at least the IPAMD monitor interval
 			// as startup toleration (currently ~5m)
 			m.vpcCNIPodID = podName
+			m.ipamdNotRunningTime = time.Time{}
 			m.log.Info("New VPC CNI pod detected", "podName", podName)
 			return nil
 		}
@@ -303,6 +323,12 @@ func (m *NetworkingMonitor) handleIPAMD() error {
 
 func (m *NetworkingMonitor) checkIPAMD(ipamdRunning bool) error {
 	if !ipamdRunning {
+		now := time.Now()
+		if now.Sub(m.ipamdNotRunningTime) > ipamdNotRunningConsistencyDuration {
+			m.log.Info("IPAMD not found running for the first time in consistency duration", "durationSeconds", ipamdNotRunningConsistencyDuration)
+			m.ipamdNotRunningTime = now
+			return nil
+		}
 		return m.manager.Notify(context.Background(),
 			reasons.IPAMDNotRunning.
 				Builder().
@@ -322,14 +348,14 @@ func (m *NetworkingMonitor) checkIPAMD(ipamdRunning bool) error {
 		return err
 	}
 	if m.ctrdRuntimeService == nil {
-		m.ctrdRuntimeService, err = remote.NewRuntimeService(config.CRIEndpoint, 5*time.Second)
+		m.ctrdRuntimeService, err = criclient.NewRemoteRuntimeService(config.CRIEndpoint, 5*time.Second, nil, nil)
 		if err != nil {
 			return err
 		}
 	}
 	for _, entry := range checkpointData.Allocations {
 		if _, ok, _ := m.criIPCache.GetByKey(entry.ContainerID); !ok {
-			status, err := m.ctrdRuntimeService.PodSandboxStatus(entry.ContainerID)
+			resp, err := m.ctrdRuntimeService.PodSandboxStatus(context.Background(), entry.ContainerID, false)
 			if err != nil {
 				// If the CRI is down, or if the container doesn't exist in the CRI, skip this check.
 				m.log.Info("failed to get pod sandbox status", "containerId", entry.ContainerID)
@@ -337,10 +363,10 @@ func (m *NetworkingMonitor) checkIPAMD(ipamdRunning bool) error {
 			} else {
 				// cache responses from CRI, since each container will always be associated with the same IP for its lifetime
 				m.criIPCache.Add(criIPDetails{
-					ip:          status.Network.Ip,
+					ip:          resp.Status.Network.Ip,
 					containerId: entry.ContainerID,
-					name:        status.Metadata.Name,
-					namespace:   status.Metadata.Namespace,
+					name:        resp.Status.Metadata.Name,
+					namespace:   resp.Status.Metadata.Namespace,
 				})
 			}
 		}
@@ -607,6 +633,15 @@ func (m *NetworkingMonitor) handleIPRulesAndRoutes() (merr error) {
 		return nil
 	}
 
+	// IP rules/routes checks are VPC CNI-specific; skip if it's not installed.
+	if !slices.Contains(m.runtimeContext.Tags(), config.EKSAuto) {
+		if _, isInstalled, err := m.isVPCCNIInstalled(); err != nil {
+			return fmt.Errorf("failed to check if the VPC CNI is installed: %w", err)
+		} else if !isInstalled {
+			return nil
+		}
+	}
+
 	enis, err := ipamd.GetEndpoint(ipamd.EndpointEnis)
 	if err != nil {
 		return err
@@ -811,7 +846,12 @@ func (m *NetworkingMonitor) handleIPTables() (merr error) {
 			merr = errors.Join(merr, fmt.Errorf("failed command %q: %w", cmd, err))
 			continue
 		}
+		var currentTable string
 		for _, line := range strings.Split(string(out), "\n") {
+			if strings.HasPrefix(line, "*") {
+				currentTable = strings.TrimSpace(line[1:])
+				continue
+			}
 			// only look at rule lines
 			if !strings.HasPrefix(line, "-A") {
 				continue
@@ -819,6 +859,7 @@ func (m *NetworkingMonitor) handleIPTables() (merr error) {
 			if rule, err := iptables.ParseIPTablesRule(line); err != nil {
 				merr = errors.Join(merr, err)
 			} else {
+				rule.IptablesTable = currentTable
 				rules = append(rules, *rule)
 			}
 		}
@@ -833,7 +874,7 @@ func (m *NetworkingMonitor) checkIPTables(rules []iptables.IPTablesRule) (merr e
 		// detects whenever there is a REJECT rule in iptables which is not
 		// expected. These can cause traffic to incorrectly be blocked, and are
 		// often part of some security-related third-party agent.
-		if rule.IsReject() && !rule.IsExpectedRejectRule() {
+		if rule.IsReject() && !rule.IsExpectedRejectRule(m.allowedIPTablesChains) {
 			merr = errors.Join(merr, m.manager.Notify(context.TODO(),
 				reasons.UnexpectedRejectRule.
 					Builder().
@@ -936,13 +977,30 @@ func (m *NetworkingMonitor) handleMACAddressPolicy() error {
 // returns a string containing the name of the pod and a boolean indiciating if it's present
 // or an error if it could not be checked
 func (m *NetworkingMonitor) isVPCCNIInstalled() (string, bool, error) {
+	var candidatePodIDs []string
 	dirs, err := os.ReadDir(config.PodLogsDirPath)
 	if err != nil {
 		return "", false, fmt.Errorf("failed to check for VPC CNI pod logs dir: %w", err)
 	}
 	for _, path := range dirs {
-		if strings.Contains(path.Name(), "aws-node") {
-			return path.Name(), true, nil
+		// this is only a first filter as it may match other pods, e.g. the aws-node-termination-handler
+		if strings.Contains(path.Name(), "_aws-node-") {
+			if path.Name() == m.vpcCNIPodID {
+				return path.Name(), true, nil
+			}
+			candidatePodIDs = append(candidatePodIDs, path.Name())
+		}
+	}
+
+	for _, candidate := range candidatePodIDs {
+		containerDirs, err := os.ReadDir(filepath.Join(config.PodLogsDirPath, candidate))
+		if err != nil {
+			return "", false, fmt.Errorf("failed to identify aws-node pod: %w", err)
+		}
+		for _, containerDir := range containerDirs {
+			if containerDir.Name() == "aws-vpc-cni-init" {
+				return candidate, true, nil
+			}
 		}
 	}
 	return "", false, nil

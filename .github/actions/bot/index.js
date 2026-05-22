@@ -10,15 +10,25 @@ async function bot(core, github, context, uuid) {
     }
     console.log("Comment found in payload");
 
-    // user's org membership must be public for the author_association to be MEMBER
-    // go to the org's member page, find yourself, and set the visibility to public
+    // Ensure triggering actor has write access
     const author = payload.comment.user.login;
-    const authorized = ["OWNER", "MEMBER"].includes(payload.comment.author_association);
-    if (!authorized) {
-        console.log(`Comment author is not authorized: ${author}`);
+    let permission;
+    try {
+        const resp = await github.rest.repos.getCollaboratorPermissionLevel({
+            owner: payload.repository.owner.login,
+            repo: payload.repository.name,
+            username: author
+        });
+        permission = resp.data.permission;
+    } catch (error) {
+        console.log(`Failed to get permission level: ${error.message}`);
         return;
     }
-    console.log(`Comment author is authorized: ${author}`);
+    if (!["write", "admin"].includes(permission)) {
+        console.log("Comment author is not authorized");
+        return;
+    }
+    console.log("Comment author is authorized");
 
     let commands;
     try {
@@ -175,6 +185,14 @@ class CICommand {
     async run(author, github) {
         if (this.goal === "cancel") {
             return this.cancelCI(author, github);
+        }
+        // Presets: /ci all runs full version matrix, /ci gpu runs nvidia AMI
+        if (this.goal === "all") {
+            this.goal_args["workflow:k8s_versions"] = "all";
+        } else if (this.goal === "gpu") {
+            this.goal_args["workflow:instance_type"] = "g5.2xlarge";
+            this.goal_args["workflow:ami_type"] = "nvidia";
+            this.goal_args["workflow:arch"] = "amd64";
         }
         return this.triggerCI(author, github);
     }

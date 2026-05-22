@@ -150,6 +150,158 @@ func TestIsMonitorEnabled_NilEnabled(t *testing.T) {
 	assert.True(t, cfg.IsMonitorEnabled("networking"))
 }
 
+func TestGetAllowedIPTablesChains(t *testing.T) {
+	t.Run("NilConfig", func(t *testing.T) {
+		var cfg *config.MonitorConfig
+		assert.Nil(t, cfg.GetAllowedIPTablesChains())
+	})
+	t.Run("EmptyMap", func(t *testing.T) {
+		cfg := &config.MonitorConfig{}
+		assert.Nil(t, cfg.GetAllowedIPTablesChains())
+	})
+	t.Run("NoNetworkingEntry", func(t *testing.T) {
+		cfg := &config.MonitorConfig{
+			Monitors: map[string]config.MonitorSettings{
+				"kernel-monitor": {Enabled: boolPtr(true)},
+			},
+		}
+		assert.Nil(t, cfg.GetAllowedIPTablesChains())
+	})
+	t.Run("WithChains", func(t *testing.T) {
+		cfg := &config.MonitorConfig{
+			Monitors: map[string]config.MonitorSettings{
+				"networking": {
+					AllowedIPTablesChains: []string{"filter/MY-CUSTOM-CHAIN", "filter/CUSTOM-CHAIN"},
+				},
+			},
+		}
+		assert.Equal(t, []string{"filter/MY-CUSTOM-CHAIN", "filter/CUSTOM-CHAIN"}, cfg.GetAllowedIPTablesChains())
+	})
+}
+
+func TestLoadMonitorConfig_AllowedIPTablesChains(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`monitors:
+  networking:
+    enabled: true
+    allowedIPTablesChains:
+      - "filter/MY-CUSTOM-CHAIN"
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, found, err := config.LoadMonitorConfig(cfgPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.True(t, found)
+	assert.True(t, cfg.IsMonitorEnabled("networking"))
+	assert.Equal(t, []string{"filter/MY-CUSTOM-CHAIN"}, cfg.GetAllowedIPTablesChains())
+}
+
+func TestLoadMonitorConfig_EmptyChainRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`monitors:
+  networking:
+    allowedIPTablesChains:
+      - ""
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "must use \"table/chain\" format")
+}
+
+func TestLoadMonitorConfig_WhitespaceOnlyChainRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`monitors:
+  networking:
+    allowedIPTablesChains:
+      - "   "
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "must not have leading or trailing whitespace")
+}
+
+func TestLoadMonitorConfig_UnqualifiedChainRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`monitors:
+  networking:
+    allowedIPTablesChains:
+      - "MY-CUSTOM-CHAIN"
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "must use \"table/chain\" format")
+}
+
+func TestLoadMonitorConfig_ChainWithExtraSlashRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`monitors:
+  networking:
+    allowedIPTablesChains:
+      - "filter/MY/CUSTOM-CHAIN"
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "must use \"table/chain\" format")
+}
+
+func TestLoadMonitorConfig_ChainWithSurroundingWhitespaceRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`monitors:
+  networking:
+    allowedIPTablesChains:
+      - " filter/MY-CUSTOM-CHAIN "
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "must not have leading or trailing whitespace")
+}
+
+func TestLoadMonitorConfig_AllowedIPTablesChainsOnNonNetworkingMonitorRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`monitors:
+  kernel-monitor:
+    allowedIPTablesChains:
+      - "filter/MY-CUSTOM-CHAIN"
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "allowedIPTablesChains is only supported by the networking monitor")
+	assert.Contains(t, err.Error(), "kernel-monitor")
+}
+
 func TestLoadMonitorConfig_StrictUnmarshalRejectsUnknownFields(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")
