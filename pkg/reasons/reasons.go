@@ -264,6 +264,10 @@ var (
 
     // reasons for the StorageReady condition.
 
+    BlockDeviceIOError = ReasonMeta{
+        template:        "BlockDeviceIOError",
+        defaultSeverity: "Fatal",
+    }
     EBSInstanceIOPSExceeded = ReasonMeta{
         template:        "EBSInstanceIOPSExceeded",
         defaultSeverity: "Warning",
@@ -287,10 +291,6 @@ var (
     IODelays = ReasonMeta{
         template:        "IODelays",
         defaultSeverity: "Warning",
-    }
-    InstanceStoreIOError = ReasonMeta{
-        template:        "InstanceStoreIOError",
-        defaultSeverity: "Fatal",
     }
     KubeletDiskUsageSlow = ReasonMeta{
         template:        "KubeletDiskUsageSlow",
