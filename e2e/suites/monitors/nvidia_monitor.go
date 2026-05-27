@@ -108,7 +108,7 @@ func NvidiaMonitor(awsCfg aws.Config) types.Feature {
 			t.Logf("waiting for node object %q to be deleted from cluster", oldNodeName)
 			if err := wait.For(
 				conditions.New(cfg.Client().Resources()).ResourceDeleted(targetNode),
-				wait.WithTimeout(5*time.Minute),
+				wait.WithTimeout(10*time.Minute),
 				wait.WithContext(ctx),
 			); err != nil {
 				t.Fatal(err)

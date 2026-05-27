@@ -15,13 +15,13 @@ import (
 	"strings"
 	"time"
 
-	cri "github.com/containerd/containerd/v2/integration/cri-api/pkg/apis"
-	"github.com/containerd/containerd/v2/integration/remote"
 	"github.com/coreos/go-systemd/v22/dbus"
 	"github.com/go-logr/logr"
 	"github.com/shirou/gopsutil/v4/process"
 	"golang.org/x/time/rate"
 	"k8s.io/client-go/tools/cache"
+	cri "k8s.io/cri-api/pkg/apis"
+	criclient "k8s.io/cri-client/pkg"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
@@ -100,6 +100,14 @@ func WithExec(exec osext.Exec) Option {
 func WithRuntimeContext(runtimeContext *config.RuntimeContext) Option {
 	return func(m *NetworkingMonitor) {
 		m.runtimeContext = runtimeContext
+	}
+}
+
+// WithRuntimeService injects a CRI RuntimeService client. When set, checkIPAMD
+// will use it instead of dialing the CRI endpoint. Intended for tests.
+func WithRuntimeService(svc cri.RuntimeService) Option {
+	return func(m *NetworkingMonitor) {
+		m.ctrdRuntimeService = svc
 	}
 }
 
@@ -340,14 +348,14 @@ func (m *NetworkingMonitor) checkIPAMD(ipamdRunning bool) error {
 		return err
 	}
 	if m.ctrdRuntimeService == nil {
-		m.ctrdRuntimeService, err = remote.NewRuntimeService(config.CRIEndpoint, 5*time.Second)
+		m.ctrdRuntimeService, err = criclient.NewRemoteRuntimeService(config.CRIEndpoint, 5*time.Second, nil, nil)
 		if err != nil {
 			return err
 		}
 	}
 	for _, entry := range checkpointData.Allocations {
 		if _, ok, _ := m.criIPCache.GetByKey(entry.ContainerID); !ok {
-			status, err := m.ctrdRuntimeService.PodSandboxStatus(entry.ContainerID)
+			resp, err := m.ctrdRuntimeService.PodSandboxStatus(context.Background(), entry.ContainerID, false)
 			if err != nil {
 				// If the CRI is down, or if the container doesn't exist in the CRI, skip this check.
 				m.log.Info("failed to get pod sandbox status", "containerId", entry.ContainerID)
@@ -355,10 +363,10 @@ func (m *NetworkingMonitor) checkIPAMD(ipamdRunning bool) error {
 			} else {
 				// cache responses from CRI, since each container will always be associated with the same IP for its lifetime
 				m.criIPCache.Add(criIPDetails{
-					ip:          status.Network.Ip,
+					ip:          resp.Status.Network.Ip,
 					containerId: entry.ContainerID,
-					name:        status.Metadata.Name,
-					namespace:   status.Metadata.Namespace,
+					name:        resp.Status.Metadata.Name,
+					namespace:   resp.Status.Metadata.Namespace,
 				})
 			}
 		}

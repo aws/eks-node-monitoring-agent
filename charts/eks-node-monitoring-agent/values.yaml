@@ -28,7 +28,7 @@ serviceAccount:
 nodeAgent:
   image:
     # -- Image tag for the eks-node-monitoring-agent
-    tag: v1.6.4-eksbuild.1
+    tag: v1.6.5-eksbuild.1
     # -- Full container registry URL override (e.g., 602401143452.dkr.ecr.us-west-2.amazonaws.com).
     # When set, this takes precedence over account/endpoint/region/domain fields.
     containerRegistry: ""

@@ -11,6 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
+	"github.com/aws/eks-node-monitoring-agent/internal/pkg/instanceinfo"
 	"github.com/aws/eks-node-monitoring-agent/pkg/config"
 	"github.com/aws/eks-node-monitoring-agent/pkg/reasons"
 )
@@ -41,6 +42,27 @@ func (s *DCGMSystem) DeviceCount(ctx context.Context) ([]monitor.Condition, erro
 				Message(fmt.Sprintf("DCGM detected %d GPUs but %d nvidia device files were detected", gpuDeviceCount, fsDeviceCount)).
 				Build(),
 		)
+	}
+
+	// Compare the detected GPU count against the expected count for the EC2
+	// instance type. This catches cases where a GPU fails to enumerate on the
+	// PCIe bus at boot — both DCGM and /dev will agree on the (wrong) lower
+	// count, so the check above won't fire.
+	if s.instanceTypeInfoProvider != nil {
+		info, err := s.instanceTypeInfoProvider.GetInstanceInfo(ctx)
+		if errors.Is(err, instanceinfo.ErrUnknownInstanceType) {
+			logger.V(4).Info("instance type not in embedded lookup, skipping GPU count validation", "error", err)
+		} else if err != nil {
+			logger.V(2).Info("could not determine expected GPU count for validation", "error", err)
+		} else if gpuDeviceCount < info.NvidiaGPUCount {
+			conditions = append(conditions,
+				reasons.NvidiaDeviceCountMismatch.
+					Builder().
+					Message(fmt.Sprintf("expected %d GPUs for this instance type but only %d were detected — possible hardware failure",
+						info.NvidiaGPUCount, gpuDeviceCount)).
+					Build(),
+			)
+		}
 	}
 
 	return conditions, nil

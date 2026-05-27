@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
@@ -82,31 +83,41 @@ func (c *nodeDiagnosticController) Register(ctx context.Context, m controllerrun
 		return err
 	}
 
-	// Register watch event handler for mid-capture cancellation.
-	// This runs outside the Reconcile queue, so it can cancel a blocked capture immediately.
-	// Use GetInformer (not GetInformerForKind) to ensure we get the same informer instance
-	// that controller-runtime uses for the controller's watch.
-	informer, err := m.GetCache().GetInformer(ctx, &v1alpha1.NodeDiagnostic{})
-	if err != nil {
-		return fmt.Errorf("failed to get informer for NodeDiagnostic: %w", err)
-	}
+	// Attach the mid-capture cancellation event handler as a manager runnable
+	// so it runs after the cache has started. Calling GetInformer directly
+	// here would trigger synchronous API discovery against the cluster IP,
+	// which can block for ~30s on a TCP SYN timeout if kube-proxy has not yet
+	// programmed the DNAT rule for the kubernetes service. Deferring until
+	// the cache is ready avoids that startup race and the resulting panic.
+	mgrCache := m.GetCache()
+	return m.Add(manager.RunnableFunc(func(ctx context.Context) error {
+		logger := log.FromContext(ctx).WithName("capture-cancel-watcher")
 
-	logger := log.FromContext(ctx).WithName("capture-cancel-watcher")
-	logger.Info("registering informer event handler for mid-capture cancellation")
-	reg, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		UpdateFunc: func(oldObj, newObj interface{}) {
-			c.handleSpecChange(logger, oldObj, newObj)
-		},
-		DeleteFunc: func(obj interface{}) {
-			c.handleDelete(logger, obj)
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("failed to add event handler: %w", err)
-	}
-	logger.Info("informer event handler registered", "hasSynced", reg.HasSynced())
+		informer, err := mgrCache.GetInformer(ctx, &v1alpha1.NodeDiagnostic{})
+		if err != nil {
+			return fmt.Errorf("failed to get informer for NodeDiagnostic: %w", err)
+		}
 
-	return nil
+		logger.Info("registering informer event handler for mid-capture cancellation")
+		reg, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+			UpdateFunc: func(oldObj, newObj interface{}) {
+				c.handleSpecChange(logger, oldObj, newObj)
+			},
+			DeleteFunc: func(obj interface{}) {
+				c.handleDelete(logger, obj)
+			},
+		})
+		if err != nil {
+			return fmt.Errorf("failed to add event handler: %w", err)
+		}
+		logger.Info("informer event handler registered", "hasSynced", reg.HasSynced())
+
+		// Block until the manager shuts down. Runnables must block until ctx
+		// is done; returning early would cause the manager to treat this
+		// runnable as finished.
+		<-ctx.Done()
+		return nil
+	}))
 }
 
 func (c *nodeDiagnosticController) Reconcile(ctx context.Context, nodeDiagnostic *v1alpha1.NodeDiagnostic) (reconcile.Result, error) {
