@@ -31,17 +31,21 @@ func (s *DCGMSystem) WatchFields(ctx context.Context) ([]monitor.Condition, erro
 	var conditions []monitor.Condition
 
 	for _, fieldValue := range fieldValues {
-		// skip if there's no issue with the field or no new data was provided.
-		if fieldValue.Status == dcgmapi.DCGM_ST_OK || fieldValue.Status == dcgmapi.DCGM_ST_NO_DATA {
-			continue
-		}
-
-		// Fabric fields emit their own condition types and may suppress emission
-		// for healthy/unsupported states, so they are handled separately.
+		// Fabric fields encode health in the field value, not in fieldValue.Status,
+		// so they must be handled before the OK/NO_DATA gate below. DCGM returns
+		// DCGM_ST_OK for a successfully-read fabric field even when the value
+		// indicates Failure (e.g. FM_STATUS=Failure on a node where
+		// nvidia-fabricmanager.service has exited). The handler suppresses
+		// emission for healthy/unsupported states internally.
 		if c, handled := handleFabricField(fieldValue); handled {
 			if c != nil {
 				conditions = append(conditions, *c)
 			}
+			continue
+		}
+
+		// skip if there's no issue with the field or no new data was provided.
+		if fieldValue.Status == dcgmapi.DCGM_ST_OK || fieldValue.Status == dcgmapi.DCGM_ST_NO_DATA {
 			continue
 		}
 

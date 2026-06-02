@@ -40,7 +40,7 @@ runs:
       uses: actions/setup-go@v5
       with:
         go-version: stable
-        cache-dependency-path: go.sum
+        cache: false
 
     - id: resolve-ami
       shell: bash
