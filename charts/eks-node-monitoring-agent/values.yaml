@@ -18,11 +18,12 @@ nameOverride: "eks-node-monitoring-agent"
 fullnameOverride: "eks-node-monitoring-agent"
 
 serviceAccount:
-  # Specifies whether a service account should be created
+  # -- Specifies whether a service account should be created
   create: true
-  # The name of the service account to use.
+  # -- The name of the service account to use.
   # If not set and create is true, a name is generated using the fullname template
   name:
+  # -- Annotations applied to the service account
   annotations: {}
 
 nodeAgent:
@@ -49,6 +50,7 @@ nodeAgent:
   additionalArgs:
     - "--metrics-address=:8003"
   # -- Map of pod affinities for the eks-node-monitoring-agent
+  # @default -- see [`values.yaml`](./values.yaml)
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
@@ -116,6 +118,7 @@ dcgmAgent:
     # -- Container pull policy for the dcgm-exporter
     pullPolicy: IfNotPresent
   # -- Map of dcgm pod affinities
+  # @default -- see [`values.yaml`](./values.yaml)
   affinity:
     nodeAffinity:
       requiredDuringSchedulingIgnoredDuringExecution:
@@ -158,3 +161,21 @@ updateStrategy:
   type: RollingUpdate
   rollingUpdate:
     maxUnavailable: "10%"
+
+# -- Additional Kubernetes manifests to deploy alongside this chart.
+# Each entry is rendered through `tpl`, so template expressions
+# (e.g. {{ .Release.Namespace }}) inside the manifests are evaluated.
+# Example:
+#   extraObjects:
+#     - apiVersion: monitoring.coreos.com/v1
+#       kind: PodMonitor
+#       metadata:
+#         name: eks-node-monitoring-agent
+#         namespace: {{ .Release.Namespace }}
+#       spec:
+#         selector:
+#           matchLabels:
+#             app.kubernetes.io/name: eks-node-monitoring-agent
+#         podMetricsEndpoints:
+#           - port: metrics
+extraObjects: []
