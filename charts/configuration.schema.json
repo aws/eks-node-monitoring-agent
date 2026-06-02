@@ -16,6 +16,9 @@
                 },
                 "dcgmAgent": {
                     "$ref": "#/definitions/DCGMAgent"
+                },
+                "extraObjects": {
+                    "$ref": "#/definitions/ExtraObjects"
                 }
             }
         },
@@ -184,6 +187,15 @@
         "Tolerations": {
             "title": "Tolerations",
             "type": "array",
+            "items": {
+                "type": "object"
+            }
+        },
+        "ExtraObjects": {
+            "title": "ExtraObjects",
+            "type": "array",
+            "description": "Additional Kubernetes manifests to deploy alongside this chart. Each entry is rendered through `tpl`, so template expressions inside the manifests are evaluated against the release context.",
+            "default": [],
             "items": {
                 "type": "object"
             }
