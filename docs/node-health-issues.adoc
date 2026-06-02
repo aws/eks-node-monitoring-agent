@@ -325,6 +325,10 @@ The monitoring condition is `StorageReady` for issues in the following table tha
 |Severity
 |Description
 
+|BlockDeviceIOError
+|Condition
+|An I/O error was detected on a block device, indicating a failed physical drive (instance store) or EBS volume. This can cause data loss and application failures.
+
 |EBSInstanceIOPSExceeded
 |Event
 |Maximum IOPS for the instance was exceeded.

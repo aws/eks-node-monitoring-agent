@@ -264,6 +264,10 @@ var (
 
     // reasons for the StorageReady condition.
 
+    BlockDeviceIOError = ReasonMeta{
+        template:        "BlockDeviceIOError",
+        defaultSeverity: "Fatal",
+    }
     EBSInstanceIOPSExceeded = ReasonMeta{
         template:        "EBSInstanceIOPSExceeded",
         defaultSeverity: "Warning",
