@@ -348,7 +348,7 @@ func (m *NetworkingMonitor) checkIPAMD(ipamdRunning bool) error {
 		return err
 	}
 	if m.ctrdRuntimeService == nil {
-		m.ctrdRuntimeService, err = criclient.NewRemoteRuntimeService(config.CRIEndpoint, 5*time.Second, nil, nil)
+		m.ctrdRuntimeService, err = criclient.NewRemoteRuntimeService(context.Background(), config.CRIEndpoint, 5*time.Second, nil, false)
 		if err != nil {
 			return err
 		}
