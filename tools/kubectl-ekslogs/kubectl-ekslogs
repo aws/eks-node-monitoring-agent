@@ -422,7 +422,7 @@ spec:
     destination: node
 EOF
     fi
-    ((node_index++))
+    ((node_index = node_index + 1))
 done
 
 # Wait for completion and verify success
@@ -487,7 +487,7 @@ for node in "${NODE_NAMES[@]}"; do
 
         info "Saved: ${output_path} ($(du -h "$output_path" | cut -f1))"
     fi
-    ((node_index++))
+    ((node_index = node_index + 1))
 done
 
 # Cleanup NodeDiagnostic resources

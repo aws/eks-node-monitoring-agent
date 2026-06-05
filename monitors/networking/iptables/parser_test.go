@@ -28,7 +28,7 @@ func TestIPTablesRuleParser(t *testing.T) {
 		} {
 			rule, err := iptables.ParseIPTablesRule(ruleRaw)
 			assert.NoError(t, err)
-			assert.Truef(t, rule.IsExpectedRejectRule(), ruleRaw)
+			assert.Truef(t, rule.IsExpectedRejectRule(nil), ruleRaw)
 		}
 	})
 
@@ -43,7 +43,7 @@ func TestIPTablesRuleParser(t *testing.T) {
 		} {
 			rule, err := iptables.ParseIPTablesRule(ruleRaw)
 			assert.NoError(t, err)
-			assert.Truef(t, rule.IsExpectedRejectRule(), ruleRaw)
+			assert.Truef(t, rule.IsExpectedRejectRule(nil), ruleRaw)
 		}
 	})
 
@@ -53,8 +53,50 @@ func TestIPTablesRuleParser(t *testing.T) {
 		} {
 			rule, err := iptables.ParseIPTablesRule(ruleRaw)
 			assert.NoError(t, err)
-			assert.Truef(t, rule.IsExpectedRejectRule(), ruleRaw)
+			assert.Truef(t, rule.IsExpectedRejectRule(nil), ruleRaw)
 		}
+	})
+
+	t.Run("ExpectedRejectRuleKubeProxyIPVS", func(t *testing.T) {
+		// kube-proxy (IPVS mode) manages KUBE-IPVS-FILTER and KUBE-IPVS-OUT-FILTER,
+		// and manages KUBE-SOURCE-RANGES-FIREWALL whenever any Service sets
+		// spec.loadBalancerSourceRanges. The chains are flushed and rewritten by
+		// kube-proxy on every sync, so matching on the chain name is sufficient.
+		//   https://github.com/aws/eks-node-monitoring-agent/issues/150
+		for _, ruleRaw := range []string{
+			`-A KUBE-IPVS-FILTER -m conntrack --ctstate NEW -m set --match-set KUBE-IPVS-IPS dst -j REJECT --reject-with icmp-port-unreachable`,
+			`-A KUBE-IPVS-OUT-FILTER -s 10.0.0.1 -m ipvs --vaddr 10.0.0.1 --vproto tcp --vport 443 -j DROP`,
+			`-A KUBE-SOURCE-RANGES-FIREWALL -j DROP`,
+		} {
+			rule, err := iptables.ParseIPTablesRule(ruleRaw)
+			assert.NoError(t, err)
+			assert.Truef(t, rule.IsExpectedRejectRule(nil), ruleRaw)
+		}
+	})
+
+	t.Run("ExpectedRejectRuleCustomChain", func(t *testing.T) {
+		chains := []string{"filter/MY-CUSTOM-CHAIN", "filter/CUSTOM-CHAIN"}
+		for _, ruleRaw := range []string{
+			`-A MY-CUSTOM-CHAIN -s 169.254.172.0/22 -p tcp -m multiport --dports 20,21,989,990,137,139,445 -j DROP`,
+			`-A MY-CUSTOM-CHAIN -s 169.254.172.0/22 -d 10.0.0.0/8 -j DROP`,
+			`-A CUSTOM-CHAIN -j DROP`,
+		} {
+			rule, err := iptables.ParseIPTablesRule(ruleRaw)
+			assert.NoError(t, err)
+			rule.IptablesTable = "filter"
+
+			assert.Falsef(t, rule.IsExpectedRejectRule(nil), "should not be expected without custom chains: %s", ruleRaw)
+			assert.Truef(t, rule.IsExpectedRejectRule(chains), "should be expected with correct table/chain: %s", ruleRaw)
+			assert.Falsef(t, rule.IsExpectedRejectRule([]string{"nat/MY-CUSTOM-CHAIN", "nat/CUSTOM-CHAIN"}), "should not match when table differs: %s", ruleRaw)
+		}
+	})
+
+	t.Run("MalformedAllowedChainEntryIgnored", func(t *testing.T) {
+		rule, err := iptables.ParseIPTablesRule(`-A MY-CUSTOM-CHAIN -j DROP`)
+		assert.NoError(t, err)
+		rule.IptablesTable = "filter"
+		assert.False(t, rule.IsExpectedRejectRule([]string{"MY-CUSTOM-CHAIN"}),
+			"entry without table prefix should not match")
 	})
 
 	t.Run("NotExpectedRejectRule", func(t *testing.T) {
@@ -63,7 +105,7 @@ func TestIPTablesRuleParser(t *testing.T) {
 		} {
 			rule, err := iptables.ParseIPTablesRule(ruleRaw)
 			assert.NoError(t, err)
-			assert.Falsef(t, rule.IsExpectedRejectRule(), ruleRaw)
+			assert.Falsef(t, rule.IsExpectedRejectRule(nil), ruleRaw)
 		}
 	})
 

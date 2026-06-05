@@ -16,6 +16,9 @@
                 },
                 "dcgmAgent": {
                     "$ref": "#/definitions/DCGMAgent"
+                },
+                "extraObjects": {
+                    "$ref": "#/definitions/ExtraObjects"
                 }
             }
         },
@@ -24,6 +27,10 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
+                "affinity": {
+                    "type": "object",
+                    "description": "Map of pod affinities for the eks-node-monitoring-agent"
+                },
                 "additionalArgs": {
                     "type": "array",
                     "description": "Additional arguments passed to the eks node monitoring agent pod",
@@ -41,6 +48,11 @@
                     "$ref": "#/definitions/StringMap",
                     "description": "Labels applied to the eks node monitoring agent pod. These labels are merged with any global pod labels, with component specific labels taking precedence in the case of a conflict.",
                     "default": {}
+                },
+                "probePort": {
+                    "type": "integer",
+                    "description": "Health probe port for the eks node monitoring agent. Used for both the --probe-address arg and the liveness probe.",
+                    "default": 8002
                 },
                 "resources": {
                     "$ref": "#/definitions/Resources"
@@ -60,7 +72,7 @@
                             "$ref": "#/definitions/MonitorSettings"
                         },
                         "networking": {
-                            "$ref": "#/definitions/MonitorSettings"
+                            "$ref": "#/definitions/NetworkingMonitorSettings"
                         },
                         "storage-monitor": {
                             "$ref": "#/definitions/MonitorSettings"
@@ -83,6 +95,10 @@
             "type": "object",
             "additionalProperties": false,
             "properties": {
+                "affinity": {
+                    "type": "object",
+                    "description": "Map of dcgm pod affinities"
+                },
                 "podAnnotations": {
                     "$ref": "#/definitions/StringMap",
                     "description": "Annotations applied to the eks node monitoring agent pod. These annotations are merged with any global pod annotations, with component specific annotations taking precedence in the case of a conflict.",
@@ -173,6 +189,37 @@
             "type": "array",
             "items": {
                 "type": "object"
+            }
+        },
+        "ExtraObjects": {
+            "title": "ExtraObjects",
+            "type": "array",
+            "description": "Additional Kubernetes manifests to deploy alongside this chart. Each entry is rendered through `tpl`, so template expressions inside the manifests are evaluated against the release context.",
+            "default": [],
+            "items": {
+                "type": "object"
+            }
+        },
+        "NetworkingMonitorSettings": {
+            "title": "NetworkingMonitorSettings",
+            "type": "object",
+            "description": "Per-monitor settings for the networking monitor",
+            "additionalProperties": false,
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "description": "Whether this monitor is enabled",
+                    "default": true
+                },
+                "allowedIPTablesChains": {
+                    "type": "array",
+                    "description": "List of iptables chains (in table/chain format, e.g. \"filter/MY-CUSTOM-CHAIN\") whose REJECT/DROP rules should not trigger an UnexpectedRejectRule event. Use this to suppress false positives from known-good custom chains.",
+                    "default": [],
+                    "items": {
+                        "type": "string",
+                        "pattern": "^[^/]+/[^/]+$"
+                    }
+                }
             }
         },
         "MonitorSettings": {

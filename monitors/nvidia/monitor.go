@@ -12,6 +12,7 @@ import (
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 	"github.com/aws/eks-node-monitoring-agent/api/monitor/resource"
+	"github.com/aws/eks-node-monitoring-agent/internal/pkg/instanceinfo"
 	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/dcgm"
 	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/nccl"
 	"github.com/aws/eks-node-monitoring-agent/pkg/config"
@@ -43,17 +44,19 @@ func NewNvidiaMonitor() *nvidiaMonitor {
 				dcgm.FeaturePolicyViolations,
 			},
 		}),
-		sysInfo:  &sysInfo{},
-		tickFunc: util.TimeTickWithJitterContext,
+		sysInfo:                  &sysInfo{},
+		tickFunc:                 util.TimeTickWithJitterContext,
+		instanceTypeInfoProvider: instanceinfo.NewInstanceTypeInfoProvider(),
 	}
 }
 
 // NewNvidiaMonitorWithDeps creates an nvidiaMonitor with injectable dependencies for testing.
-func NewNvidiaMonitorWithDeps(dcgmClient dcgm.DCGM, sys SysInfo, tickFunc TickFunc) *nvidiaMonitor {
+func NewNvidiaMonitorWithDeps(dcgmClient dcgm.DCGM, sys SysInfo, tickFunc TickFunc, provider instanceinfo.InstanceTypeInfoProvider) *nvidiaMonitor {
 	return &nvidiaMonitor{
-		dcgmClient: dcgmClient,
-		sysInfo:    sys,
-		tickFunc:   tickFunc,
+		dcgmClient:               dcgmClient,
+		sysInfo:                  sys,
+		tickFunc:                 tickFunc,
+		instanceTypeInfoProvider: provider,
 	}
 }
 
@@ -63,9 +66,10 @@ type TickFunc func(ctx context.Context, d time.Duration) <-chan time.Time
 
 // nvidiaMonitor detects issues on nvidia GPUs
 type nvidiaMonitor struct {
-	dcgmClient dcgm.DCGM
-	sysInfo    SysInfo
-	tickFunc   TickFunc
+	dcgmClient               dcgm.DCGM
+	sysInfo                  SysInfo
+	tickFunc                 TickFunc
+	instanceTypeInfoProvider instanceinfo.InstanceTypeInfoProvider
 }
 
 func (m *nvidiaMonitor) Name() string {
@@ -85,7 +89,7 @@ func (m *nvidiaMonitor) Register(ctx context.Context, mgr monitor.Manager) error
 	if !slices.Contains(config.GetRuntimeContext().Tags(), config.EKSAuto) && strings.Contains(m.sysInfo.Arch(), "arm") {
 		logger.Info("NVIDIA-based monitoring is disabled for the arm64 architecture in this version of the agent")
 	} else {
-		dcgmSystem := dcgm.NewDCGMSystem(m.dcgmClient, dcgm.GetDiagType())
+		dcgmSystem := dcgm.NewDCGMSystemWithInstanceTypeInfoProvider(m.dcgmClient, dcgm.GetDiagType(), m.instanceTypeInfoProvider)
 
 		// DCGM Reconcile - maintains connection to DCGM host
 		go func() {

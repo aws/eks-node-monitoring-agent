@@ -49,13 +49,14 @@ The following table lists the configurable parameters for this chart and their d
 | dcgmAgent.resizePolicy | list | `[]` | Container resize policy for in-place pod vertical scaling (requires Kubernetes 1.33+) |
 | dcgmAgent.resources | object | `{}` | Container resources for the dcgm deployment |
 | dcgmAgent.tolerations | list | `[]` | Deployment tolerations for the dcgm |
+| extraObjects | list | see [`values.yaml`](./values.yaml), so template expressions (e.g. {{ .Release.Namespace }}) inside the manifests are evaluated. Example:   extraObjects:     - apiVersion: monitoring.coreos.com/v1       kind: PodMonitor       metadata:         name: eks-node-monitoring-agent         namespace: {{ .Release.Namespace }}       spec:         selector:           matchLabels:             app.kubernetes.io/name: eks-node-monitoring-agent         podMetricsEndpoints:           - port: metrics |
 | fullnameOverride | string | `"eks-node-monitoring-agent"` | A fullname override for the chart |
 | global | object | `{"podAnnotations":{},"podLabels":{}}` | Global values shared across components |
 | global.podAnnotations | object | `{}` | Annotations applied to eks-node-monitoring-agent and dcgm-exporter (can be overridden by component-specific annotations) |
 | global.podLabels | object | `{}` | Labels applied to eks-node-monitoring-agent and dcgm-exporter (can be overridden by component-specific labels) |
 | imagePullSecrets | list | `[]` | Docker registry pull secrets |
 | nameOverride | string | `"eks-node-monitoring-agent"` | A name override for the chart |
-| nodeAgent.additionalArgs | list | `[]` | List of additional container arguments for the eks-node-monitoring-agent. The agent binds to ports 8002 (health probe) and 8080 (metrics) on the host network by default. To avoid port conflicts, override with:   additionalArgs:     - "--probe-address=:8002"     - "--metrics-address=:8003" |
+| nodeAgent.additionalArgs | list | `["--metrics-address=:8003"]` | List of additional container arguments for the eks-node-monitoring-agent |
 | nodeAgent.affinity | object | see [`values.yaml`](./values.yaml) | Map of pod affinities for the eks-node-monitoring-agent |
 | nodeAgent.image.account | string | `"602401143452"` | ECR repository account number for the eks-node-monitoring-agent |
 | nodeAgent.image.containerRegistry | string | `""` | Full container registry URL override (e.g., 602401143452.dkr.ecr.us-west-2.amazonaws.com). When set, this takes precedence over account/endpoint/region/domain fields. |
@@ -63,14 +64,18 @@ The following table lists the configurable parameters for this chart and their d
 | nodeAgent.image.endpoint | string | `"ecr"` | ECR repository endpoint for the eks-node-monitoring-agent |
 | nodeAgent.image.pullPolicy | string | `"IfNotPresent"` | Container pull policyfor the eks-node-monitoring-agent |
 | nodeAgent.image.region | string | `"us-west-2"` | ECR repository region for the eks-node-monitoring-agent |
-| nodeAgent.image.tag | string | `"v1.6.1-eksbuild.1"` | Image tag for the eks-node-monitoring-agent |
+| nodeAgent.image.tag | string | `"v1.6.5-eksbuild.1"` | Image tag for the eks-node-monitoring-agent |
 | nodeAgent.monitors | object | `{}` | Per-monitor configuration keyed by plugin name. See the main README for details. |
 | nodeAgent.podAnnotations | object | `{}` | Pod annotations applied to the eks-node-monitoring-agent |
 | nodeAgent.podLabels | object | `{}` | Pod labels applied to the eks-node-monitoring-agent |
+| nodeAgent.probePort | int | `8002` | Health probe port for the eks-node-monitoring-agent. Used for both the --probe-address arg and the liveness probe. |
 | nodeAgent.resizePolicy | list | `[]` | Container resize policy for in-place pod vertical scaling (requires Kubernetes 1.33+) |
 | nodeAgent.resources | object | `{"limits":{"cpu":"250m","memory":"200Mi"},"requests":{"cpu":"10m","memory":"30Mi"}}` | Container resources for the eks-node-monitoring-agent |
 | nodeAgent.securityContext | object | `{"capabilities":{"add":["NET_ADMIN"]},"privileged":true}` | Container Security context for the eks-node-monitoring-agent |
 | nodeAgent.tolerations | list | `[{"operator":"Exists"}]` | Deployment tolerations for the eks-node-monitoring-agent |
+| serviceAccount.annotations | object | `{}` | Annotations applied to the service account |
+| serviceAccount.create | bool | `true` | Specifies whether a service account should be created |
+| serviceAccount.name | string | `nil` | The name of the service account to use. If not set and create is true, a name is generated using the fullname template |
 | updateStrategy | object | `{"rollingUpdate":{"maxUnavailable":"10%"},"type":"RollingUpdate"}` | Update strategy for all daemon sets |
 
 Specify each parameter using the `--set key=value[,key=value]` argument to `helm install` or provide a YAML file

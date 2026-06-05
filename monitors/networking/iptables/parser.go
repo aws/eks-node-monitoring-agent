@@ -20,6 +20,7 @@ type Match struct {
 }
 
 type IPTablesRule struct {
+	IptablesTable    string
 	table            string
 	source           string
 	comment          string
@@ -74,7 +75,7 @@ func (r IPTablesRule) IsReject() bool {
 		r.rejectWith != ""
 }
 
-func (rule IPTablesRule) IsExpectedRejectRule() bool {
+func (rule IPTablesRule) IsExpectedRejectRule(allowedChains []string) bool {
 	if rule.table == "KUBE-FORWARD" &&
 		slices.ContainsFunc(rule.matches, func(m Match) bool { return m.name == "conntrack" }) &&
 		rule.connectionState == "INVALID" {
@@ -92,12 +93,33 @@ func (rule IPTablesRule) IsExpectedRejectRule() bool {
 			strings.Contains(rule.rejectWith, "icmp-port-unreachable")) {
 		// kube service with no endpoints
 		return true
+	} else if rule.table == "KUBE-IPVS-FILTER" || rule.table == "KUBE-IPVS-OUT-FILTER" {
+		// kube-proxy (IPVS mode) installs these chains to reject or drop traffic
+		// destined for service VIPs on the main netns and to block node access to
+		// load balancer VIPs. The chains are fully managed by kube-proxy and
+		// flushed on every sync.
+		return true
+	} else if rule.table == "KUBE-SOURCE-RANGES-FIREWALL" {
+		// kube-proxy installs this chain when a Service sets
+		// spec.loadBalancerSourceRanges. It drops packets from source IPs that
+		// are not in the allowed ranges.
+		return true
 	} else if strings.HasPrefix(rule.table, "cali-") {
 		// Calico managed chains use DROP rules as part of normal network policy enforcement
 		return true
 	} else if rule.table == "FORWARD" && strings.Contains(rule.comment, "Block Node Local Pod access") {
 		// VPC CNI rule to block node-local pod access via link-local addresses
 		return true
+	}
+	for _, entry := range allowedChains {
+		// entries must use "table/chain" format (e.g. "filter/MY-CUSTOM-CHAIN")
+		table, chainName, ok := strings.Cut(entry, "/")
+		if !ok || strings.Count(entry, "/") != 1 || strings.TrimSpace(table) == "" || strings.TrimSpace(chainName) == "" {
+			continue
+		}
+		if rule.IptablesTable == table && rule.table == chainName {
+			return true
+		}
 	}
 	return false
 }

@@ -1,0 +1,96 @@
+name: "Update NVIDIA GPU Instance Types"
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Every Monday at 14:00 UTC
+    - cron: "0 14 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  update-gpu-list:
+    if: ${{ github.repository == 'aws/eks-node-monitoring-agent' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Clean up stale bot branches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          for BRANCH in $(git branch -r | grep 'origin/automated/update-nvidia-gpu-list' | sed 's|origin/||'); do
+            OPEN=$(gh pr list --head "$BRANCH" --state open --json number --jq 'length')
+            if [ "$OPEN" = "0" ]; then
+              echo "Deleting stale branch: ${BRANCH}"
+              git push origin --delete "$BRANCH" || true
+            fi
+          done
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_CI }}
+
+      - name: Run update script
+        id: update
+        run: |
+          bash hack/update-nvidia-gpu-list.sh
+          make generate
+          CHANGES=$(git diff --name-only)
+          if [ -z "$CHANGES" ]; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check for existing PR
+        if: steps.update.outputs.has_changes == 'true'
+        id: existing_pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          EXISTING=$(gh pr list --head "automated/update-nvidia-gpu-list" --state open --json number --jq 'length')
+          if [ "$EXISTING" -gt 0 ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create Pull Request
+        if: steps.update.outputs.has_changes == 'true' && steps.existing_pr.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH="automated/update-nvidia-gpu-list"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add -A
+          git commit -m "chore: update NVIDIA GPU instance type list"
+          git push origin "$BRANCH"
+
+          gh pr create \
+            --title "chore: update NVIDIA GPU instance type list" \
+            --body "Automated weekly update of the NVIDIA GPU instance type list in the Helm chart values.
+
+          This ensures the DCGM agent DaemonSet node affinity stays current with all
+          available NVIDIA GPU instance types across AWS regions.
+
+          Script: \`hack/update-nvidia-gpu-list.sh\`
+
+          This PR was created automatically by the \`update-nvidia-gpu-list\` workflow." \
+            --head "$BRANCH"

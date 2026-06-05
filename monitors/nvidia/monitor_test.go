@@ -13,6 +13,7 @@ import (
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 	"github.com/aws/eks-node-monitoring-agent/api/monitor/resource"
+	"github.com/aws/eks-node-monitoring-agent/internal/pkg/instanceinfo"
 	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia"
 	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/dcgm/fake"
 	"github.com/aws/eks-node-monitoring-agent/pkg/observer"
@@ -54,7 +55,13 @@ func newMonitorWithDcgm() (monitor.Monitor, *fake.FakeDcgm) {
 	mockDcgm := &fake.FakeDcgm{
 		PolicyChan: make(chan dcgmapi.PolicyViolation, 5),
 	}
-	nvidiaMonitor := nvidia.NewNvidiaMonitorWithDeps(mockDcgm, &mockSysInfo{}, immediateTick)
+	// Provide a fake InstanceTypeInfoProvider with a zero expected GPU count so
+	// the new instance-type validation in DeviceCount() never fires and the
+	// existing DCGM-vs-/dev mismatch path is the only source of conditions.
+	provider := &fake.FakeInstanceTypeInfoProvider{
+		Info: &instanceinfo.InstanceInfo{InstanceType: "test", NvidiaGPUCount: 0},
+	}
+	nvidiaMonitor := nvidia.NewNvidiaMonitorWithDeps(mockDcgm, &mockSysInfo{}, immediateTick, provider)
 	return nvidiaMonitor, mockDcgm
 }
 
@@ -87,7 +94,7 @@ func TestNvidiaMonitor(t *testing.T) {
 		nvidiaMonitor, mockDcgm := newMonitorWithDcgm()
 		mgr := newMockManager()
 		nvidiaMonitor.Register(ctx, mgr)
-		xidCode := uint(13)
+		xidCode := uint(46)
 
 		mockDcgm.PolicyChan <- dcgmapi.PolicyViolation{
 			Condition: dcgmapi.XidPolicy,

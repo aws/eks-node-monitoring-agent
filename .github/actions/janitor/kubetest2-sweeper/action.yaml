@@ -1,0 +1,20 @@
+name: "[Janitor] kubetest2 sweeper"
+description: "🗑️ Deletes kubetest2 resources when they're no longer needed"
+inputs:
+  max_resource_age_duration:
+    description: "Golang duration after creation when resources become eligible for deletion"
+    required: true
+runs:
+  using: "composite"
+  steps:
+    - uses: actions/setup-go@v5
+      with:
+        go-version: stable
+        cache: false
+    - shell: bash
+      run: |
+        export PATH=${PATH}:$(go env GOPATH)/bin
+        go install sigs.k8s.io/kubetest2/...@latest
+        go install github.com/aws/aws-k8s-tester/...@HEAD
+
+        kubetest2 eksapi-janitor -max-resource-age=${{ inputs.max_resource_age_duration }}

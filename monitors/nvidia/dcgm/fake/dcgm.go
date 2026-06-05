@@ -7,6 +7,7 @@ import (
 	"time"
 
 	dcgmapi "github.com/NVIDIA/go-dcgm/pkg/dcgm"
+	"github.com/aws/eks-node-monitoring-agent/internal/pkg/instanceinfo"
 	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/dcgm"
 )
 
@@ -48,4 +49,14 @@ func (m *FakeDcgm) GetValuesSince(time.Time) ([]dcgmapi.FieldValue_v2, error) {
 
 func (m *FakeDcgm) GetDeviceCount() (uint, error) {
 	return m.DeviceCount, m.DeviceCountErr
+}
+
+// FakeInstanceTypeInfoProvider is a test double for instanceinfo.InstanceTypeInfoProvider.
+type FakeInstanceTypeInfoProvider struct {
+	Info *instanceinfo.InstanceInfo
+	Err  error
+}
+
+func (f *FakeInstanceTypeInfoProvider) GetInstanceInfo(_ context.Context) (*instanceinfo.InstanceInfo, error) {
+	return f.Info, f.Err
 }
