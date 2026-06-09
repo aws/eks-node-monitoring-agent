@@ -4,7 +4,7 @@ go 1.26.2
 
 require (
 	github.com/NVIDIA/go-dcgm v0.0.0-20260603204728-453d82102783
-	github.com/aws/amazon-vpc-cni-k8s v1.22.1
+	github.com/aws/amazon-vpc-cni-k8s v1.22.0
 	github.com/aws/aws-sdk-go-v2 v1.41.12
 	github.com/aws/aws-sdk-go-v2/config v1.32.23
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.28
