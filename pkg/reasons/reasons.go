@@ -142,6 +142,10 @@ var (
         template:        "ApproachingMaxOpenFiles",
         defaultSeverity: "Warning",
     }
+    ClockUnsynchronized = ReasonMeta{
+        template:        "ClockUnsynchronized",
+        defaultSeverity: "Warning",
+    }
     ConntrackExceededKernel = ReasonMeta{
         template:        "ConntrackExceededKernel",
         defaultSeverity: "Warning",

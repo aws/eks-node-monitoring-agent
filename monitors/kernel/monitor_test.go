@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 	"github.com/aws/eks-node-monitoring-agent/api/monitor/resource"
 )
@@ -308,6 +310,37 @@ func TestKernelPeriodic(t *testing.T) {
 		assert.Equal(t, 0, len(mockManager.res))
 
 		if err := mon.checkZram(99*1024*1024, 50*1024*1024, 1000*1024*1024, "zram2"); err != nil {
+			t.Fatal(err)
+		}
+		assert.Equal(t, 0, len(mockManager.res))
+	})
+
+	t.Run("ClockUnsynchronized", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		mon := &KernelMonitor{}
+		mockManager := &mockManager{res: make(chan monitor.Condition, 5)}
+		mon.Register(ctx, mockManager)
+		if err := mon.checkClockSync(unix.STA_UNSYNC); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case monitorResult := <-mockManager.res:
+			assert.Equal(t, monitor.SeverityWarning, monitorResult.Severity)
+			assert.Equal(t, "ClockUnsynchronized", monitorResult.Reason)
+		}
+	})
+
+	t.Run("ClockSynchronizedNoop", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		mon := &KernelMonitor{}
+		mockManager := &mockManager{res: make(chan monitor.Condition, 5)}
+		mon.Register(ctx, mockManager)
+		// STA_UNSYNC clear (clock disciplined) plus an unrelated flag set must not fire.
+		if err := mon.checkClockSync(unix.STA_PLL); err != nil {
 			t.Fatal(err)
 		}
 		assert.Equal(t, 0, len(mockManager.res))
