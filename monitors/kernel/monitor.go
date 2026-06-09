@@ -19,6 +19,7 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/pkg/reasons"
 	"github.com/aws/eks-node-monitoring-agent/pkg/util"
 	"github.com/go-logr/logr"
+	"golang.org/x/sys/unix"
 	log "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -65,6 +66,7 @@ func (m *KernelMonitor) Register(ctx context.Context, mgr monitor.Manager) error
 		util.NewChannelHandler(func(time.Time) error { return m.handleOpenedFiles() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleEnvironment() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleZram() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
+		util.NewChannelHandler(func(time.Time) error { return m.handleClockSync() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 	} {
 		go handler.Start(ctx)
 	}
@@ -407,4 +409,32 @@ func (k *KernelMonitor) checkZram(origSize, compSize, disksize int64, deviceName
 	}
 	return nil
 
+}
+
+// ~~~~ clock sync ~~~~
+
+func (k *KernelMonitor) handleClockSync() error {
+	// SAFETY: a zeroed Timex is mode 0 (read-only); adjtimex never mutates the clock here.
+	var buf unix.Timex
+	if _, err := unix.Adjtimex(&buf); err != nil {
+		// state unknown, so emit nothing.
+		k.logger.V(1).Info("adjtimex failed, skipping clock-sync check", "error", err)
+		return nil
+	}
+	return k.checkClockSync(buf.Status)
+}
+
+func (k *KernelMonitor) checkClockSync(status int32) error {
+	// STA_UNSYNC means the kernel clock is not disciplined by any time source. It is
+	// daemon-agnostic (chrony, ntpd, systemd-timesyncd) and self-calibrated by the
+	// kernel, so there is no threshold to configure; it clears once time is disciplined.
+	if status&unix.STA_UNSYNC == 0 {
+		return nil
+	}
+	return k.manager.Notify(context.Background(),
+		reasons.ClockUnsynchronized.
+			Builder().
+			Message("The kernel clock is not synchronized to any time source (STA_UNSYNC); time drift may break time-sensitive workloads").
+			Build(),
+	)
 }

@@ -181,6 +181,10 @@ The monitoring condition is `KernelReady` for issues in the following table that
 |Event
 |The number of open files is approaching the maximum number of possible open files given the current kernel settings, after which opening new files will fail.
 
+|ClockUnsynchronized
+|Event
+|The kernel clock is not being disciplined by any time source. This is detected via `adjtimex(2)` reporting the `STA_UNSYNC` status flag and is daemon-agnostic across chrony, ntpd, and systemd-timesyncd. Clock drift can break time-sensitive workloads such as short-lived token validation.
+
 |ConntrackExceededKernel
 |Event
 |Connection tracking exceeded the maximum for the kernel and new connections could not be established, which can result in packet loss.
