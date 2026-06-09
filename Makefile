@@ -22,6 +22,18 @@ IMAGE_TAG ?= latest
 # Docker build arguments
 GOBUILDARGS ?=
 
+# Build identity (stamped into the binary via -ldflags -X).
+# VERSION resolves from the first available source:
+#   1. the chart's nodeAgent.image.tag (the canonical released version, and the
+#      same value the release pipeline uses to tag the image) — works in build
+#      environments without git metadata (e.g. Brazil),
+#   2. git describe for local/OSS checkouts,
+#   3. "build" as a final fallback.
+CHART_VALUES    := charts/eks-node-monitoring-agent/values.yaml
+CHART_IMAGE_TAG := $(shell yq '.nodeAgent.image.tag' $(CHART_VALUES) 2>/dev/null)
+VERSION    ?= $(if $(CHART_IMAGE_TAG),$(CHART_IMAGE_TAG),$(shell git describe --tags --always --dirty 2>/dev/null || echo build))
+GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+
 # Multi-arch build platforms
 DOCKER_PLATFORMS ?= linux/amd64,linux/arm64
 
@@ -107,9 +119,12 @@ help: ## Show this help message
 # Development Targets
 # =============================================================================
 
+_version_pkg := github.com/aws/eks-node-monitoring-agent/internal/version
+LDFLAGS := -X $(_version_pkg).Version=$(VERSION) -X $(_version_pkg).GitCommit=$(GIT_COMMIT)
+
 .PHONY: build
 build: generate fmt vet ## Build Go code
-	go build -o $(OUTPUT_BIN)/eks-node-monitoring-agent ./cmd/eks-node-monitoring-agent
+	go build -ldflags "$(LDFLAGS)" -o $(OUTPUT_BIN)/eks-node-monitoring-agent ./cmd/eks-node-monitoring-agent
 	go build -o $(OUTPUT_BIN)/chroot ./cmd/chroot
 
 .PHONY: test
@@ -242,6 +257,8 @@ docker-build: ## Build and push multi-arch Docker image (requires IMAGE_REGISTRY
 	docker buildx build \
 		--platform $(DOCKER_PLATFORMS) \
 		--push \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
 		$(if $(GOBUILDARGS),--build-arg GOBUILDARGS="$(GOBUILDARGS)") \
 		-t $(IMAGE_URI) .
 
