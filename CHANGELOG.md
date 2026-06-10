@@ -5,6 +5,28 @@ All notable changes to the EKS Node Monitoring Agent will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.6.6] - 2026-06-10
+
+### What's Changed
+
+#### Features
+- Add ClockUnsynchronized clock-sync detection in the kernel monitor ([716dc96](https://github.com/aws/eks-node-monitoring-agent/commit/716dc9656bfc4a9b1d14a6a1363aea740e1c8694))
+- Add agent version info during build time ([aad3c15](https://github.com/aws/eks-node-monitoring-agent/commit/aad3c15bf7c3f0afdc76227fa415471dab2974ee))
+- Capture Linux PSI metrics in the diagnostic bundle ([ecf655e](https://github.com/aws/eks-node-monitoring-agent/commit/ecf655e19d2b93ff50a41610ac9cd1080d5a71ce))
+- Add extraObjects support to the Helm chart ([7544cd4](https://github.com/aws/eks-node-monitoring-agent/commit/7544cd4f3b163a27221f208f052cf79558ed9501))
+- Add expected NVIDIA GPU count validation to the DeviceCount check ([b57fc91](https://github.com/aws/eks-node-monitoring-agent/commit/b57fc91113fcb27873972fc1af407e0e2af0d5f2))
+
+#### Bug Fixes
+- Emit FabricManagerNotRunning Fatal when fabric manager has failed ([09abb63](https://github.com/aws/eks-node-monitoring-agent/commit/09abb636083f5ecb80c332daaf17c85ff5d8d32d))
+- Migrate networking CRI client to k8s.io upstream ([b022d1a](https://github.com/aws/eks-node-monitoring-agent/commit/b022d1a041a2dafb040a57fa7ac0841f5d7ec779))
+
+#### Dependencies
+- Update Go dependencies ([6a989b4](https://github.com/aws/eks-node-monitoring-agent/commit/6a989b4030c62da63eb457b5946b24d00c237b3e), [ce43f4f](https://github.com/aws/eks-node-monitoring-agent/commit/ce43f4ff51a0de60709ff9e6fd748e1e751dcf17))
+
+#### CI & Build
+- Bump Go from 1.26.2 to 1.26.3 ([1a114fb](https://github.com/aws/eks-node-monitoring-agent/commit/1a114fbacbd1fc6589434ef6c3b534003bbdafa8))
+- Fix NVIDIA device count mismatch unit test ([37a9132](https://github.com/aws/eks-node-monitoring-agent/commit/37a9132456ad9725f3d06dc5122a962cecfaa28a))
+
 ## [v1.6.5] - 2026-05-14
 
 ### What's Changed
@@ -140,6 +162,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### What's Changed
 - Update base DCGM image to 4.5.2-4.8.1-ubuntu22.04 to resolve CVEs ([1a2cda4](https://github.com/aws/eks-node-monitoring-agent/commit/1a2cda4))
 
+[v1.6.6]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.5...v1.6.6
 [v1.6.5]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.4...v1.6.5
 [v1.6.4]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.3...v1.6.4
 [v1.6.3]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.2...v1.6.3
