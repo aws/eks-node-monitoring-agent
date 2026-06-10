@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -836,5 +837,38 @@ func TestCheckIPAMD_DetectsInconsistentIP(t *testing.T) {
 		t.Fatal(ctx.Err())
 	case got := <-mockManager.res:
 		assert.Equal(t, "IPAMDInconsistentState", got.Reason)
+	}
+}
+
+// TestNPAGate_SkipsWithoutEKSAutoTag verifies the Auto-mode gate: NPA detection
+// is only wired when the runtime context carries the EKSAuto tag. The default
+// test runtime context has no EKSAuto tag, so the NPA log handler is not
+// subscribed and a matching NPA log line must produce no condition.
+func TestNPAGate_SkipsWithoutEKSAutoTag(t *testing.T) {
+	// Precondition: the test runtime context must not be Auto, otherwise the
+	// gate would (correctly) wire NPA up and this test wouldn't be meaningful.
+	if slices.Contains(config.GetRuntimeContext().Tags(), config.EKSAuto) {
+		t.Skip("runtime context has the EKSAuto tag; gate test not applicable")
+	}
+
+	mgr := &mockManager{obs: observer.BaseObserver{}, res: make(chan monitor.Condition, 5)}
+	mon := NewNetworkingMonitor()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := mon.Register(ctx, mgr); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	// A matching NPA recovery-error line; with the gate off, no handler consumes
+	// it as an NPA signal, so no condition should be emitted.
+	mgr.obs.Broadcast("mock", "Failed to recover the BPF state")
+
+	select {
+	case c := <-mgr.res:
+		t.Fatalf("expected no condition without EKSAuto tag, but got %q", c.Reason)
+	case <-time.After(100 * time.Millisecond):
+		// no condition emitted — gate working as intended
 	}
 }

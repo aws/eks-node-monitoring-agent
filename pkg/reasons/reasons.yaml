@@ -246,6 +246,29 @@ NetworkingReady:
     DefaultSeverity: 'Fatal'
     Description: >-
       This interface appears to not be up or there are network issues.
+  NPARepeatedlyRestart:
+    Template: 'NPARepeatedlyRestart'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      The Network Policy Agent has restarted 5 or more times within a single
+      poll interval, indicating a crash loop that may disrupt network policy
+      enforcement. Often caused by a non-node-local issue (e.g. bad config or
+      control-plane input), so it is surfaced as a Warning rather than triggering
+      node replacement.
+  NPANotRunning:
+    Template: 'NPANotRunning'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      The Network Policy Agent process was not found running on this
+      Auto Mode node for more than 15 minutes.
+  NPABPFRecoveryError:
+    Template: 'NPABPFRecoveryError'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      The Network Policy Agent encountered errors recovering or loading its
+      BPF programs/maps after a restart. This is typically self-healing as the
+      agent re-creates state on the next policy reconcile, so it is surfaced as
+      a Warning.
   EFAErrorMetric:
     Template: 'EFAErrorMetric'
     DefaultSeverity: 'Warning'
