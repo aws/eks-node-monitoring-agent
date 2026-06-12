@@ -299,6 +299,18 @@ The monitoring condition is `NetworkingReady` for issues in the following table 
 |Condition
 |The loopback interface is missing from this instance, causing failure of services depending on local connectivity.
 
+|NPABPFRecoveryError
+|Event
+|The Network Policy Agent encountered errors recovering or loading its BPF programs/maps after a restart. This is typically self-healing as the agent re-creates state on the next policy reconcile, so it is surfaced as a Warning.
+
+|NPANotRunning
+|Condition
+|The Network Policy Agent process was not found running on this Auto Mode node for more than 15 minutes.
+
+|NPARepeatedlyRestart
+|Event
+|The Network Policy Agent has restarted 5 or more times within a single poll interval, indicating a crash loop that may disrupt network policy enforcement. Often caused by a non-node-local issue (e.g. bad config or control-plane input), so it is surfaced as a Warning rather than triggering node replacement.
+
 |NetworkSysctl
 |Event
 |This node's network `sysctl` settings are potentially incorrect.

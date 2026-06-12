@@ -249,6 +249,18 @@ var (
         template:        "MissingLoopbackInterface",
         defaultSeverity: "Fatal",
     }
+    NPABPFRecoveryError = ReasonMeta{
+        template:        "NPABPFRecoveryError",
+        defaultSeverity: "Warning",
+    }
+    NPANotRunning = ReasonMeta{
+        template:        "NPANotRunning",
+        defaultSeverity: "Fatal",
+    }
+    NPARepeatedlyRestart = ReasonMeta{
+        template:        "NPARepeatedlyRestart",
+        defaultSeverity: "Warning",
+    }
     NetworkSysctl = ReasonMeta{
         template:        "NetworkSysctl",
         defaultSeverity: "Warning",

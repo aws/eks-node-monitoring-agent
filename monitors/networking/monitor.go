@@ -31,6 +31,7 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/monitors/networking/ipamd"
 	"github.com/aws/eks-node-monitoring-agent/monitors/networking/iptables"
 	"github.com/aws/eks-node-monitoring-agent/monitors/networking/networkutils"
+	"github.com/aws/eks-node-monitoring-agent/monitors/networking/npa"
 	"github.com/aws/eks-node-monitoring-agent/pkg/config"
 	"github.com/aws/eks-node-monitoring-agent/pkg/osext"
 	"github.com/aws/eks-node-monitoring-agent/pkg/reasons"
@@ -179,6 +180,20 @@ func (m *NetworkingMonitor) Register(ctx context.Context, mgr monitor.Manager) e
 		return nil
 	})
 
+	// NPA (Network Policy Agent) detection — Auto Mode only. Driven here so its
+	// conditions surface under this monitor's NetworkingReady condition.
+	npaEnabled := slices.Contains(m.runtimeContext.Tags(), config.EKSAuto)
+	var npaDetector *npa.Detector
+	if npaEnabled {
+		npaDetector = npa.New(mgr, m.log)
+		subscriptionArgs = append(subscriptionArgs, util.SubscriptionArgs[string]{
+			Handler: npaDetector.HandleLogs,
+			SubscriptionFn: func() (<-chan string, error) {
+				return mgr.Subscribe(resource.ResourceTypeFile, []resource.Part{resource.Part(config.NPALogPath)})
+			},
+		})
+	}
+
 	for _, subArgs := range subscriptionArgs {
 		handler, err := util.NewChannelHandlerFromSubscriptionArgs(m.manager, subArgs)
 		if err != nil {
@@ -199,6 +214,14 @@ func (m *NetworkingMonitor) Register(ctx context.Context, mgr monitor.Manager) e
 		util.NewChannelHandler(func(time.Time) error { return m.handleMACAddressPolicy() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 	} {
 		go handler.Start(ctx)
+	}
+
+	// NPA (Network Policy Agent) D-Bus state monitoring (crash-loop + not-running) — Auto Mode only.
+	if npaEnabled {
+		go util.NewChannelHandler(
+			func(time.Time) error { return npaDetector.HandleState() },
+			util.TimeTickWithJitterContext(ctx, 5*time.Minute),
+		).Start(ctx)
 	}
 
 	// EFA hardware counter monitoring
