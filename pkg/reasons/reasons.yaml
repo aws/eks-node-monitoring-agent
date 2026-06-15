@@ -406,7 +406,7 @@ StorageReady:
       free space.
   BlockDeviceIOError:
     Template: 'BlockDeviceIOError'
-    DefaultSeverity: 'Fatal'
+    DefaultSeverity: 'Warning'
     Description: >-
       An I/O error was detected on a block device, indicating a failed physical
       drive (instance store) or EBS volume. This can cause data loss and

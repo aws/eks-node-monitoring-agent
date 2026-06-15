@@ -266,7 +266,7 @@ var (
 
     BlockDeviceIOError = ReasonMeta{
         template:        "BlockDeviceIOError",
-        defaultSeverity: "Fatal",
+        defaultSeverity: "Warning",
     }
     EBSInstanceIOPSExceeded = ReasonMeta{
         template:        "EBSInstanceIOPSExceeded",

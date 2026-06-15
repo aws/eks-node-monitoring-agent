@@ -181,7 +181,6 @@ func (m *StorageMonitor) handleBlockDeviceIOErrors(line string) error {
 		reasons.BlockDeviceIOError.
 			Builder().
 			Message(fmt.Sprintf("I/O error detected on block device %s at %s, indicating a failed physical drive or EBS volume", device, location)).
-			MinOccurrences(3).
 			Build(),
 	)
 }
