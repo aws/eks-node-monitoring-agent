@@ -30,6 +30,7 @@ func TestLogCollectorAccessor(t *testing.T) {
 		&collect.System{},
 		&collect.Nodeadm{},
 		&collect.Throttles{},
+		&collect.Pressure{},
 		&collect.Sandbox{},
 		&collect.Kubernetes{},
 		&collect.Networking{},

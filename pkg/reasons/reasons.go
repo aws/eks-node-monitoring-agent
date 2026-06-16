@@ -142,6 +142,10 @@ var (
         template:        "ApproachingMaxOpenFiles",
         defaultSeverity: "Warning",
     }
+    ClockUnsynchronized = ReasonMeta{
+        template:        "ClockUnsynchronized",
+        defaultSeverity: "Warning",
+    }
     ConntrackExceededKernel = ReasonMeta{
         template:        "ConntrackExceededKernel",
         defaultSeverity: "Warning",
@@ -244,6 +248,18 @@ var (
     MissingLoopbackInterface = ReasonMeta{
         template:        "MissingLoopbackInterface",
         defaultSeverity: "Fatal",
+    }
+    NPABPFRecoveryError = ReasonMeta{
+        template:        "NPABPFRecoveryError",
+        defaultSeverity: "Warning",
+    }
+    NPANotRunning = ReasonMeta{
+        template:        "NPANotRunning",
+        defaultSeverity: "Fatal",
+    }
+    NPARepeatedlyRestart = ReasonMeta{
+        template:        "NPARepeatedlyRestart",
+        defaultSeverity: "Warning",
     }
     NetworkSysctl = ReasonMeta{
         template:        "NetworkSysctl",

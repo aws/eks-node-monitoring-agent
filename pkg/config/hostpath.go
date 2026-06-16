@@ -28,4 +28,5 @@ var (
 	PCIDevicesPath     = ToHostPath("/proc/bus/pci/devices")
 	CRIEndpoint        = "unix://" + ToHostPath("/run/containerd/containerd.sock")
 	IPAMDLogPath       = ToHostPath("/var/log/aws-routed-eni/ipamd.log")
+	NPALogPath         = ToHostPath("/var/log/aws-routed-eni/network-policy-agent.log")
 )

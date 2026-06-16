@@ -26,7 +26,7 @@ RUN dnf install -y dnf-plugins-core && \
 # =============================================================================
 # Stage 3: Go builder to compile the application
 # =============================================================================
-FROM public.ecr.aws/docker/library/golang:1.26.2 AS go-builder
+FROM public.ecr.aws/docker/library/golang:1.26.3 AS go-builder
 
 WORKDIR /workspace
 
@@ -45,10 +45,16 @@ COPY . .
 ARG TARGETOS=linux
 ARG TARGETARCH
 ARG GOBUILDARGS=""
+ARG VERSION=build
+ARG GIT_COMMIT=unknown
 
 # Build the agent and chroot binaries with CGO enabled (required for systemd) and goroutine leak profiling
 RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOEXPERIMENT=goroutineleakprofile \
-    go build ${GOBUILDARGS} -ldflags="-s -w" -o bin/eks-node-monitoring-agent ./cmd/eks-node-monitoring-agent/
+    go build ${GOBUILDARGS} \
+        -ldflags="-s -w \
+            -X github.com/aws/eks-node-monitoring-agent/internal/version.Version=${VERSION} \
+            -X github.com/aws/eks-node-monitoring-agent/internal/version.GitCommit=${GIT_COMMIT}" \
+        -o bin/eks-node-monitoring-agent ./cmd/eks-node-monitoring-agent/
 RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOEXPERIMENT=goroutineleakprofile \
     go build ${GOBUILDARGS} -ldflags="-s -w" -o bin/chroot ./cmd/chroot/
 
