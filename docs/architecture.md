@@ -86,7 +86,7 @@ graph TB
     
     %% External integration
     NC -->|Watch| AR
-    AR -.->|Trigger Remediation| EKS Worker Node
+    AR -.->|Trigger Remediation| MA
     
     style MA fill:#ff9900
     style MM fill:#ff9900
