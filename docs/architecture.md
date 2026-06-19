@@ -41,13 +41,13 @@ graph TB
         end
         
         subgraph "Host System"
-            SL[System Logs<br/>/var/log/messages<br/>/var/log/syslog]
-            JD[Journald<br/>/run/log/journal]
-            DM[Dmesg Buffer]
-            PR[/proc filesystem]
-            SY[/sys filesystem]
-            NV[NVIDIA DCGM<br/>GPU Metrics]
-            CR[Container Runtime<br/>CRI API]
+            SL["System Logs<br/>/var/log/messages<br/>/var/log/syslog"]
+            JD["Journald<br/>/run/log/journal"]
+            DM["Dmesg Buffer"]
+            PR["proc filesystem"]
+            SY["sys filesystem"]
+            NV["NVIDIA DCGM<br/>GPU Metrics"]
+            CR["Container Runtime<br/>CRI API"]
         end
     end
     
