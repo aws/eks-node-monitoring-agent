@@ -490,6 +490,12 @@ spec:
                 - g6f.4xlarge
                 - g6f.large
                 - g6f.xlarge
+                - g7.12xlarge
+                - g7.24xlarge
+                - g7.2xlarge
+                - g7.48xlarge
+                - g7.4xlarge
+                - g7.8xlarge
                 - g7e.12xlarge
                 - g7e.24xlarge
                 - g7e.2xlarge
