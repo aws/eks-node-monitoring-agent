@@ -25,9 +25,15 @@ import (
 
 var _ monitor.Monitor = (*KernelMonitor)(nil)
 
+const (
+	largeEnvironmentEventName        = "LargeEnvironment"
+	defaultLargeEnvironmentThreshold = 1000
+)
+
 type KernelMonitor struct {
-	manager monitor.Manager
-	logger  logr.Logger
+	manager     monitor.Manager
+	logger      logr.Logger
+	eventConfig config.EventConfig
 }
 
 func (m *KernelMonitor) Name() string {
@@ -36,6 +42,10 @@ func (m *KernelMonitor) Name() string {
 
 func (m *KernelMonitor) Conditions() []monitor.Condition {
 	return []monitor.Condition{}
+}
+
+func (m *KernelMonitor) SetEventConfig(eventConfig config.EventConfig) {
+	m.eventConfig = eventConfig
 }
 
 func (m *KernelMonitor) Register(ctx context.Context, mgr monitor.Manager) error {
@@ -334,6 +344,9 @@ func (k *KernelMonitor) handleEnvironment() error {
 }
 
 func (k *KernelMonitor) checkEnvironment(envBytes []byte, pid int) error {
+	if k.eventConfig.IsEventDisabled(largeEnvironmentEventName) {
+		return nil
+	}
 	// split by null character separator and discard empty entries.
 	// see: https://www.man7.org/linux/man-pages/man7/environ.7.html
 	var envs []string
@@ -342,7 +355,8 @@ func (k *KernelMonitor) checkEnvironment(envBytes []byte, pid int) error {
 			envs = append(envs, env)
 		}
 	}
-	if envCount := len(envs); envCount > 1000 {
+	threshold := k.eventConfig.EventThreshold(largeEnvironmentEventName, defaultLargeEnvironmentThreshold)
+	if envCount := len(envs); envCount > threshold {
 		return k.manager.Notify(context.TODO(),
 			reasons.LargeEnvironment.
 				Builder().

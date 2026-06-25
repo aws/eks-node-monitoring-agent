@@ -65,6 +65,8 @@ The following table lists the configurable parameters for this chart and their d
 | nodeAgent.image.pullPolicy | string | `"IfNotPresent"` | Container pull policyfor the eks-node-monitoring-agent |
 | nodeAgent.image.region | string | `"us-west-2"` | ECR repository region for the eks-node-monitoring-agent |
 | nodeAgent.image.tag | string | `"v1.6.6-eksbuild.1"` | Image tag for the eks-node-monitoring-agent |
+| nodeAgent.disabledEvents | list | `[]` | Agent-level event names to suppress. Example: ["LargeEnvironment"]. |
+| nodeAgent.eventThresholds | object | `{}` | Per-event numeric thresholds keyed by event name. Example: { LargeEnvironment: 2000 }. |
 | nodeAgent.monitors | object | `{}` | Per-monitor configuration keyed by plugin name. See the main README for details. |
 | nodeAgent.podAnnotations | object | `{}` | Pod annotations applied to the eks-node-monitoring-agent |
 | nodeAgent.podLabels | object | `{}` | Pod labels applied to the eks-node-monitoring-agent |

@@ -13,6 +13,7 @@ import (
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 	"github.com/aws/eks-node-monitoring-agent/api/monitor/resource"
+	"github.com/aws/eks-node-monitoring-agent/pkg/config"
 )
 
 // mockObserver provides a simple channel-based observer for testing
@@ -262,6 +263,54 @@ func TestKernelPeriodic(t *testing.T) {
 		mon.Register(ctx, mockManager)
 		var envs []byte
 		for i := range 1001 {
+			envs = append(envs, []byte(fmt.Sprintf("%d\x00", i))...)
+		}
+		if err := mon.checkEnvironment(envs, 0); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case monitorResult := <-mockManager.res:
+			assert.Equal(t, monitor.SeverityWarning, monitorResult.Severity)
+			assert.Equal(t, "LargeEnvironment", monitorResult.Reason)
+		}
+	})
+
+	t.Run("LargeEnvironmentDisabled", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		mon := &KernelMonitor{}
+		mon.SetEventConfig(config.EventConfig{DisabledEvents: []string{"LargeEnvironment"}})
+		mockManager := &mockManager{obs: newMockObserver(), res: make(chan monitor.Condition, 5)}
+		mon.Register(ctx, mockManager)
+		var envs []byte
+		for i := range 1001 {
+			envs = append(envs, []byte(fmt.Sprintf("%d\x00", i))...)
+		}
+		if err := mon.checkEnvironment(envs, 0); err != nil {
+			t.Fatal(err)
+		}
+		assert.Equal(t, 0, len(mockManager.res))
+	})
+
+	t.Run("LargeEnvironmentCustomThreshold", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		mon := &KernelMonitor{}
+		mon.SetEventConfig(config.EventConfig{EventThresholds: map[string]int{"LargeEnvironment": 2000}})
+		mockManager := &mockManager{obs: newMockObserver(), res: make(chan monitor.Condition, 5)}
+		mon.Register(ctx, mockManager)
+		var envs []byte
+		for i := range 1500 {
+			envs = append(envs, []byte(fmt.Sprintf("%d\x00", i))...)
+		}
+		if err := mon.checkEnvironment(envs, 0); err != nil {
+			t.Fatal(err)
+		}
+		assert.Equal(t, 0, len(mockManager.res))
+
+		for i := 1500; i < 2001; i++ {
 			envs = append(envs, []byte(fmt.Sprintf("%d\x00", i))...)
 		}
 		if err := mon.checkEnvironment(envs, 0); err != nil {

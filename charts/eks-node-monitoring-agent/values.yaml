@@ -95,6 +95,10 @@ nodeAgent:
     - operator: Exists
   # -- Pod labels applied to the eks-node-monitoring-agent
   podLabels: {}
+  # -- Agent-level event names to suppress. Example: ["LargeEnvironment"].
+  disabledEvents: []
+  # -- Per-event numeric thresholds keyed by event name. Example: { LargeEnvironment: 2000 }.
+  eventThresholds: {}
   # -- Per-monitor configuration keyed by plugin name. See the main README for details.
   monitors: {}
   # -- Pod annotations applied to the eks-node-monitoring-agent
