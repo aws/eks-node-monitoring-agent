@@ -63,6 +63,35 @@
                 "tolerations": {
                     "$ref": "#/definitions/Tolerations"
                 },
+                "disabledEvents": {
+                    "type": "array",
+                    "description": "Agent-level event names to suppress",
+                    "default": [],
+                    "items": {
+                        "type": "string",
+                        "minLength": 1,
+                        "pattern": "^\\S(?:.*\\S)?$",
+                        "enum": [
+                            "LargeEnvironment"
+                        ]
+                    }
+                },
+                "eventThresholds": {
+                    "type": "object",
+                    "description": "Per-event numeric thresholds keyed by event name",
+                    "default": {},
+                    "propertyNames": {
+                        "minLength": 1,
+                        "pattern": "^\\S(?:.*\\S)?$",
+                        "enum": [
+                            "LargeEnvironment"
+                        ]
+                    },
+                    "additionalProperties": {
+                        "type": "integer",
+                        "minimum": 1
+                    }
+                },
                 "monitors": {
                     "type": "object",
                     "description": "Per-monitor configuration keyed by plugin name",

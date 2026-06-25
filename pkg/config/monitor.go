@@ -19,6 +19,34 @@ type MonitorSettings struct {
 	AllowedIPTablesChains []string `yaml:"allowedIPTablesChains,omitempty" json:"allowedIPTablesChains,omitempty"`
 }
 
+// EventConfig holds agent-level event configuration.
+type EventConfig struct {
+	DisabledEvents  []string       `yaml:"disabledEvents,omitempty" json:"disabledEvents,omitempty"`
+	EventThresholds map[string]int `yaml:"eventThresholds,omitempty" json:"eventThresholds,omitempty"`
+}
+
+// IsEventDisabled returns true when an event has been disabled by name.
+func (ec EventConfig) IsEventDisabled(eventName string) bool {
+	return slices.Contains(ec.DisabledEvents, eventName)
+}
+
+// EventThreshold returns a configured event threshold, or the provided default.
+func (ec EventConfig) EventThreshold(eventName string, defaultThreshold int) int {
+	if ec.EventThresholds == nil {
+		return defaultThreshold
+	}
+	threshold, exists := ec.EventThresholds[eventName]
+	if !exists {
+		return defaultThreshold
+	}
+	return threshold
+}
+
+// IsZero returns true when no event configuration is set.
+func (ec EventConfig) IsZero() bool {
+	return len(ec.DisabledEvents) == 0 && len(ec.EventThresholds) == 0
+}
+
 // IsEnabled returns true if the monitor is enabled.
 func (ms MonitorSettings) IsEnabled() bool {
 	// Defaults to true when Enabled is nil (not explicitly set).
@@ -31,7 +59,9 @@ func (ms MonitorSettings) IsEnabled() bool {
 
 // MonitorConfig is the top-level configuration structure.
 type MonitorConfig struct {
-	Monitors map[string]MonitorSettings `yaml:"monitors,omitempty" json:"monitors,omitempty"`
+	Monitors        map[string]MonitorSettings `yaml:"monitors,omitempty" json:"monitors,omitempty"`
+	DisabledEvents  []string                   `yaml:"disabledEvents,omitempty" json:"disabledEvents,omitempty"`
+	EventThresholds map[string]int             `yaml:"eventThresholds,omitempty" json:"eventThresholds,omitempty"`
 }
 
 // IsMonitorEnabled checks if a given plugin is enabled.
@@ -60,6 +90,17 @@ func (mc *MonitorConfig) GetAllowedIPTablesChains() []string {
 	return settings.AllowedIPTablesChains
 }
 
+// GetEventConfig returns the agent-level event configuration.
+func (mc *MonitorConfig) GetEventConfig() EventConfig {
+	if mc == nil {
+		return EventConfig{}
+	}
+	return EventConfig{
+		DisabledEvents:  mc.DisabledEvents,
+		EventThresholds: mc.EventThresholds,
+	}
+}
+
 // KnownPluginNames is the set of valid plugin names for validation.
 var KnownPluginNames = []string{
 	"kernel-monitor",
@@ -70,10 +111,18 @@ var KnownPluginNames = []string{
 	"runtime",
 }
 
+// KnownEventNames is the set of valid agent event names for validation.
+var KnownEventNames = []string{
+	"LargeEnvironment",
+}
+
 // Validate checks that all keys in Monitors are known plugin names.
 func (mc *MonitorConfig) Validate() error {
-	if mc == nil || mc.Monitors == nil {
+	if mc == nil {
 		return nil
+	}
+	if mc.Monitors == nil {
+		return mc.GetEventConfig().Validate()
 	}
 	var unknown []string
 	for name := range mc.Monitors {
@@ -100,6 +149,40 @@ func (mc *MonitorConfig) Validate() error {
 				}
 			}
 		}
+	}
+	if err := mc.GetEventConfig().Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Validate checks that event configuration values are well-formed.
+func (ec EventConfig) Validate() error {
+	for _, eventName := range ec.DisabledEvents {
+		if err := validateEventName("disabledEvents", eventName); err != nil {
+			return err
+		}
+	}
+	for eventName, threshold := range ec.EventThresholds {
+		if err := validateEventName("eventThresholds", eventName); err != nil {
+			return err
+		}
+		if threshold <= 0 {
+			return fmt.Errorf("eventThresholds entry %q must be positive", eventName)
+		}
+	}
+	return nil
+}
+
+func validateEventName(fieldName, eventName string) error {
+	if strings.TrimSpace(eventName) != eventName {
+		return fmt.Errorf("%s event name %q must not have leading or trailing whitespace", fieldName, eventName)
+	}
+	if eventName == "" {
+		return fmt.Errorf("%s event name must not be empty", fieldName)
+	}
+	if !slices.Contains(KnownEventNames, eventName) {
+		return fmt.Errorf("%s event name %q is not supported", fieldName, eventName)
 	}
 	return nil
 }

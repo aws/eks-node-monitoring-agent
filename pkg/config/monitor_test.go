@@ -179,6 +179,120 @@ func TestGetAllowedIPTablesChains(t *testing.T) {
 	})
 }
 
+func TestGetEventConfig(t *testing.T) {
+	t.Run("NilConfig", func(t *testing.T) {
+		var cfg *config.MonitorConfig
+		assert.Equal(t, config.EventConfig{}, cfg.GetEventConfig())
+	})
+	t.Run("WithEventConfig", func(t *testing.T) {
+		cfg := &config.MonitorConfig{
+			DisabledEvents:  []string{"LargeEnvironment"},
+			EventThresholds: map[string]int{"LargeEnvironment": 2000},
+		}
+		assert.Equal(t, config.EventConfig{
+			DisabledEvents:  []string{"LargeEnvironment"},
+			EventThresholds: map[string]int{"LargeEnvironment": 2000},
+		}, cfg.GetEventConfig())
+	})
+}
+
+func TestLoadMonitorConfig_EventConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`disabledEvents:
+  - LargeEnvironment
+eventThresholds:
+  LargeEnvironment: 2000
+monitors:
+  kernel-monitor:
+    enabled: true
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, found, err := config.LoadMonitorConfig(cfgPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.True(t, found)
+	assert.Equal(t, []string{"LargeEnvironment"}, cfg.DisabledEvents)
+	assert.Equal(t, map[string]int{"LargeEnvironment": 2000}, cfg.EventThresholds)
+}
+
+func TestLoadMonitorConfig_EventNameWithWhitespaceRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`disabledEvents:
+  - " LargeEnvironment "
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "must not have leading or trailing whitespace")
+}
+
+func TestLoadMonitorConfig_EmptyEventNameRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`disabledEvents:
+  - ""
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "must not be empty")
+}
+
+func TestLoadMonitorConfig_NonPositiveEventThresholdRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`eventThresholds:
+  LargeEnvironment: 0
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "must be positive")
+}
+
+func TestLoadMonitorConfig_UnsupportedEventNameRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`disabledEvents:
+  - TypoEvent
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "is not supported")
+}
+
+func TestLoadMonitorConfig_EventThresholdNameWithWhitespaceRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`eventThresholds:
+  " LargeEnvironment ": 2000
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "must not have leading or trailing whitespace")
+}
+
 func TestLoadMonitorConfig_AllowedIPTablesChains(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")

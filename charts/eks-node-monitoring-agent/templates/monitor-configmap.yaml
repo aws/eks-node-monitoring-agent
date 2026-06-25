@@ -1,4 +1,4 @@
-{{- if .Values.nodeAgent.monitors }}
+{{- if or .Values.nodeAgent.monitors .Values.nodeAgent.disabledEvents .Values.nodeAgent.eventThresholds }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -8,6 +8,16 @@ metadata:
     {{- include "eks-node-monitoring-agent.labels" . | nindent 4 }}
 data:
   config.yaml: |
+    {{- with .Values.nodeAgent.disabledEvents }}
+    disabledEvents:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.nodeAgent.eventThresholds }}
+    eventThresholds:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.nodeAgent.monitors }}
     monitors:
-      {{- toYaml .Values.nodeAgent.monitors | nindent 6 }}
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
 {{- end }}

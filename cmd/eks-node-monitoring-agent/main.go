@@ -220,6 +220,17 @@ func run() error {
 	}
 
 	// Inject per-monitor configuration into monitors that support it
+	if eventConfig := monitorConfig.GetEventConfig(); !eventConfig.IsZero() {
+		for _, mon := range enabledMonitors {
+			type eventConfigurable interface {
+				SetEventConfig(config.EventConfig)
+			}
+			if c, ok := mon.(eventConfigurable); ok {
+				c.SetEventConfig(eventConfig)
+				logger.Info("configured event settings", "monitor", mon.Name(), "disabledEvents", eventConfig.DisabledEvents, "eventThresholds", eventConfig.EventThresholds)
+			}
+		}
+	}
 	if chains := monitorConfig.GetAllowedIPTablesChains(); len(chains) > 0 {
 		for _, mon := range enabledMonitors {
 			type chainConfigurable interface {

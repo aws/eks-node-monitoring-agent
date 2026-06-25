@@ -63,11 +63,25 @@ nodeAgent:
         - "filter/MY-CUSTOM-CHAIN"
 ```
 
+Agent events can be suppressed with `disabledEvents` or tuned with `eventThresholds`. For example, suppress `LargeEnvironment` entirely or raise its environment variable count threshold from the default `1000` to `2000`:
+
+```yaml
+nodeAgent:
+  disabledEvents:
+    - LargeEnvironment
+  eventThresholds:
+    LargeEnvironment: 2000
+```
+
 ### Config File Format
 
 The agent reads a YAML config file mounted at `/etc/nma/config.yaml`. Omitted monitors default to enabled.
 
 ```yaml
+disabledEvents:
+  - LargeEnvironment
+eventThresholds:
+  LargeEnvironment: 2000
 monitors:
   kernel-monitor:
     enabled: true
@@ -84,6 +98,8 @@ monitors:
 ```
 
 Valid plugin names: `kernel-monitor`, `networking`, `storage-monitor`, `nvidia`, `neuron`, `runtime`.
+
+Supported event names: `LargeEnvironment`. Event names must be non-empty and must not include leading or trailing whitespace. Event thresholds must be positive integers.
 
 When a monitor is disabled:
 - Its health checks are not executed.
