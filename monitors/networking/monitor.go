@@ -1007,7 +1007,7 @@ func (m *NetworkingMonitor) isVPCCNIInstalled() (string, bool, error) {
 	}
 	for _, path := range dirs {
 		// this is only a first filter as it may match other pods, e.g. the aws-node-termination-handler
-		if strings.Contains(path.Name(), "_aws-node-") {
+		if strings.Contains(path.Name(), config.VPCCNIPodPrefix()) {
 			if path.Name() == m.vpcCNIPodID {
 				return path.Name(), true, nil
 			}
