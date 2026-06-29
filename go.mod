@@ -3,13 +3,13 @@ module github.com/aws/eks-node-monitoring-agent
 go 1.26.3
 
 require (
-	github.com/NVIDIA/go-dcgm v0.0.0-20260603204728-453d82102783
+	github.com/NVIDIA/go-dcgm v0.0.0-20260622182233-0740c4cbc959
 	github.com/aws/amazon-vpc-cni-k8s v1.22.2
 	github.com/aws/aws-sdk-go-v2 v1.42.0
 	github.com/aws/aws-sdk-go-v2/config v1.32.25
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.29
 	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.59.0
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.307.1
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.308.0
 	github.com/aws/aws-sdk-go-v2/service/eks v1.87.0
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.104.0
 	github.com/awslabs/operatorpkg v0.0.0-20260611182023-803da2609b61
@@ -34,7 +34,7 @@ require (
 	k8s.io/client-go v0.36.2
 	k8s.io/cri-api v0.36.2
 	k8s.io/cri-client v0.36.2
-	k8s.io/utils v0.0.0-20260617174310-a95e086a2553
+	k8s.io/utils v0.0.0-20260626114624-be93311217bd
 	pgregory.net/rapid v1.3.0
 	sigs.k8s.io/controller-runtime v0.24.1
 	sigs.k8s.io/e2e-framework v0.7.0
