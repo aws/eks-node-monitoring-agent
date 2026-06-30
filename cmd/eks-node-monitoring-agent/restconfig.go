@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -47,15 +48,20 @@ func (rcp *podRestConfigProvider) Provide() (*rest.Config, error) {
 	if kubeconfigPath == "" {
 		return nil, fmt.Errorf("could not locate host kubeconfig in expected paths")
 	}
-	caCertPath := pathlib.ResolveCACertPath(config.HostRoot())
-	if caCertPath == "" {
-		return nil, fmt.Errorf("could not locate host CA Certificates in expected paths")
+
+	// the kubeconfig references its TLS material (CA, client certificate and
+	// key) by file path relative to the host, but the agent reads the host
+	// filesystem through a mount. build overrides that rewrite those paths so
+	// clientcmd can open them.
+	overrides, err := rcp.hostPathOverrides(kubeconfigPath)
+	if err != nil {
+		return nil, err
 	}
 
 	// attempt to pick up kubelet's cluster config from the node.
 	restConfig, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
 		&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfigPath},
-		&clientcmd.ConfigOverrides{ClusterInfo: clientcmdapi.Cluster{CertificateAuthority: caCertPath}},
+		overrides,
 	).ClientConfig()
 	if err != nil {
 		return nil, err
@@ -73,6 +79,84 @@ func (rcp *podRestConfigProvider) Provide() (*rest.Config, error) {
 	}
 
 	return restConfig, nil
+}
+
+// hostPathOverrides builds clientcmd overrides that rewrite the file paths the
+// host kubeconfig references (CA certificate, client certificate, client key)
+// so they resolve against the host filesystem mount. Credentials embedded as
+// *-data are left untouched. The CA falls back to the well-known host location
+// when the kubeconfig references neither a CA file nor embedded data.
+func (rcp *podRestConfigProvider) hostPathOverrides(kubeconfigPath string) (*clientcmd.ConfigOverrides, error) {
+	hostRoot := config.HostRoot()
+
+	kubeconfig, err := clientcmd.LoadFromFile(kubeconfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load kubeconfig %q: %w", kubeconfigPath, err)
+	}
+
+	overrides := &clientcmd.ConfigOverrides{}
+
+	if cluster := clusterForCurrentContext(kubeconfig); cluster != nil && len(cluster.CertificateAuthorityData) == 0 {
+		if caCertPath := toHostPath(hostRoot, cluster.CertificateAuthority); caCertPath != "" {
+			overrides.ClusterInfo.CertificateAuthority = caCertPath
+		} else if fallback := pathlib.ResolveCACertPath(hostRoot); fallback != "" {
+			overrides.ClusterInfo.CertificateAuthority = fallback
+		} else {
+			return nil, fmt.Errorf("could not locate host CA Certificates in expected paths")
+		}
+	}
+
+	if authInfo := authInfoForCurrentContext(kubeconfig); authInfo != nil {
+		if len(authInfo.ClientCertificateData) == 0 {
+			overrides.AuthInfo.ClientCertificate = toHostPath(hostRoot, authInfo.ClientCertificate)
+		}
+		if len(authInfo.ClientKeyData) == 0 {
+			overrides.AuthInfo.ClientKey = toHostPath(hostRoot, authInfo.ClientKey)
+		}
+	}
+
+	return overrides, nil
+}
+
+// toHostPath prefixes a host-absolute path with the host root mount, unless the
+// path is empty or already points inside the mount.
+func toHostPath(hostRoot, path string) string {
+	if path == "" || hostRoot == "/" || strings.HasPrefix(path, hostRoot) {
+		return path
+	}
+	return filepath.Join(hostRoot, path)
+}
+
+// clusterForCurrentContext returns the cluster referenced by the kubeconfig's
+// current context, falling back to the sole cluster when unambiguous.
+func clusterForCurrentContext(kubeconfig *clientcmdapi.Config) *clientcmdapi.Cluster {
+	if ctx, ok := kubeconfig.Contexts[kubeconfig.CurrentContext]; ok {
+		if cluster, ok := kubeconfig.Clusters[ctx.Cluster]; ok {
+			return cluster
+		}
+	}
+	if len(kubeconfig.Clusters) == 1 {
+		for _, cluster := range kubeconfig.Clusters {
+			return cluster
+		}
+	}
+	return nil
+}
+
+// authInfoForCurrentContext returns the user referenced by the kubeconfig's
+// current context, falling back to the sole user when unambiguous.
+func authInfoForCurrentContext(kubeconfig *clientcmdapi.Config) *clientcmdapi.AuthInfo {
+	if ctx, ok := kubeconfig.Contexts[kubeconfig.CurrentContext]; ok {
+		if authInfo, ok := kubeconfig.AuthInfos[ctx.AuthInfo]; ok {
+			return authInfo
+		}
+	}
+	if len(kubeconfig.AuthInfos) == 1 {
+		for _, authInfo := range kubeconfig.AuthInfos {
+			return authInfo
+		}
+	}
+	return nil
 }
 
 type chrootMapper struct{}
