@@ -65,11 +65,15 @@ func (rcp *podRestConfigProvider) Provide() (*rest.Config, error) {
 	// binaries in order to get a token from the iam authenticator.
 	// NOTE: reminder that these calls also utilize hostNetworking in order to
 	// reach IMDS to get host credentials.
-	if restConfig.ExecProvider.Command, restConfig.ExecProvider.Args, err = rcp.execMapper.Map(
-		restConfig.ExecProvider.Command,
-		restConfig.ExecProvider.Args...,
-	); err != nil {
-		return nil, err
+	// kubeconfigs that authenticate without an exec credential plugin (e.g. a
+	// client certificate) have no ExecProvider, so only rewrite it when present.
+	if restConfig.ExecProvider != nil {
+		if restConfig.ExecProvider.Command, restConfig.ExecProvider.Args, err = rcp.execMapper.Map(
+			restConfig.ExecProvider.Command,
+			restConfig.ExecProvider.Args...,
+		); err != nil {
+			return nil, err
+		}
 	}
 
 	return restConfig, nil
