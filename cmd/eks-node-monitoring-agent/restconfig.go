@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -47,15 +48,22 @@ func (rcp *podRestConfigProvider) Provide() (*rest.Config, error) {
 	if kubeconfigPath == "" {
 		return nil, fmt.Errorf("could not locate host kubeconfig in expected paths")
 	}
-	caCertPath := pathlib.ResolveCACertPath(config.HostRoot())
-	if caCertPath == "" {
-		return nil, fmt.Errorf("could not locate host CA Certificates in expected paths")
+
+	// the CA the cluster is configured with is the source of truth. it may be
+	// embedded in the kubeconfig (certificate-authority-data) or referenced as a
+	// host file path (certificate-authority); fall back to the well-known host
+	// location only when the kubeconfig specifies neither.
+	overrides := &clientcmd.ConfigOverrides{}
+	if caCertPath, err := rcp.resolveCACertPath(kubeconfigPath); err != nil {
+		return nil, err
+	} else if caCertPath != "" {
+		overrides.ClusterInfo = clientcmdapi.Cluster{CertificateAuthority: caCertPath}
 	}
 
 	// attempt to pick up kubelet's cluster config from the node.
 	restConfig, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
 		&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfigPath},
-		&clientcmd.ConfigOverrides{ClusterInfo: clientcmdapi.Cluster{CertificateAuthority: caCertPath}},
+		overrides,
 	).ClientConfig()
 	if err != nil {
 		return nil, err
@@ -84,6 +92,57 @@ func rewriteExecProvider(restConfig *rest.Config, m chrootMapper) error {
 		restConfig.ExecProvider.Args...,
 	)
 	return err
+}
+
+// resolveCACertPath determines the CA certificate the host kubeconfig expects.
+// It returns an empty path (no override needed) when the kubeconfig already
+// embeds certificate-authority-data, the host-root-prefixed path when the
+// kubeconfig references a CA file, and the well-known default location as a
+// last resort.
+func (rcp *podRestConfigProvider) resolveCACertPath(kubeconfigPath string) (string, error) {
+	hostRoot := config.HostRoot()
+
+	kubeconfig, err := clientcmd.LoadFromFile(kubeconfigPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to load kubeconfig %q: %w", kubeconfigPath, err)
+	}
+
+	cluster := clusterForCurrentContext(kubeconfig)
+	if cluster != nil {
+		// embedded CA data is self-contained; let clientcmd use it as-is.
+		if len(cluster.CertificateAuthorityData) > 0 {
+			return "", nil
+		}
+		// a referenced CA file path is relative to the host, so prefix it with
+		// the host root unless it already points inside the mount.
+		if caCertPath := cluster.CertificateAuthority; caCertPath != "" {
+			if hostRoot != "/" && !strings.HasPrefix(caCertPath, hostRoot) {
+				caCertPath = filepath.Join(hostRoot, caCertPath)
+			}
+			return caCertPath, nil
+		}
+	}
+
+	if caCertPath := pathlib.ResolveCACertPath(hostRoot); caCertPath != "" {
+		return caCertPath, nil
+	}
+	return "", fmt.Errorf("could not locate host CA Certificates in expected paths")
+}
+
+// clusterForCurrentContext returns the cluster referenced by the kubeconfig's
+// current context, falling back to the sole cluster when unambiguous.
+func clusterForCurrentContext(kubeconfig *clientcmdapi.Config) *clientcmdapi.Cluster {
+	if ctx, ok := kubeconfig.Contexts[kubeconfig.CurrentContext]; ok {
+		if cluster, ok := kubeconfig.Clusters[ctx.Cluster]; ok {
+			return cluster
+		}
+	}
+	if len(kubeconfig.Clusters) == 1 {
+		for _, cluster := range kubeconfig.Clusters {
+			return cluster
+		}
+	}
+	return nil
 }
 
 type chrootMapper struct{}
