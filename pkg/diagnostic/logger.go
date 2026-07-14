@@ -34,6 +34,14 @@ type diagnosticLogger struct {
 
 const (
 	sectionMarker = "NMA::LOG"
+	// maxTailReadBytes bounds how much of a large file is read into memory.
+	// It is generously larger than any per-section console budget, so the
+	// tail-trimmed output is unchanged while memory stays bounded.
+	maxTailReadBytes = 256 * 1024
+	// journalMaxLines bounds journalctl output; without a limit the entire
+	// unit journal is buffered into memory each cycle and grows unbounded
+	// over the node's lifetime. Chosen to comfortably exceed the section budget.
+	journalMaxLines = "2000"
 )
 
 func NewDiagnosticLogger(writer io.Writer, settings Settings) diagnosticLogger {
@@ -122,7 +130,10 @@ func systemdStatus(services ...string) []byte {
 }
 
 func journalctl(unit string) []byte {
-	if out, err := exec.Command("journalctl", "-o", "short-iso-precise", "--unit", unit).Output(); err != nil {
+	// Bound the journal read with --lines: without it the entire unit journal
+	// is buffered into memory each cycle and grows unbounded over the node's
+	// lifetime. The output is tail-trimmed to the section budget anyway.
+	if out, err := exec.Command("journalctl", "-o", "short-iso-precise", "--unit", unit, "--lines", journalMaxLines).Output(); err != nil {
 		return []byte(fmt.Sprintf("failed to call journalctl due to: %s", err))
 	} else {
 		return out
@@ -183,11 +194,34 @@ func dmesg() []byte {
 }
 
 func ipamd() []byte {
-	if out, err := os.ReadFile("/var/log/aws-routed-eni/ipamd.log"); err != nil {
-		return []byte(fmt.Sprintf("failed to read ipamd.log due to: %s", err))
-	} else {
-		return out
+	return readFileTail("/var/log/aws-routed-eni/ipamd.log", maxTailReadBytes)
+}
+
+// readFileTail returns up to the last n bytes of the file at path without
+// reading the whole file into memory. Large logs (which grow over the node's
+// lifetime) would otherwise be fully buffered on every cycle; the caller still
+// trims the result to the section budget via tailx, so the emitted output is
+// unchanged.
+func readFileTail(path string, n int64) []byte {
+	f, err := os.Open(path)
+	if err != nil {
+		return []byte(fmt.Sprintf("failed to read %s due to: %s", path, err))
 	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return []byte(fmt.Sprintf("failed to stat %s due to: %s", path, err))
+	}
+	if info.Size() > n {
+		if _, err := f.Seek(info.Size()-n, io.SeekStart); err != nil {
+			return []byte(fmt.Sprintf("failed to seek %s due to: %s", path, err))
+		}
+	}
+	buf, err := io.ReadAll(io.LimitReader(f, n))
+	if err != nil {
+		return []byte(fmt.Sprintf("failed to read %s due to: %s", path, err))
+	}
+	return buf
 }
 
 func testAPIServerEndpoint(host string) []byte {
