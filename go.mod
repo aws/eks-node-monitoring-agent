@@ -1,6 +1,6 @@
 module github.com/aws/eks-node-monitoring-agent
 
-go 1.26.3
+go 1.26.4
 
 require (
 	github.com/NVIDIA/go-dcgm v1.4601.1
