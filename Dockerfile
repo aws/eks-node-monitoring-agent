@@ -88,7 +88,7 @@ COPY --from=go-builder /workspace/bin/chroot /opt/bin/chroot
 # Set working directory
 WORKDIR /opt/bin
 
-# Run as non-root user (the agent will use privileged container settings for host access)
-# Note: Some operations require privileged mode, configured via Helm chart securityContext
+# No USER is set: the agent needs root and privileged host access (journald, host mounts, chroot),
+# which is granted via the Helm chart securityContext (privileged: true).
 
 ENTRYPOINT ["/opt/bin/eks-node-monitoring-agent"]
