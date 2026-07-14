@@ -26,7 +26,7 @@ RUN dnf install -y dnf-plugins-core && \
 # =============================================================================
 # Stage 3: Go builder to compile the application
 # =============================================================================
-FROM public.ecr.aws/docker/library/golang:1.26.3 AS go-builder
+FROM public.ecr.aws/docker/library/golang:1.26.4 AS go-builder
 
 WORKDIR /workspace
 
