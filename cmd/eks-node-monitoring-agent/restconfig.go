@@ -61,22 +61,29 @@ func (rcp *podRestConfigProvider) Provide() (*rest.Config, error) {
 		return nil, err
 	}
 
-	// transform the exec provider arugments, because it needs to call host
-	// binaries in order to get a token from the iam authenticator.
-	// NOTE: reminder that these calls also utilize hostNetworking in order to
-	// reach IMDS to get host credentials.
-	// kubeconfigs that authenticate without an exec credential plugin (e.g. a
-	// client certificate) have no ExecProvider, so only rewrite it when present.
-	if restConfig.ExecProvider != nil {
-		if restConfig.ExecProvider.Command, restConfig.ExecProvider.Args, err = rcp.execMapper.Map(
-			restConfig.ExecProvider.Command,
-			restConfig.ExecProvider.Args...,
-		); err != nil {
-			return nil, err
-		}
+	if err := rewriteExecProvider(restConfig, rcp.execMapper); err != nil {
+		return nil, err
 	}
 
 	return restConfig, nil
+}
+
+// rewriteExecProvider transforms the exec provider arguments, because they need
+// to call host binaries in order to get a token from the iam authenticator.
+// NOTE: reminder that these calls also utilize hostNetworking in order to
+// reach IMDS to get host credentials.
+// kubeconfigs that authenticate without an exec credential plugin (e.g. a
+// client certificate) have no ExecProvider, so only rewrite it when present.
+func rewriteExecProvider(restConfig *rest.Config, m chrootMapper) error {
+	if restConfig.ExecProvider == nil {
+		return nil
+	}
+	var err error
+	restConfig.ExecProvider.Command, restConfig.ExecProvider.Args, err = m.Map(
+		restConfig.ExecProvider.Command,
+		restConfig.ExecProvider.Args...,
+	)
+	return err
 }
 
 type chrootMapper struct{}
