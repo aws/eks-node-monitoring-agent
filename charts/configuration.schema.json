@@ -54,6 +54,12 @@
                     "description": "Health probe port for the eks node monitoring agent. Used for both the --probe-address arg and the liveness probe.",
                     "default": 8002
                 },
+                "probeTimeoutSeconds": {
+                    "type": "integer",
+                    "description": "Timeout in seconds for the liveness probe of the eks node monitoring agent. Increase this (e.g. to 5) if probes time out on nodes under heavy load.",
+                    "default": 1,
+                    "minimum": 1
+                },
                 "resources": {
                     "$ref": "#/definitions/Resources"
                 },

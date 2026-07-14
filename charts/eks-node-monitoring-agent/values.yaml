@@ -46,6 +46,9 @@ nodeAgent:
   # -- Health probe port for the eks-node-monitoring-agent.
   # Used for both the --probe-address arg and the liveness probe.
   probePort: 8002
+  # -- Timeout in seconds for the liveness probe of the eks-node-monitoring-agent.
+  # Increase this (e.g. to 5) if probes time out on nodes under heavy load.
+  probeTimeoutSeconds: 1
   # -- List of additional container arguments for the eks-node-monitoring-agent
   additionalArgs:
     - "--metrics-address=:8003"
