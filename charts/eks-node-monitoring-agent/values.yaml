@@ -49,6 +49,9 @@ nodeAgent:
   # -- List of additional container arguments for the eks-node-monitoring-agent
   additionalArgs:
     - "--metrics-address=:8003"
+  # -- Additional environment variables for the eks-node-monitoring-agent container.
+  # Paths (e.g. KUBECONFIG) are resolved relative to the host root mount.
+  extraEnv: []
   # -- Map of pod affinities for the eks-node-monitoring-agent
   # @default -- see [`values.yaml`](./values.yaml)
   affinity:
