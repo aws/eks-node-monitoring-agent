@@ -302,6 +302,123 @@ func TestLoadMonitorConfig_AllowedIPTablesChainsOnNonNetworkingMonitorRejected(t
 	assert.Contains(t, err.Error(), "kernel-monitor")
 }
 
+func TestGetExcludedInterfaceNameRegexps(t *testing.T) {
+	t.Run("NilConfig", func(t *testing.T) {
+		var cfg *config.MonitorConfig
+		assert.Equal(t, config.DefaultExcludedInterfaceNameRegexps, cfg.GetExcludedInterfaceNameRegexps())
+	})
+	t.Run("EmptyMap", func(t *testing.T) {
+		cfg := &config.MonitorConfig{}
+		assert.Equal(t, config.DefaultExcludedInterfaceNameRegexps, cfg.GetExcludedInterfaceNameRegexps())
+	})
+	t.Run("NoNetworkingEntry", func(t *testing.T) {
+		cfg := &config.MonitorConfig{
+			Monitors: map[string]config.MonitorSettings{
+				"kernel-monitor": {Enabled: boolPtr(true)},
+			},
+		}
+		assert.Equal(t, config.DefaultExcludedInterfaceNameRegexps, cfg.GetExcludedInterfaceNameRegexps())
+	})
+	t.Run("NetworkingEntryWithoutRegexps", func(t *testing.T) {
+		cfg := &config.MonitorConfig{
+			Monitors: map[string]config.MonitorSettings{
+				"networking": {Enabled: boolPtr(true)},
+			},
+		}
+		assert.Equal(t, config.DefaultExcludedInterfaceNameRegexps, cfg.GetExcludedInterfaceNameRegexps())
+	})
+	t.Run("ExplicitEmptyListDisablesDefault", func(t *testing.T) {
+		cfg := &config.MonitorConfig{
+			Monitors: map[string]config.MonitorSettings{
+				"networking": {ExcludedInterfaceNameRegexps: []string{}},
+			},
+		}
+		assert.Empty(t, cfg.GetExcludedInterfaceNameRegexps())
+	})
+	t.Run("WithRegexps", func(t *testing.T) {
+		cfg := &config.MonitorConfig{
+			Monitors: map[string]config.MonitorSettings{
+				"networking": {
+					ExcludedInterfaceNameRegexps: []string{`^ibp[0-9]+s[0-9]+f[0-9]+$`, `^ib[0-9]+$`},
+				},
+			},
+		}
+		assert.Equal(t, []string{`^ibp[0-9]+s[0-9]+f[0-9]+$`, `^ib[0-9]+$`}, cfg.GetExcludedInterfaceNameRegexps())
+	})
+}
+
+func TestLoadMonitorConfig_ExcludedInterfaceNameRegexps(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`monitors:
+  networking:
+    enabled: true
+    excludedInterfaceNameRegexps:
+      - '^ibp[0-9]+s[0-9]+f[0-9]+$'
+      - '^ib[0-9]+$'
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, found, err := config.LoadMonitorConfig(cfgPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.True(t, found)
+	assert.Equal(t, []string{`^ibp[0-9]+s[0-9]+f[0-9]+$`, `^ib[0-9]+$`}, cfg.GetExcludedInterfaceNameRegexps())
+}
+
+func TestLoadMonitorConfig_InvalidRegexpRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`monitors:
+  networking:
+    excludedInterfaceNameRegexps:
+      - '^ibp[0-9+$'
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "is not a valid regular expression")
+}
+
+func TestLoadMonitorConfig_EmptyRegexpRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`monitors:
+  networking:
+    excludedInterfaceNameRegexps:
+      - "   "
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "must not be empty")
+}
+
+func TestLoadMonitorConfig_ExcludedInterfaceNameRegexpsOnNonNetworkingMonitorRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`monitors:
+  kernel-monitor:
+    excludedInterfaceNameRegexps:
+      - '^ib[0-9]+$'
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "excludedInterfaceNameRegexps is only supported by the networking monitor")
+	assert.Contains(t, err.Error(), "kernel-monitor")
+}
+
 func TestLoadMonitorConfig_StrictUnmarshalRejectsUnknownFields(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")
