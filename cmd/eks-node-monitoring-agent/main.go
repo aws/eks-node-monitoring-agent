@@ -233,6 +233,21 @@ func run() error {
 		}
 	}
 
+	if exprs := monitorConfig.GetExcludedInterfaceNameRegexps(); len(exprs) > 0 {
+		for _, mon := range enabledMonitors {
+			type interfaceExcludable interface {
+				SetExcludedInterfaceNameRegexps([]string) error
+			}
+			if c, ok := mon.(interfaceExcludable); ok {
+				if err := c.SetExcludedInterfaceNameRegexps(exprs); err != nil {
+					logger.Error(err, "failed to configure excluded interface name regexps", "monitor", mon.Name())
+					return err
+				}
+				logger.Info("configured excluded interface name regexps", "monitor", mon.Name(), "regexps", exprs)
+			}
+		}
+	}
+
 	if len(enabledMonitors) == 0 {
 		logger.Info("all monitors are disabled by configuration, NMA will not perform any monitoring")
 	} else {

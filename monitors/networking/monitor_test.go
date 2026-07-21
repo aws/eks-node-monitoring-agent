@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"k8s.io/client-go/tools/cache"
 	cri "k8s.io/cri-api/pkg/apis"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
@@ -156,6 +157,68 @@ func TestNetworkingPeriodic(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("ExcludedInterfaceSkipped", func(t *testing.T) {
+		mon := NewNetworkingMonitor()
+		mockManager := &mockManager{
+			obs: observer.BaseObserver{},
+			res: make(chan monitor.Condition, 5),
+		}
+		mon.Register(context.TODO(), mockManager)
+		require.NoError(t, mon.SetExcludedInterfaceNameRegexps([]string{`^ibp[0-9]+s[0-9]+f[0-9]+$`}))
+
+		// A healthy loopback avoids the MissingLoopbackInterface notification. The
+		// IPoIB interface is down/not-running but matches the exclusion regexp, so
+		// it should never trigger InterfaceNotUp / InterfaceNotRunning.
+		interfaces := []net.Interface{
+			{Name: "lo", Flags: net.FlagUp | net.FlagRunning | net.FlagLoopback},
+			{Name: "ibp115s0f0", Flags: net.FlagMulticast | net.FlagBroadcast},
+		}
+
+		for i := 0; i < 2; i++ {
+			if err := mon.checkInterfaces(interfaces); err != nil {
+				t.Fatal(err)
+			}
+		}
+		select {
+		case monitorResult := <-mockManager.res:
+			t.Fatalf("unexpected notification for excluded interface: %v", monitorResult)
+		default:
+		}
+	})
+
+	t.Run("NonExcludedInterfaceStillReported", func(t *testing.T) {
+		mon := NewNetworkingMonitor()
+		mockManager := &mockManager{
+			obs: observer.BaseObserver{},
+			res: make(chan monitor.Condition, 5),
+		}
+		mon.Register(context.TODO(), mockManager)
+		require.NoError(t, mon.SetExcludedInterfaceNameRegexps([]string{`^ibp[0-9]+s[0-9]+f[0-9]+$`}))
+
+		// eth0 does not match the exclusion regexp, so it must still be reported.
+		interfaces := []net.Interface{
+			{Name: "lo", Flags: net.FlagUp | net.FlagRunning | net.FlagLoopback},
+			{Name: "eth0", Flags: net.FlagMulticast | net.FlagBroadcast},
+		}
+
+		for i := 0; i < 2; i++ {
+			if err := mon.checkInterfaces(interfaces); err != nil {
+				t.Fatal(err)
+			}
+		}
+		select {
+		case monitorResult := <-mockManager.res:
+			assert.Equal(t, "InterfaceNotUp", monitorResult.Reason)
+		default:
+			t.Fatalf("missing notification for non-excluded interface")
+		}
+	})
+
+	t.Run("InvalidRegexpReturnsError", func(t *testing.T) {
+		mon := NewNetworkingMonitor()
+		assert.Error(t, mon.SetExcludedInterfaceNameRegexps([]string{`^ibp[0-9+$`}))
+	})
 
 	t.Run("PortConflict", func(t *testing.T) {
 		rule, err := iptables.ParseIPTablesRule(`-A CNI-DN-08cb4d05ff8daf230ce42 -p tcp -m tcp --dport 10250 -j DNAT --to-destination 172.31.106.34:10250`)
