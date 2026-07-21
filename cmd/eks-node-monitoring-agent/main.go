@@ -9,6 +9,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/shirou/gopsutil/v4/process"
 	"github.com/spf13/pflag"
 	zapraw "go.uber.org/zap"
@@ -102,7 +103,7 @@ func run() error {
 		return err
 	}
 
-	logger := zap.New(zap.Level(zapraw.NewAtomicLevelAt(zapcore.Level(-verbosity)))).WithValues("hostname", hostname)
+	logger := newLogger(verbosity).WithValues("hostname", hostname)
 	log.SetLogger(logger)
 
 	logger.Info("starting eks-node-monitoring-agent", "version", version.String())
@@ -362,6 +363,23 @@ func run() error {
 
 	logger.Info("starting controller manager")
 	return mgr.Start(ctx)
+}
+
+// newLogger builds the JSON logger used by the agent. logr's V(n) maps to zap level -n, so a
+// higher verbosity flag enables more verbose lines. zap only names levels down to debug (-1), so
+// anything more verbose (V(2)+ -> -2 and below) would otherwise render as "Level(-2)"; clampLevel
+// labels those as "debug". The level threshold still controls which V(n) lines are emitted.
+func newLogger(verbosity int) logr.Logger {
+	clampLevel := func(l zapcore.Level, enc zapcore.PrimitiveArrayEncoder) {
+		if l < zapcore.DebugLevel {
+			l = zapcore.DebugLevel
+		}
+		enc.AppendString(l.String())
+	}
+	return zap.New(
+		zap.Level(zapraw.NewAtomicLevelAt(zapcore.Level(-verbosity))),
+		zap.JSONEncoder(func(ec *zapcore.EncoderConfig) { ec.EncodeLevel = clampLevel }),
+	)
 }
 
 func parseFlags() error {

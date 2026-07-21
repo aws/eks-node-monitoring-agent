@@ -26,7 +26,7 @@ RUN dnf install -y dnf-plugins-core && \
 # =============================================================================
 # Stage 3: Go builder to compile the application
 # =============================================================================
-FROM public.ecr.aws/docker/library/golang:1.26.3 AS go-builder
+FROM public.ecr.aws/docker/library/golang:1.26.4 AS go-builder
 
 WORKDIR /workspace
 
@@ -88,7 +88,7 @@ COPY --from=go-builder /workspace/bin/chroot /opt/bin/chroot
 # Set working directory
 WORKDIR /opt/bin
 
-# Run as non-root user (the agent will use privileged container settings for host access)
-# Note: Some operations require privileged mode, configured via Helm chart securityContext
+# No USER is set: the agent needs root and privileged host access (journald, host mounts, chroot),
+# which is granted via the Helm chart securityContext (privileged: true).
 
 ENTRYPOINT ["/opt/bin/eks-node-monitoring-agent"]
