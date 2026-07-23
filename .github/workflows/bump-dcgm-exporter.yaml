@@ -57,6 +57,16 @@ jobs:
           echo "Current DCGM exporter tag: ${CURRENT_TAG}"
           echo "current_tag=${CURRENT_TAG}" >> "$GITHUB_OUTPUT"
 
+          # Derive the flavor suffix (e.g. "ubuntu22.04", "distroless") from the
+          # currently pinned tag so the bot only bumps within the same flavor.
+          # Flavor switches require a human PR to values.yaml.
+          FLAVOR=$(echo "$CURRENT_TAG" | sed -E 's/^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.[0-9]+\.[0-9]+-//')
+          if [ -z "$FLAVOR" ] || [ "$FLAVOR" = "$CURRENT_TAG" ]; then
+            echo "::error::Failed to derive flavor suffix from tag '${CURRENT_TAG}'"
+            exit 1
+          fi
+          echo "Locked to flavor: ${FLAVOR}"
+
           # Step 1: Get the latest tag from Docker Hub
           echo "Fetching tags from Docker Hub..."
           HTTP_CODE=$(curl -s -o /tmp/dockerhub_tags.json -w "%{http_code}" "https://hub.docker.com/v2/repositories/nvidia/dcgm-exporter/tags/?page_size=100&ordering=last_updated")
@@ -67,8 +77,9 @@ jobs:
           fi
           echo "Docker Hub response received (HTTP ${HTTP_CODE})"
 
+          FLAVOR_RE=$(printf '%s' "$FLAVOR" | sed 's/\./\\./g')
           LATEST_TAG=$(jq -r '.results[].name' /tmp/dockerhub_tags.json \
-            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.[0-9]+\.[0-9]+-ubuntu22\.04$' \
+            | grep -E "^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.[0-9]+\.[0-9]+-${FLAVOR_RE}\$" \
             | sort -V \
             | tail -1 || true)
 
