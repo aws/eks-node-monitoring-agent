@@ -44,6 +44,12 @@ type Condition struct {
 	// MinOccurrence is the minimal time the failure could occur before we export the condition.
 	// default is 0 if not assigned
 	MinOccurrences int64
+	// Resolved indicates that the issue previously reported under this Reason
+	// has recovered. A resolved condition clears the reason from the
+	// corresponding NodeCondition; when the last fatal reason for a
+	// NodeCondition is resolved, the condition returns to a healthy status.
+	// Resolving a reason that was never reported is a no-op.
+	Resolved bool
 }
 
 // A gauge for how severe the issue is, and whether actions need to be taken

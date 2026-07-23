@@ -3,6 +3,7 @@ package manager_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -340,5 +341,136 @@ func TestNodeExporter_LastTransitionTimeFlapping(t *testing.T) {
 	// It should still be "MessageA; MessageB" because MessageA is already contained in it.
 	if latestMessage != "MessageA; MessageB" {
 		t.Errorf("Message was incorrectly updated with duplicates or cleared. expected: MessageA; MessageB, got: %s", latestMessage)
+	}
+}
+
+func TestNodeExporter_ResolveRestoresReadyState(t *testing.T) {
+	ctx := context.TODO()
+	fakeClient := fake.NewFakeClient()
+	initialNode := corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "test-node"}}
+	if err := fakeClient.Create(ctx, &initialNode); err != nil {
+		t.Fatal(err)
+	}
+
+	var recorder fakeEventRecorder
+	conditionType := corev1.NodeConditionType("NetworkingReady")
+	nodeExporter := manager.NewNodeExporter(
+		&initialNode,
+		fakeClient,
+		&recorder,
+		map[corev1.NodeConditionType]manager.NodeConditionConfig{
+			conditionType: {ReadyReason: "NetworkingIsReady", ReadyMessage: "Monitoring is active"},
+		},
+	)
+
+	failing := monitor.Condition{Reason: "IPAMDNotRunning", Message: "IPAMD is down", Severity: monitor.SeverityFatal}
+	if err := nodeExporter.Fatal(ctx, failing, conditionType); err != nil {
+		t.Fatal(err)
+	}
+
+	// Resolving an unrelated reason must not recover the condition.
+	recovered, err := nodeExporter.Resolve(ctx, monitor.Condition{Reason: "SomethingElse"}, conditionType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered {
+		t.Fatal("resolving an untracked reason must not report recovery while another reason is failing")
+	}
+
+	// Resolving the failing reason restores the ready state.
+	recovered, err = nodeExporter.Resolve(ctx, monitor.Condition{Reason: "IPAMDNotRunning"}, conditionType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !recovered {
+		t.Fatal("expected recovery after resolving the only failing reason")
+	}
+
+	heartbeatChan := make(chan time.Time)
+	reportChan := make(chan time.Time)
+	go nodeExporter.RunWithTickers(ctx, heartbeatChan, reportChan)
+	reportChan <- time.Now()
+
+	expected := corev1.NodeCondition{
+		Type:    conditionType,
+		Status:  corev1.ConditionTrue,
+		Reason:  "NetworkingIsReady",
+		Message: "Monitoring is active",
+	}
+	if err := wait.PollUntilContextTimeout(ctx, 100*time.Millisecond, 10*time.Second, true, func(ctx context.Context) (bool, error) {
+		var node corev1.Node
+		if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(&initialNode), &node); err != nil {
+			return false, err
+		}
+		return nodeHasCondition(node, expected), nil
+	}); err != nil {
+		t.Fatalf("condition did not return to ready state: %v", err)
+	}
+
+	// A recovery event should have been recorded for auditability.
+	var foundEvent bool
+	for _, event := range recorder.events.Items {
+		if event.Type == corev1.EventTypeNormal && strings.Contains(event.Message, "IPAMDNotRunning") && strings.Contains(event.Message, "resolved") {
+			foundEvent = true
+		}
+	}
+	if !foundEvent {
+		t.Errorf("expected a recovery event, got %+v", recorder.events.Items)
+	}
+}
+
+func TestNodeExporter_ResolveKeepsConditionFalseWhileOtherReasonsRemain(t *testing.T) {
+	ctx := context.TODO()
+	fakeClient := fake.NewFakeClient()
+	initialNode := corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "test-node"}}
+	if err := fakeClient.Create(ctx, &initialNode); err != nil {
+		t.Fatal(err)
+	}
+
+	conditionType := corev1.NodeConditionType("NetworkingReady")
+	nodeExporter := manager.NewNodeExporter(
+		&initialNode,
+		fakeClient,
+		record.NewFakeRecorder(100),
+		map[corev1.NodeConditionType]manager.NodeConditionConfig{
+			conditionType: {ReadyReason: "NetworkingIsReady", ReadyMessage: "Monitoring is active"},
+		},
+	)
+
+	if err := nodeExporter.Fatal(ctx, monitor.Condition{Reason: "ErrorA", Message: "MessageA"}, conditionType); err != nil {
+		t.Fatal(err)
+	}
+	if err := nodeExporter.Fatal(ctx, monitor.Condition{Reason: "ErrorB", Message: "MessageB"}, conditionType); err != nil {
+		t.Fatal(err)
+	}
+
+	recovered, err := nodeExporter.Resolve(ctx, monitor.Condition{Reason: "ErrorA"}, conditionType)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered {
+		t.Fatal("condition must not recover while ErrorB is still failing")
+	}
+
+	heartbeatChan := make(chan time.Time)
+	reportChan := make(chan time.Time)
+	go nodeExporter.RunWithTickers(ctx, heartbeatChan, reportChan)
+	reportChan <- time.Now()
+
+	// The condition stays False, attributed to the remaining reason only.
+	expected := corev1.NodeCondition{
+		Type:    conditionType,
+		Status:  corev1.ConditionFalse,
+		Reason:  "ErrorB",
+		Message: "MessageB",
+	}
+	if err := wait.PollUntilContextTimeout(ctx, 100*time.Millisecond, 10*time.Second, true, func(ctx context.Context) (bool, error) {
+		var node corev1.Node
+		if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(&initialNode), &node); err != nil {
+			return false, err
+		}
+		return nodeHasCondition(node, expected), nil
+	}); err != nil {
+		t.Fatalf("condition should remain False with only the remaining reason: %v", err)
 	}
 }
