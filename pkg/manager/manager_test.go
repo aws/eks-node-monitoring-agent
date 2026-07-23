@@ -33,7 +33,9 @@ func NewManagerWithExporterFuncs(fns ...func(*mockExporter)) (*manager.MonitorMa
 }
 
 type mockExporter struct {
-	notifyChan chan struct{}
+	notifyChan   chan struct{}
+	resolveChan  chan monitor.Condition
+	resolveValue bool
 }
 
 func (e *mockExporter) notify() error {
@@ -48,6 +50,12 @@ func (e *mockExporter) Warning(context.Context, monitor.Condition, corev1.NodeCo
 }
 func (e *mockExporter) Fatal(context.Context, monitor.Condition, corev1.NodeConditionType) error {
 	return e.notify()
+}
+func (e *mockExporter) Resolve(_ context.Context, condition monitor.Condition, _ corev1.NodeConditionType) (bool, error) {
+	if e.resolveChan != nil {
+		e.resolveChan <- condition
+	}
+	return e.resolveValue, nil
 }
 
 func TestManager_Notification(t *testing.T) {
@@ -133,6 +141,41 @@ func TestManager_MinOccurrences(t *testing.T) {
 			// expected to timeout because min occurrences was not met.
 		}
 	})
+}
+
+func TestManager_ResolvedConditionRoutedToExporter(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.TODO(), time.Second)
+	defer cancel()
+
+	mockMon := &mockMonitor{
+		registerFunc: func(ctx context.Context, mgr monitor.Manager) error {
+			go mgr.Notify(ctx, monitor.Condition{
+				Reason:   "ExampleReason",
+				Severity: monitor.SeverityFatal,
+				Resolved: true,
+				// MinOccurrences must not gate resolution.
+				MinOccurrences: 5,
+			})
+			return nil
+		},
+	}
+	mMgr, mockExp := NewManagerWithExporterFuncs(func(e *mockExporter) {
+		e.resolveChan = make(chan monitor.Condition, 1)
+		e.resolveValue = true
+	})
+	if err := mMgr.Register(ctx, mockMon, "MockPassed"); err != nil {
+		t.Fatal(err)
+	}
+	go mMgr.Start(ctx)
+
+	select {
+	case cond := <-mockExp.resolveChan:
+		if cond.Reason != "ExampleReason" {
+			t.Fatalf("resolved reason = %q, want ExampleReason", cond.Reason)
+		}
+	case <-ctx.Done():
+		t.Fatal("resolved condition was not routed to the exporter")
+	}
 }
 
 // this tests the creation of an observable resource from end to end.
