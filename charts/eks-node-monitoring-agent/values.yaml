@@ -49,6 +49,10 @@ nodeAgent:
   # -- List of additional container arguments for the eks-node-monitoring-agent
   additionalArgs:
     - "--metrics-address=:8003"
+  # -- Optional DCGM hostengine endpoint. When empty, the agent uses localhost:5555.
+  dcgmAddress: ""
+  # -- Optional pod DNS policy. Set to ClusterFirstWithHostNet when dcgmAddress uses a Kubernetes Service hostname.
+  dnsPolicy: ""
   # -- Map of pod affinities for the eks-node-monitoring-agent
   # @default -- see [`values.yaml`](./values.yaml)
   affinity:
@@ -101,6 +105,8 @@ nodeAgent:
   podAnnotations: {}
 
 dcgmAgent:
+  # -- Deploy the bundled dcgm-server DaemonSet
+  enabled: true
   image:
     # -- Image tag for the dcgm-exporter
     tag: 4.5.2-4.8.1-ubuntu22.04

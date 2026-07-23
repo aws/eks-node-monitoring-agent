@@ -39,6 +39,17 @@
                         "type": "string"
                     }
                 },
+                "dcgmAddress": {
+                    "type": "string",
+                    "description": "Optional DCGM hostengine endpoint used by the eks node monitoring agent. When empty, the agent uses localhost:5555.",
+                    "default": ""
+                },
+                "dnsPolicy": {
+                    "type": "string",
+                    "description": "Optional DNS policy for the eks node monitoring agent pod. Set ClusterFirstWithHostNet when dcgmAddress uses a Kubernetes Service hostname.",
+                    "default": "",
+                    "enum": ["", "ClusterFirst", "ClusterFirstWithHostNet", "Default"]
+                },
                 "podAnnotations": {
                     "$ref": "#/definitions/StringMap",
                     "description": "Annotations applied to the eks node monitoring agent pod. These annotations are merged with any global pod annotations, with component specific annotations taking precedence in the case of a conflict.",
@@ -98,6 +109,11 @@
                 "affinity": {
                     "type": "object",
                     "description": "Map of dcgm pod affinities"
+                },
+                "enabled": {
+                    "type": "boolean",
+                    "description": "Whether to deploy the bundled dcgm-server DaemonSet",
+                    "default": true
                 },
                 "podAnnotations": {
                     "$ref": "#/definitions/StringMap",

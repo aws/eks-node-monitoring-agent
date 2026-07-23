@@ -30,6 +30,22 @@ To uninstall:
 helm uninstall eks-node-monitoring-agent --namespace kube-system
 ```
 
+## Using an existing DCGM hostengine
+
+By default, the chart deploys a `dcgm-server` DaemonSet on every GPU node.
+That DaemonSet runs a dedicated `nv-hostengine` on host port 5555.
+[NVIDIA documents standalone mode](https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/getting-started.html#standalone-mode) as its preferred mode when multiple clients interact with DCGM.
+Clusters that already run `nv-hostengine` on each GPU node should therefore configure `nodeAgent.dcgmAddress` to reuse it rather than deploy the bundled instance.
+Disable the bundled server, configure the external endpoint, and opt into cluster DNS when that endpoint is a Kubernetes Service:
+
+```yaml
+dcgmAgent:
+  enabled: false
+nodeAgent:
+  dcgmAddress: nvidia-dcgm.gpu-operator.svc:5555
+  dnsPolicy: ClusterFirstWithHostNet
+```
+
 ## Configuration
 
 The following table lists the configurable parameters for this chart and their default values.

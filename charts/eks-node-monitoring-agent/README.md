@@ -30,6 +30,22 @@ To uninstall:
 helm uninstall eks-node-monitoring-agent --namespace kube-system
 ```
 
+## Using an existing DCGM hostengine
+
+By default, the chart deploys a `dcgm-server` DaemonSet on every GPU node.
+That DaemonSet runs a dedicated `nv-hostengine` on host port 5555.
+[NVIDIA documents standalone mode](https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/getting-started.html#standalone-mode) as its preferred mode when multiple clients interact with DCGM.
+Clusters that already run `nv-hostengine` on each GPU node should therefore configure `nodeAgent.dcgmAddress` to reuse it rather than deploy the bundled instance.
+Disable the bundled server, configure the external endpoint, and opt into cluster DNS when that endpoint is a Kubernetes Service:
+
+```yaml
+dcgmAgent:
+  enabled: false
+nodeAgent:
+  dcgmAddress: nvidia-dcgm.gpu-operator.svc:5555
+  dnsPolicy: ClusterFirstWithHostNet
+```
+
 ## Configuration
 
 The following table lists the configurable parameters for this chart and their default values.
@@ -37,6 +53,7 @@ The following table lists the configurable parameters for this chart and their d
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | dcgmAgent.affinity | object | see [`values.yaml`](./values.yaml) | Map of dcgm pod affinities |
+| dcgmAgent.enabled | bool | `true` | Deploy the bundled dcgm-server DaemonSet |
 | dcgmAgent.image.account | string | `"602401143452"` | ECR repository account number for the dcgm-exporter |
 | dcgmAgent.image.containerRegistry | string | `""` | Full container registry URL override (e.g., 602401143452.dkr.ecr.us-west-2.amazonaws.com). When set, this takes precedence over account/endpoint/region/domain fields. |
 | dcgmAgent.image.domain | string | `"amazonaws.com"` | ECR repository domain for the dcgm-exporter |
@@ -58,6 +75,8 @@ The following table lists the configurable parameters for this chart and their d
 | nameOverride | string | `"eks-node-monitoring-agent"` | A name override for the chart |
 | nodeAgent.additionalArgs | list | `["--metrics-address=:8003"]` | List of additional container arguments for the eks-node-monitoring-agent |
 | nodeAgent.affinity | object | see [`values.yaml`](./values.yaml) | Map of pod affinities for the eks-node-monitoring-agent |
+| nodeAgent.dcgmAddress | string | `""` | Optional DCGM hostengine endpoint. When empty, the agent uses localhost:5555. |
+| nodeAgent.dnsPolicy | string | `""` | Optional pod DNS policy. Set to ClusterFirstWithHostNet when dcgmAddress uses a Kubernetes Service hostname. |
 | nodeAgent.image.account | string | `"602401143452"` | ECR repository account number for the eks-node-monitoring-agent |
 | nodeAgent.image.containerRegistry | string | `""` | Full container registry URL override (e.g., 602401143452.dkr.ecr.us-west-2.amazonaws.com). When set, this takes precedence over account/endpoint/region/domain fields. |
 | nodeAgent.image.domain | string | `"amazonaws.com"` | ECR repository domain for the eks-node-monitoring-agent |
