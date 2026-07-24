@@ -225,6 +225,14 @@
                         "type": "string",
                         "pattern": "^[^/]+/[^/]+$"
                     }
+                },
+                "excludedInterfaceNameRegexps": {
+                    "type": "array",
+                    "description": "List of regular expressions matching interface names that should be excluded from InterfaceNotUp / InterfaceNotRunning checks. Use this to suppress false positives from known non-node-networking interfaces (e.g. Mellanox/NVIDIA IPoIB interfaces such as \"^ibp[0-9]+s[0-9]+f[0-9]+$\"). Defaults to excluding IPoIB interfaces; set to an empty list to disable the default exclusion.",
+                    "default": ["^ibp[0-9]+s[0-9]+f[0-9]+$"],
+                    "items": {
+                      "type": "string"
+                    }
                 }
             }
         },

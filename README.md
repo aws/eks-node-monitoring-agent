@@ -32,7 +32,7 @@ For each category, the agent applies a dedicated `NodeCondition` to worker nodes
 
 ## Installation
 
-It is recommended to install the EKS Node Health Monitoring Agent as an EKS add-on. For Helm installation instructions, see [charts/eks-node-monitoring-agent/README.md](./charts/eks-node-monitoring-agent/README.md). 
+It is recommended to install the EKS Node Health Monitoring Agent as an EKS add-on. For Helm installation instructions, see [charts/eks-node-monitoring-agent/README.md](./charts/eks-node-monitoring-agent/README.md).
 
 For detailed configuration options and usage documentation, refer to the [Amazon EKS Node Health documentation](https://docs.aws.amazon.com/eks/latest/userguide/node-health.html).
 
@@ -63,6 +63,17 @@ nodeAgent:
         - "filter/MY-CUSTOM-CHAIN"
 ```
 
+The networking monitor also supports `excludedInterfaceNameRegexps` to suppress `InterfaceNotUp` / `InterfaceNotRunning` findings for interfaces that are not part of Kubernetes node networking. This is useful on accelerated instance types (e.g. P6) that expose host-visible Mellanox/NVIDIA IPoIB interfaces such as `ibp115s0f0`, which may legitimately remain down. Each entry is a Go regular expression matched against the interface name; invalid regexps fail fast at startup:
+
+```yaml
+nodeAgent:
+  monitors:
+    networking:
+      excludedInterfaceNameRegexps:
+        - "^ibp[0-9]+s[0-9]+f[0-9]+$"
+        - "^ib[0-9]+$"
+```
+
 ### Config File Format
 
 The agent reads a YAML config file mounted at `/etc/nma/config.yaml`. Omitted monitors default to enabled.
@@ -86,6 +97,7 @@ monitors:
 Valid plugin names: `kernel-monitor`, `networking`, `storage-monitor`, `nvidia`, `neuron`, `runtime`.
 
 When a monitor is disabled:
+
 - Its health checks are not executed.
 - The corresponding `NodeCondition` (e.g., `NetworkingReady`) is not set on the node, avoiding false-positive healthy status for unmonitored subsystems.
 
