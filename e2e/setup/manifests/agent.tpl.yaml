@@ -393,6 +393,7 @@ spec:
             httpGet:
               path: /healthz
               port: 8002
+            timeoutSeconds: 1
           resources:
             limits:
               cpu: 250m

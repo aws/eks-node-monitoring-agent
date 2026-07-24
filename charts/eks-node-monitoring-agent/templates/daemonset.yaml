@@ -64,6 +64,7 @@ spec:
             httpGet:
               path: /healthz
               port: {{ .Values.nodeAgent.probePort | default 8002 }}
+            timeoutSeconds: {{ .Values.nodeAgent.probeTimeoutSeconds | default 1 }}
           {{- with .Values.nodeAgent.resizePolicy }}
           resizePolicy:
             {{- toYaml . | nindent 12 }}
