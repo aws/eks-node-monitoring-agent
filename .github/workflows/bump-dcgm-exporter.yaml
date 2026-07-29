@@ -1,5 +1,11 @@
 name: "Bump DCGM Exporter Image"
 
+# Only applies when charts/eks-node-monitoring-agent/values.yaml pins
+# dcgmAgent.image.tag to a standalone eks/observability/dcgm-exporter image,
+# which is the break-glass configuration. By default DCGM ships in the
+# eks-node-monitoring-agent image and its version is the DCGM_VERSION build arg
+# in the Dockerfile, so this workflow no-ops.
+
 on:
   workflow_dispatch:
   schedule:
@@ -49,10 +55,16 @@ jobs:
           # Parse current dcgmAgent image tag from values.yaml
           # The tag sits under dcgmAgent.image.tag — grab the first 'tag:' line after 'dcgmAgent:'
           VALUES_FILE="charts/eks-node-monitoring-agent/values.yaml"
-          CURRENT_TAG=$(awk '/^dcgmAgent:/{found=1} found && /tag:/{print $2; exit}' "$VALUES_FILE")
+          CURRENT_TAG=$(awk '/^dcgmAgent:/{found=1} found && /tag:/{print $2; exit}' "$VALUES_FILE" | tr -d "\"'")
           if [ -z "$CURRENT_TAG" ]; then
-            echo "::error::Failed to parse current DCGM tag from ${VALUES_FILE}"
-            exit 1
+            # No standalone DCGM image is pinned, which is the default: the
+            # dcgm-server DaemonSet runs nv-hostengine from the
+            # eks-node-monitoring-agent image. That DCGM version comes from the
+            # DCGM_VERSION build arg in the Dockerfile, not from an image tag,
+            # so there is nothing for this workflow to bump.
+            echo "dcgmAgent.image.tag is empty; DCGM ships in the agent image (Dockerfile DCGM_VERSION). Nothing to bump."
+            echo "new_version_available=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           echo "Current DCGM exporter tag: ${CURRENT_TAG}"
           echo "current_tag=${CURRENT_TAG}" >> "$GITHUB_OUTPUT"

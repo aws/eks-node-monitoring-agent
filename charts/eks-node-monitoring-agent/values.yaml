@@ -102,20 +102,21 @@ nodeAgent:
 
 dcgmAgent:
   image:
-    # -- Image tag for the dcgm-exporter
-    tag: 4.5.2-4.8.1-ubuntu22.04
-    # -- Full container registry URL override (e.g., 602401143452.dkr.ecr.us-west-2.amazonaws.com).
-    # When set, this takes precedence over account/endpoint/region/domain fields.
+    # -- Image tag that pins the dcgm-server DaemonSet back to a standalone eks/observability/dcgm-exporter image. Empty by default, so the DaemonSet runs the nv-hostengine bundled in the eks-node-monitoring-agent image. See the "DCGM host engine" section of the chart README before setting this.
+    tag: ""
+    # -- Full image override (registry/repository:tag) for the dcgm-server DaemonSet. Takes precedence over all other fields.
+    override: ""
+    # -- Full container registry URL override (e.g., 602401143452.dkr.ecr.us-west-2.amazonaws.com). When set, this takes precedence over account/endpoint/region/domain fields. Only used when a tag is set.
     containerRegistry: ""
-    # -- ECR repository domain for the dcgm-exporter
+    # -- ECR repository domain for the dcgm-exporter. Only used when a tag is set.
     domain: amazonaws.com
-    # -- ECR repository region for the dcgm-exporter
+    # -- ECR repository region for the dcgm-exporter. Only used when a tag is set.
     region: us-west-2
-    # -- ECR repository endpoint for the dcgm-exporter
+    # -- ECR repository endpoint for the dcgm-exporter. Only used when a tag is set.
     endpoint: ecr
-    # -- ECR repository account number for the dcgm-exporter
+    # -- ECR repository account number for the dcgm-exporter. Only used when a tag is set.
     account: "602401143452"
-    # -- Container pull policy for the dcgm-exporter
+    # -- Container pull policy for the dcgm-server DaemonSet
     pullPolicy: IfNotPresent
   # -- Map of dcgm pod affinities
   # @default -- see [`values.yaml`](./values.yaml)
