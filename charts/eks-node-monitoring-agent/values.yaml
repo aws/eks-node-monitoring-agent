@@ -95,6 +95,10 @@ nodeAgent:
     - operator: Exists
   # -- Pod labels applied to the eks-node-monitoring-agent
   podLabels: {}
+  # -- Node labels required for the eks-node-monitoring-agent to be scheduled on a node.
+  nodeSelector: {}
+  # -- PriorityClass for the eks-node-monitoring-agent.
+  priorityClassName: system-node-critical
   # -- Per-monitor configuration keyed by plugin name. See the main README for details.
   monitors: {}
   # -- Pod annotations applied to the eks-node-monitoring-agent
@@ -154,6 +158,10 @@ dcgmAgent:
   tolerations: []
   # -- Pod labels applied to the dcgm exporter
   podLabels: {}
+  # -- Node labels required for the dcgm exporter to be scheduled on a node.
+  nodeSelector: {}
+  # -- PriorityClass for the dcgm exporter.
+  priorityClassName: system-node-critical
   # -- Pod annotations applied to the dcgm exporter
   podAnnotations: {}  
 
