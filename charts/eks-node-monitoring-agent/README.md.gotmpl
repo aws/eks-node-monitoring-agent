@@ -30,6 +30,25 @@ To uninstall:
 helm uninstall eks-node-monitoring-agent --namespace kube-system
 ```
 
+## DCGM host engine
+
+On NVIDIA GPU nodes the agent collects GPU health from DCGM. It connects as a
+DCGM client in standalone mode, so an `nv-hostengine` process must be reachable
+on the node (`localhost:5555` by default). The chart provides one via the
+`dcgm-server` DaemonSet.
+
+`nv-hostengine`, `dcgmi` and the DCGM modules ship inside the
+`eks-node-monitoring-agent` image, so `dcgm-server` runs the same image as the
+node agent and no separate DCGM image is pulled. Previously this DaemonSet ran
+`eks/observability/dcgm-exporter`, which bundled an Ubuntu userland and the
+`dcgm-exporter` binary that the agent never used.
+
+If you need to pin the DaemonSet back to a standalone DCGM image, set
+`dcgmAgent.image.tag` (resolved against `eks/observability/dcgm-exporter`) or
+`dcgmAgent.image.override` for a full image reference. Note that the
+`dcgm-exporter` images carry the CVEs of their base OS and of the exporter
+binary, so treat this as a temporary break-glass measure.
+
 ## Configuration
 
 The following table lists the configurable parameters for this chart and their default values.
