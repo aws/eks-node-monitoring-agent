@@ -39,7 +39,7 @@ spec:
         {{- with .Values.dcgmAgent.nodeSelector }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      priorityClassName: {{ .Values.priorityClassName | default "system-node-critical" }}
+      priorityClassName: {{ .Values.dcgmAgent.priorityClassName | default "system-node-critical" }}
       containers:
         - name: {{ .Chart.Name }}-dcgm
           image: {{ template "dcgm-server.image" . }}

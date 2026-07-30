@@ -64,8 +64,10 @@ The following table lists the configurable parameters for this chart and their d
 | dcgmAgent.image.pullPolicy | string | `"IfNotPresent"` | Container pull policy for the dcgm-server DaemonSet |
 | dcgmAgent.image.region | string | `"us-west-2"` | ECR repository region for the dcgm-exporter. Only used when a tag is set. |
 | dcgmAgent.image.tag | string | `""` | Image tag that pins the dcgm-server DaemonSet back to a standalone eks/observability/dcgm-exporter image. Empty by default, so the DaemonSet runs the nv-hostengine bundled in the eks-node-monitoring-agent image. See the "DCGM host engine" section of the chart README before setting this. |
+| dcgmAgent.nodeSelector | object | `{}` | Node labels required for the dcgm exporter to be scheduled on a node. |
 | dcgmAgent.podAnnotations | object | `{}` | Pod annotations applied to the dcgm exporter |
 | dcgmAgent.podLabels | object | `{}` | Pod labels applied to the dcgm exporter |
+| dcgmAgent.priorityClassName | string | `"system-node-critical"` | PriorityClass for the dcgm exporter. |
 | dcgmAgent.resizePolicy | list | `[]` | Container resize policy for in-place pod vertical scaling (requires Kubernetes 1.33+) |
 | dcgmAgent.resources | object | `{}` | Container resources for the dcgm deployment |
 | dcgmAgent.tolerations | list | `[]` | Deployment tolerations for the dcgm |
@@ -86,8 +88,10 @@ The following table lists the configurable parameters for this chart and their d
 | nodeAgent.image.region | string | `"us-west-2"` | ECR repository region for the eks-node-monitoring-agent |
 | nodeAgent.image.tag | string | `"v1.6.7-eksbuild.1"` | Image tag for the eks-node-monitoring-agent |
 | nodeAgent.monitors | object | `{}` | Per-monitor configuration keyed by plugin name. See the main README for details. |
+| nodeAgent.nodeSelector | object | `{}` | Node labels required for the eks-node-monitoring-agent to be scheduled on a node. |
 | nodeAgent.podAnnotations | object | `{}` | Pod annotations applied to the eks-node-monitoring-agent |
 | nodeAgent.podLabels | object | `{}` | Pod labels applied to the eks-node-monitoring-agent |
+| nodeAgent.priorityClassName | string | `"system-node-critical"` | PriorityClass for the eks-node-monitoring-agent. |
 | nodeAgent.probePort | int | `8002` | Health probe port for the eks-node-monitoring-agent. Used for both the --probe-address arg and the liveness probe. |
 | nodeAgent.resizePolicy | list | `[]` | Container resize policy for in-place pod vertical scaling (requires Kubernetes 1.33+) |
 | nodeAgent.resources | object | `{"limits":{"cpu":"250m","memory":"200Mi"},"requests":{"cpu":"10m","memory":"30Mi"}}` | Container resources for the eks-node-monitoring-agent |
