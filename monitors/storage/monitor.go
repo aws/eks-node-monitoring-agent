@@ -155,9 +155,9 @@ func (m *StorageMonitor) handleKubeletLogs(line string) error {
 // - "Buffer I/O error on device md0, logical block 209713024"
 // - "blk_update_request: I/O error, dev nvme1n1, sector 12345"
 var (
-	ioErrorEndRequest = regexp.MustCompile(`end_request: I/O error, dev ([a-z0-9]+), sector ([0-9]+)`)
-	ioErrorBufferIO   = regexp.MustCompile(`Buffer I/O error on device ([a-z0-9]+), logical block ([0-9]+)`)
-	ioErrorBlkUpdate  = regexp.MustCompile(`blk_update_request: I/O error, dev ([a-z0-9]+), sector ([0-9]+)`)
+	ioErrorEndRequest = regexp.MustCompile(`end_request: I/O error, dev ([a-z0-9-]+), sector ([0-9]+)`)
+	ioErrorBufferIO   = regexp.MustCompile(`Buffer I/O error on device ([a-z0-9-]+), logical block ([0-9]+)`)
+	ioErrorBlkUpdate  = regexp.MustCompile(`blk_update_request: I/O error, dev ([a-z0-9-]+), sector ([0-9]+)`)
 )
 
 func (m *StorageMonitor) handleBlockDeviceIOErrors(line string) error {

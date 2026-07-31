@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 	"github.com/aws/eks-node-monitoring-agent/api/monitor/resource"
@@ -184,6 +185,13 @@ func TestBlockDeviceIOErrors(t *testing.T) {
 			expectedLoc:    "sector 1234567",
 		},
 		{
+			name:           "blk_update_request I/O error on dm-0",
+			logLine:        "[12345.678901] blk_update_request: I/O error, dev dm-0, sector 7654321",
+			shouldDetect:   true,
+			expectedDevice: "dm-0",
+			expectedLoc:    "sector 7654321",
+		},
+		{
 			name:         "Non-I/O error log line",
 			logLine:      "[12345.678901] Some other kernel message",
 			shouldDetect: false,
@@ -197,27 +205,27 @@ func TestBlockDeviceIOErrors(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var matched bool
-			var device, location string
+			mockManager := &mockManager{res: make(chan monitor.Condition, 1)}
+			mon := NewStorageMonitor()
+			mon.manager = mockManager
 
-			if matches := ioErrorEndRequest.FindStringSubmatch(tt.logLine); len(matches) > 2 {
-				matched = true
-				device = matches[1]
-				location = "sector " + matches[2]
-			} else if matches := ioErrorBufferIO.FindStringSubmatch(tt.logLine); len(matches) > 2 {
-				matched = true
-				device = matches[1]
-				location = "logical block " + matches[2]
-			} else if matches := ioErrorBlkUpdate.FindStringSubmatch(tt.logLine); len(matches) > 2 {
-				matched = true
-				device = matches[1]
-				location = "sector " + matches[2]
-			}
+			require.NoError(t, mon.handleBlockDeviceIOErrors(tt.logLine))
 
-			assert.Equal(t, tt.shouldDetect, matched)
 			if tt.shouldDetect {
-				assert.Equal(t, tt.expectedDevice, device)
-				assert.Equal(t, tt.expectedLoc, location)
+				select {
+				case monitorResult := <-mockManager.res:
+					require.Equal(t, "BlockDeviceIOError", monitorResult.Reason)
+					require.Contains(t, monitorResult.Message, tt.expectedDevice)
+					require.Contains(t, monitorResult.Message, tt.expectedLoc)
+				default:
+					require.Fail(t, "expected a condition to be emitted, but none was emitted")
+				}
+			} else {
+				select {
+				case <-mockManager.res:
+					require.Fail(t, "expected no condition to be emitted, but one was emitted")
+				default:
+				}
 			}
 		})
 	}
