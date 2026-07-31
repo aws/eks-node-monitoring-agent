@@ -49,6 +49,16 @@
                     "description": "Labels applied to the eks node monitoring agent pod. These labels are merged with any global pod labels, with component specific labels taking precedence in the case of a conflict.",
                     "default": {}
                 },
+                "nodeSelector": {
+                    "$ref": "#/definitions/StringMap",
+                    "description": "Node labels that a node must have for the eks node monitoring agent pod to be scheduled on it.",
+                    "default": {}
+                },
+                "priorityClassName": {
+                    "type": "string",
+                    "description": "Name of an existing PriorityClass assigned to the eks node monitoring agent pod.",
+                    "default": "system-node-critical"
+                },
                 "probePort": {
                     "type": "integer",
                     "description": "Health probe port for the eks node monitoring agent. Used for both the --probe-address arg and the liveness probe.",
@@ -108,6 +118,16 @@
                     "$ref": "#/definitions/StringMap",
                     "description": "Labels applied to the eks node monitoring agent pod. These labels are merged with any global pod labels, with component specific labels taking precedence in the case of a conflict.",
                     "default": {}
+                },
+                "nodeSelector": {
+                    "$ref": "#/definitions/StringMap",
+                    "description": "Node labels that a node must have for the dcgm-exporter pod to be scheduled on it. ",
+                    "default": {}
+                },
+                "priorityClassName": {
+                    "type": "string",
+                    "description": "Name of an existing PriorityClass assigned to the dcgm-exporter pod.",
+                    "default": "system-node-critical"
                 },
                 "resources": {
                     "$ref": "#/definitions/Resources"
@@ -218,6 +238,14 @@
                     "items": {
                         "type": "string",
                         "pattern": "^[^/]+/[^/]+$"
+                    }
+                },
+                "excludedInterfaceNameRegexps": {
+                    "type": "array",
+                    "description": "List of regular expressions matching interface names that should be excluded from InterfaceNotUp / InterfaceNotRunning checks. Use this to suppress false positives from known non-node-networking interfaces (e.g. Mellanox/NVIDIA IPoIB interfaces such as \"^ibp[0-9]+s[0-9]+f[0-9]+$\"). Defaults to excluding IPoIB interfaces; set to an empty list to disable the default exclusion.",
+                    "default": ["^ibp[0-9]+s[0-9]+f[0-9]+$"],
+                    "items": {
+                      "type": "string"
                     }
                 }
             }

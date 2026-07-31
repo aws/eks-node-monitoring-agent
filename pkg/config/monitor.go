@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -15,8 +16,9 @@ const DefaultConfigPath = "/etc/nma/config.yaml"
 
 // MonitorSettings holds per-monitor configuration.
 type MonitorSettings struct {
-	Enabled               *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
-	AllowedIPTablesChains []string `yaml:"allowedIPTablesChains,omitempty" json:"allowedIPTablesChains,omitempty"`
+	Enabled                      *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	AllowedIPTablesChains        []string `yaml:"allowedIPTablesChains,omitempty" json:"allowedIPTablesChains,omitempty"`
+	ExcludedInterfaceNameRegexps []string `yaml:"excludedInterfaceNameRegexps,omitempty" json:"excludedInterfaceNameRegexps,omitempty"`
 }
 
 // IsEnabled returns true if the monitor is enabled.
@@ -60,6 +62,28 @@ func (mc *MonitorConfig) GetAllowedIPTablesChains() []string {
 	return settings.AllowedIPTablesChains
 }
 
+// DefaultExcludedInterfaceNameRegexps are the interface-name exclusion regexps
+// applied when the networking monitor has none explicitly configured. It
+// excludes Mellanox/NVIDIA IPoIB interfaces (e.g. "ibp115s0f0") by default,
+// which are not node-networking interfaces and would otherwise cause false
+// positive InterfaceNotUp / InterfaceNotRunning notifications.
+var DefaultExcludedInterfaceNameRegexps = []string{`^ibp[0-9]+s[0-9]+f[0-9]+$`}
+
+// GetExcludedInterfaceNameRegexps returns the interface-name exclusion regexps
+// configured for the networking monitor. When the networking monitor has no
+// excludedInterfaceNameRegexps explicitly set, DefaultExcludedInterfaceNameRegexps
+// is returned. An explicitly configured empty list disables the default.
+func (mc *MonitorConfig) GetExcludedInterfaceNameRegexps() []string {
+	if mc == nil || mc.Monitors == nil {
+		return DefaultExcludedInterfaceNameRegexps
+	}
+	settings, exists := mc.Monitors["networking"]
+	if !exists || settings.ExcludedInterfaceNameRegexps == nil {
+		return DefaultExcludedInterfaceNameRegexps
+	}
+	return settings.ExcludedInterfaceNameRegexps
+}
+
 // KnownPluginNames is the set of valid plugin names for validation.
 var KnownPluginNames = []string{
 	"kernel-monitor",
@@ -97,6 +121,19 @@ func (mc *MonitorConfig) Validate() error {
 				table, chainName, ok := strings.Cut(chain, "/")
 				if !ok || strings.Count(chain, "/") != 1 || strings.TrimSpace(table) == "" || strings.TrimSpace(chainName) == "" {
 					return fmt.Errorf("allowedIPTablesChains entry %q must use \"table/chain\" format with non-empty table and chain (e.g. \"filter/MY-CUSTOM-CHAIN\")", chain)
+				}
+			}
+		}
+		if len(settings.ExcludedInterfaceNameRegexps) > 0 {
+			if name != "networking" {
+				return fmt.Errorf("excludedInterfaceNameRegexps is only supported by the networking monitor, not %q", name)
+			}
+			for _, expr := range settings.ExcludedInterfaceNameRegexps {
+				if strings.TrimSpace(expr) == "" {
+					return fmt.Errorf("excludedInterfaceNameRegexps entry must not be empty or whitespace-only")
+				}
+				if _, err := regexp.Compile(expr); err != nil {
+					return fmt.Errorf("excludedInterfaceNameRegexps entry %q is not a valid regular expression: %w", expr, err)
 				}
 			}
 		}

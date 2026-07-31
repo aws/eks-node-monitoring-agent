@@ -5,6 +5,27 @@ All notable changes to the EKS Node Monitoring Agent will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.6.7] - 2026-07-14
+
+### What's Changed
+
+#### Features
+- Add Network Policy Agent (NPA) health monitoring for Auto Mode nodes ([0feeb19](https://github.com/aws/eks-node-monitoring-agent/commit/0feeb194f953ff0516d37d8a6da980debb44be91))
+- Update NVIDIA GPU instance type list ([ba08cf0](https://github.com/aws/eks-node-monitoring-agent/commit/ba08cf0e0ee7d3af05c02e9b072e9c91d4de1190))
+
+#### Bug Fixes
+- Decode fabric health mask sub-fields to avoid false positives ([7fa23d5](https://github.com/aws/eks-node-monitoring-agent/commit/7fa23d5378a0c4e7d01f9df348a13fb73c87d6c7))
+- Fix auto mode diagnostics fd leaks ([f67b42e](https://github.com/aws/eks-node-monitoring-agent/commit/f67b42ed0244f9136badf7dac475624c419afa46))
+- Avoid nil panic for kubeconfigs without an exec credential plugin ([6952d89](https://github.com/aws/eks-node-monitoring-agent/commit/6952d8984e64b528d80beb4b048a15c45b9823b6))
+- Show log levels below debug as debug ([cf6e7cb](https://github.com/aws/eks-node-monitoring-agent/commit/cf6e7cb9554754f33e81d815bed26145eb447384))
+
+#### Dependencies
+- Update Go dependencies ([7a40d8b](https://github.com/aws/eks-node-monitoring-agent/commit/7a40d8b60b1ce0d5c8d23b8c3bd0edbb604dae1d), [7ada842](https://github.com/aws/eks-node-monitoring-agent/commit/7ada842325f64e3e20ee0d1e6b4e5eb2ba88dbfd), [810e164](https://github.com/aws/eks-node-monitoring-agent/commit/810e164772a824ea8b9975a264d6f55285f0b7bb), [355a1d0](https://github.com/aws/eks-node-monitoring-agent/commit/355a1d063ceae5630d55579af4f318a83c021b80))
+
+#### CI & Build
+- Bump Go from 1.26.3 to 1.26.4 ([3e54867](https://github.com/aws/eks-node-monitoring-agent/commit/3e548670c45a5cc2e6798977280427ed147f96cb))
+- Correct misleading non-root runtime comment in Dockerfile ([0b5a702](https://github.com/aws/eks-node-monitoring-agent/commit/0b5a702a18d82d928b35ac3d11ef847c31ddcae6))
+
 ## [v1.6.6] - 2026-06-10
 
 ### What's Changed
@@ -162,6 +183,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### What's Changed
 - Update base DCGM image to 4.5.2-4.8.1-ubuntu22.04 to resolve CVEs ([1a2cda4](https://github.com/aws/eks-node-monitoring-agent/commit/1a2cda4))
 
+[v1.6.7]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.6...v1.6.7
 [v1.6.6]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.5...v1.6.6
 [v1.6.5]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.4...v1.6.5
 [v1.6.4]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.3...v1.6.4

@@ -1,5 +1,11 @@
 name: "Bump DCGM Exporter Image"
 
+# Only applies when charts/eks-node-monitoring-agent/values.yaml pins
+# dcgmAgent.image.tag to a standalone eks/observability/dcgm-exporter image,
+# which is the break-glass configuration. By default DCGM ships in the
+# eks-node-monitoring-agent image and its version is the DCGM_VERSION build arg
+# in the Dockerfile, so this workflow no-ops.
+
 on:
   workflow_dispatch:
   schedule:
@@ -49,13 +55,29 @@ jobs:
           # Parse current dcgmAgent image tag from values.yaml
           # The tag sits under dcgmAgent.image.tag — grab the first 'tag:' line after 'dcgmAgent:'
           VALUES_FILE="charts/eks-node-monitoring-agent/values.yaml"
-          CURRENT_TAG=$(awk '/^dcgmAgent:/{found=1} found && /tag:/{print $2; exit}' "$VALUES_FILE")
+          CURRENT_TAG=$(awk '/^dcgmAgent:/{found=1} found && /tag:/{print $2; exit}' "$VALUES_FILE" | tr -d "\"'")
           if [ -z "$CURRENT_TAG" ]; then
-            echo "::error::Failed to parse current DCGM tag from ${VALUES_FILE}"
-            exit 1
+            # No standalone DCGM image is pinned, which is the default: the
+            # dcgm-server DaemonSet runs nv-hostengine from the
+            # eks-node-monitoring-agent image. That DCGM version comes from the
+            # DCGM_VERSION build arg in the Dockerfile, not from an image tag,
+            # so there is nothing for this workflow to bump.
+            echo "dcgmAgent.image.tag is empty; DCGM ships in the agent image (Dockerfile DCGM_VERSION). Nothing to bump."
+            echo "new_version_available=false" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
           echo "Current DCGM exporter tag: ${CURRENT_TAG}"
           echo "current_tag=${CURRENT_TAG}" >> "$GITHUB_OUTPUT"
+
+          # Derive the flavor suffix (e.g. "ubuntu22.04", "distroless") from the
+          # currently pinned tag so the bot only bumps within the same flavor.
+          # Flavor switches require a human PR to values.yaml.
+          FLAVOR=$(echo "$CURRENT_TAG" | sed -E 's/^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.[0-9]+\.[0-9]+-//')
+          if [ -z "$FLAVOR" ] || [ "$FLAVOR" = "$CURRENT_TAG" ]; then
+            echo "::error::Failed to derive flavor suffix from tag '${CURRENT_TAG}'"
+            exit 1
+          fi
+          echo "Locked to flavor: ${FLAVOR}"
 
           # Step 1: Get the latest tag from Docker Hub
           echo "Fetching tags from Docker Hub..."
@@ -67,8 +89,9 @@ jobs:
           fi
           echo "Docker Hub response received (HTTP ${HTTP_CODE})"
 
+          FLAVOR_RE=$(printf '%s' "$FLAVOR" | sed 's/\./\\./g')
           LATEST_TAG=$(jq -r '.results[].name' /tmp/dockerhub_tags.json \
-            | grep -E '^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.[0-9]+\.[0-9]+-ubuntu22\.04$' \
+            | grep -E "^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+\.[0-9]+\.[0-9]+-${FLAVOR_RE}\$" \
             | sort -V \
             | tail -1 || true)
 

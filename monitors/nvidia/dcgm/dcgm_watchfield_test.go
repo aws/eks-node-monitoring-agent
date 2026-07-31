@@ -123,17 +123,20 @@ func TestFields(t *testing.T) {
 		assert.Empty(t, conditions)
 	})
 
-	t.Run("FabricHealthMaskFailure", func(t *testing.T) {
+	// A mask with a sub-field in the True/fault state is flagged, and the
+	// message names the faulting sub-field.
+	t.Run("FabricHealthMaskFault", func(t *testing.T) {
 		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_FABRIC_HEALTH_MASK}
 		fieldValue.Status = dcgmapi.DCGM_ST_OK
-		binary.LittleEndian.PutUint64(fieldValue.Value[:], 1) // non-zero = failure
+		// route_unhealthy=True (value 1 at shift 4) is a genuine fault.
+		binary.LittleEndian.PutUint64(fieldValue.Value[:], 0x10)
 		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}}
 		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
 		conditions, err := dcgmSystem.WatchFields(context.TODO())
 		assert.NoError(t, err)
 		assert.ElementsMatch(t, []monitor.Condition{{
 			Reason:   "NvidiaFabricError",
-			Message:  "GPU fabric health mask: 0x1",
+			Message:  "GPU fabric health mask 0x10: route_unhealthy=1",
 			Severity: monitor.SeverityFatal,
 		}}, conditions)
 	})
@@ -147,6 +150,38 @@ func TestFields(t *testing.T) {
 		conditions, err := dcgmSystem.WatchFields(context.TODO())
 		assert.NoError(t, err)
 		assert.Empty(t, conditions)
+	})
+
+	// Regression test: a mask of 0x80 decodes to access_timeout_recovery=False
+	// (value 2 at shift 6) with every other sub-field NotSupported. That is a
+	// fully healthy GPU, but the old "any non-zero mask is a fault" check
+	// flagged it, causing the false-positive node disruptions this fix prevents.
+	t.Run("FabricHealthMaskFalseStateHealthy", func(t *testing.T) {
+		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_FABRIC_HEALTH_MASK}
+		fieldValue.Status = dcgmapi.DCGM_ST_OK
+		binary.LittleEndian.PutUint64(fieldValue.Value[:], 0x80) // access_timeout_recovery=False
+		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}}
+		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
+		conditions, err := dcgmSystem.WatchFields(context.TODO())
+		assert.NoError(t, err)
+		assert.Empty(t, conditions)
+	})
+
+	// Multiple faulting sub-fields are all reported. degraded_bw=True (0x1) and
+	// route_unhealthy=True (0x10) combine to 0x11.
+	t.Run("FabricHealthMaskMultipleFaults", func(t *testing.T) {
+		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_FABRIC_HEALTH_MASK}
+		fieldValue.Status = dcgmapi.DCGM_ST_OK
+		binary.LittleEndian.PutUint64(fieldValue.Value[:], 0x11)
+		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}}
+		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
+		conditions, err := dcgmSystem.WatchFields(context.TODO())
+		assert.NoError(t, err)
+		assert.ElementsMatch(t, []monitor.Condition{{
+			Reason:   "NvidiaFabricError",
+			Message:  "GPU fabric health mask 0x11: degraded_bw=1, route_unhealthy=1",
+			Severity: monitor.SeverityFatal,
+		}}, conditions)
 	})
 
 	t.Run("GetResultForBadStatus", func(t *testing.T) {
