@@ -188,20 +188,17 @@ func run() error {
 		return err
 	}
 
-	// registered is closed once monitor registration completes. It deliberately
-	// does not attest that observers are streaming: fileObserver.Init polls
-	// indefinitely for absent sources (/var/log/cron.log and /var/log/messages do
-	// not exist on Bottlerocket), so "every observer running" is not a state that
-	// occurs on every node and cannot gate readiness. Observer setup failures are
-	// reported through logs by MonitorManager.Start.
+	// registered is closed once monitor registration completes. Observer startup
+	// cannot gate readiness: fileObserver.Init polls indefinitely for absent
+	// sources such as /var/log/cron.log, which never appears on Bottlerocket.
+	// Observer failures surface in MonitorManager.Start's logs.
 	registered := make(chan struct{})
 
-	// Node bootstrap polls the API server until the Node object exists, which is
-	// unbounded, so the startup path runs as a manager Runnable instead of inline.
-	// The manager serves its health probe endpoints before starting any Runnable,
-	// so the liveness probe answers from startup no matter how long this takes.
-	// Bootstrap, registration and Start share a single Runnable because Register
-	// mutates state that Start reads, and monitors read bootstrap-derived tags.
+	// The bootstrap poll below is unbounded, so the startup path runs as a manager
+	// Runnable: the manager serves its health probes before starting any Runnable,
+	// which keeps the liveness probe answerable throughout startup. Bootstrap,
+	// registration and Start share one Runnable because Register mutates state that
+	// Start reads, and monitors read bootstrap-derived tags.
 	if err := mgr.Add(crmanager.RunnableFunc(func(ctx context.Context) error {
 		for _, bootstrapper := range []Bootstrapper{
 			NewHybridNodesBootstrapper(monitoringKubeClient, nodeTemplate.DeepCopy()),
@@ -403,11 +400,9 @@ func run() error {
 	return mgr.Start(ctx)
 }
 
-// registeredCheck reports ready only once registered is closed. Liveness proves
-// the process is up; readiness additionally proves that node bootstrap, monitor
-// configuration and monitor registration completed, so a node still waiting for
-// its Node object is not reported ready. It does not attest to observer health —
-// see the registered channel in run() for why that cannot gate readiness.
+// registeredCheck reports ready only once registered is closed, so a node still
+// waiting for its Node object is not reported ready. Readiness covers bootstrap,
+// configuration and registration only — see registered in run().
 func registeredCheck(registered <-chan struct{}) healthz.Checker {
 	return func(_ *http.Request) error {
 		select {

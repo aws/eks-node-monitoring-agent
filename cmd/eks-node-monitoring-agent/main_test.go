@@ -32,12 +32,11 @@ func TestRegisteredCheck(t *testing.T) {
 	})
 }
 
-// TestHealthProbesServeWhileStartupRunnableBlocks pins the behaviour the startup
+// TestHealthProbesServeWhileStartupRunnableBlocks pins the guarantee the startup
 // Runnable relies on: the manager serves /healthz before it starts Runnables, so a
-// Runnable that blocks indefinitely (as the node bootstrap poll can) cannot leave
-// the liveness probe unanswered. /readyz must report unready for that same window,
-// then ready once registration completes — deliberately while the Runnable is still
-// executing, since the Runnable ends in a monitor loop that never returns.
+// Runnable that blocks indefinitely cannot leave the liveness probe unanswered.
+// /readyz stays failing until registration completes, which happens while the
+// Runnable is still executing, as it is in run().
 func TestHealthProbesServeWhileStartupRunnableBlocks(t *testing.T) {
 	probeAddr := freeLocalAddr(t)
 
@@ -90,8 +89,7 @@ func TestHealthProbesServeWhileStartupRunnableBlocks(t *testing.T) {
 		t.Fatalf("/readyz = %d, want %d while registration is in progress", code, http.StatusInternalServerError)
 	}
 
-	// The Runnable is still executing, mirroring the monitor loop that follows
-	// registration in run(): readiness is scoped to registration, not to that loop.
+	// Readiness is scoped to registration, not to the loop that follows it.
 	close(registered)
 	if code := probe(t, probeAddr, "/readyz"); code != http.StatusOK {
 		t.Fatalf("/readyz = %d, want %d after registration", code, http.StatusOK)
@@ -105,8 +103,8 @@ func TestHealthProbesServeWhileStartupRunnableBlocks(t *testing.T) {
 
 func probe(t *testing.T, addr, path string) int {
 	t.Helper()
-	// The probe server binds during manager construction but only serves once
-	// Start reaches it, so retry briefly rather than racing the first request.
+	// The listener is bound at manager construction but only served once Start
+	// reaches it, so retry rather than racing the first request.
 	var lastErr error
 	for range 50 {
 		resp, err := http.Get(fmt.Sprintf("http://%s%s", addr, path))
