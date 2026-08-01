@@ -64,16 +64,25 @@ Create the name of the service account to use
 {{- end -}}
 
 {{/*
-Get the current dcgm-exporter image for a region.
-We use the dcgm-exporter image from the eks/observability.
+Get the image that runs the bundled DCGM host engine (nv-hostengine).
+
+The engine ships in the eks-node-monitoring-agent image itself, so by default
+this resolves to the same image as the node agent. The dcgmAgent.image.* fields
+remain supported as a break-glass path: setting `override`, or a `tag` for the
+eks/observability/dcgm-exporter repository, pins the DaemonSet back to a
+standalone DCGM image.
 */}}
-{{- define "dcgm-exporter.image" -}}
+{{- define "dcgm-server.image" -}}
 {{- if .Values.dcgmAgent.image.override }}
 {{- .Values.dcgmAgent.image.override }}
-{{- else if .Values.dcgmAgent.image.containerRegistry }}
+{{- else if .Values.dcgmAgent.image.tag }}
+{{- if .Values.dcgmAgent.image.containerRegistry }}
 {{- printf "%s/eks/observability/dcgm-exporter:%s" .Values.dcgmAgent.image.containerRegistry .Values.dcgmAgent.image.tag -}}
 {{- else }}
 {{- printf "%s.dkr.%s.%s.%s/eks/observability/dcgm-exporter:%s" .Values.dcgmAgent.image.account .Values.dcgmAgent.image.endpoint .Values.dcgmAgent.image.region .Values.dcgmAgent.image.domain .Values.dcgmAgent.image.tag -}}
+{{- end -}}
+{{- else }}
+{{- include "eks-node-monitoring-agent.image" . }}
 {{- end -}}
 {{- end -}}
 

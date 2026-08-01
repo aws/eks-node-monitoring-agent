@@ -542,10 +542,17 @@ spec:
       priorityClassName: system-node-critical
       containers:
         - name: eks-node-monitoring-agent-dcgm
-          image: 602401143452.dkr.ecr.us-west-2.amazonaws.com/eks/observability/dcgm-exporter:4.5.2-4.8.1-ubuntu22.04
+          image: {{ .Image }}
           imagePullPolicy: IfNotPresent
-          command: ["/bin/sh"]
-          args: ["-c", "nv-hostengine -n -b ALL || true; sleep infinity"]
+          command: ["/usr/bin/nv-hostengine"]
+          args: ["-n", "-b", "ALL"]
+          env:
+            - name: NVIDIA_VISIBLE_DEVICES
+              value: all
+            - name: NVIDIA_DRIVER_CAPABILITIES
+              value: compute,utility,compat32
+            - name: NVIDIA_DISABLE_REQUIRE
+              value: "true"
           ports:
           - containerPort: 5555
             hostPort: 5555

@@ -12,16 +12,38 @@ RUN dnf install -y systemd-devel && \
     dnf clean all
 
 # =============================================================================
-# Stage 2: DCGM builder for GPU monitoring libraries
+# Stage 2: DCGM builder for GPU monitoring libraries and the DCGM host engine
 # =============================================================================
+# NOTE: do not add --platform to this stage. The repository below is selected
+# from `uname -m`, so building on the build platform instead of the target
+# platform would silently place amd64 binaries in the arm64 image.
 FROM public.ecr.aws/amazonlinux/amazonlinux:2023 AS dcgm-builder
 
-# Install DCGM from NVIDIA repository for GPU monitoring support
-# This is optional - the agent works without it on non-GPU nodes
+# DCGM version served to GPU nodes. Pinned for reproducibility: this determines
+# the nv-hostengine version the agent talks to, not just a client library.
+ARG DCGM_VERSION=4.6.1-1
+
+# Install DCGM from the NVIDIA repository for GPU monitoring support.
+# This is optional - the agent works without it on non-GPU nodes.
+#   -core:        libdcgm client, DCGM modules, nv-hostengine, dcgmi, nvvs
+#   -proprietary: plugins/cudaless/libEud.so, for DCGM diagnostics
+# The CUDA plugin tiers (-cudaXX, -proprietary-cudaXX) are deliberately not
+# installed: they add >1GB and the dcgm-exporter image previously used here did
+# not ship them either, so DCGM diagnostics keep the same cudaless-only scope.
 RUN dnf install -y dnf-plugins-core && \
     dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/$(uname -m | sed -e 's/aarch64/sbsa/')/cuda-rhel9.repo && \
-    dnf install -y datacenter-gpu-manager-4-core && \
+    dnf install -y \
+        datacenter-gpu-manager-4-core-1:${DCGM_VERSION} \
+        datacenter-gpu-manager-4-proprietary-1:${DCGM_VERSION} && \
     dnf clean all
+
+# Stage the runtime payload into a single tree. `cp -a` preserves the
+# libfoo.so.4 -> libfoo.so.4.x.y symlinks; copying the globs directly would
+# dereference them and store every library twice.
+RUN mkdir -p /staging/usr/lib64 /staging/usr/bin /staging/usr/libexec && \
+    cp -a /usr/lib64/libdcgm.so* /usr/lib64/libdcgmmodule*.so* /staging/usr/lib64/ && \
+    cp -a /usr/bin/nv-hostengine /usr/bin/dcgmi /staging/usr/bin/ && \
+    cp -a /usr/libexec/datacenter-gpu-manager-4 /staging/usr/libexec/
 
 # =============================================================================
 # Stage 3: Go builder to compile the application
@@ -78,8 +100,12 @@ COPY --from=systemd-builder /usr/lib64/libgcrypt.so* /usr/lib64/
 COPY --from=systemd-builder /usr/lib64/libgpg-error.so* /usr/lib64/
 COPY --from=systemd-builder /usr/lib64/libcap.so* /usr/lib64/
 
-# Copy DCGM client library for GPU monitoring (optional - only used on GPU nodes)
-COPY --from=dcgm-builder /usr/lib64/libdcgm.so* /usr/lib64/
+# Copy the DCGM client library, DCGM modules, nv-hostengine, dcgmi and nvvs.
+# The agent itself only needs libdcgm (and only on GPU nodes), but the chart's
+# dcgm-server DaemonSet runs nv-hostengine out of this same image, which is why
+# the host engine and its modules ship here instead of in a separate image.
+# Kept above the binary copies below so agent code changes do not invalidate it.
+COPY --from=dcgm-builder /staging/ /
 
 # Copy the built binaries
 COPY --from=go-builder /workspace/bin/eks-node-monitoring-agent /opt/bin/eks-node-monitoring-agent
