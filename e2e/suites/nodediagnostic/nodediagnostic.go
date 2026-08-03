@@ -189,8 +189,7 @@ const (
 var dmesgPaths = []string{"kernel/dmesg.current", "kernel/dmesg.human.current", "kernel/dmesg.boot"}
 
 // readBundle reads a gzipped-tar diagnostic bundle once and returns every file
-// keyed by its archive path. Both bundle-inspecting callers use this and keep
-// their own assertions, so the tar/gzip walk lives in one place.
+// keyed by its archive path.
 func readBundle(reader io.Reader) (map[string][]byte, error) {
 	gz, err := gzip.NewReader(reader)
 	if err != nil {
@@ -234,8 +233,6 @@ func assertLogsValid(t *testing.T, reader io.Reader) {
 	assertNoNaCLIDenials(t, concatDmesg(files))
 }
 
-// concatDmesg joins whichever dmesg files the bundle collected; AVC denials
-// surface in these on EKS nodes.
 func concatDmesg(files map[string][]byte) []byte {
 	var dmesg []byte
 	for _, p := range dmesgPaths {
@@ -244,10 +241,8 @@ func concatDmesg(files map[string][]byte) []byte {
 	return dmesg
 }
 
-// assertNoNaCLIDenials fails if the node's kernel log shows an SELinux AVC
-// denial for the na-cli binary — the design's "expected: zero denials"
-// obligation. If no dmesg was collected, it cannot conclude "zero" and logs that
-// the check was inconclusive rather than passing silently.
+// assertNoNaCLIDenials fails on an SELinux AVC denial for na-cli in the kernel
+// log. With no dmesg it logs inconclusive rather than passing silently.
 func assertNoNaCLIDenials(t *testing.T, dmesg []byte) {
 	if len(dmesg) == 0 {
 		t.Log("no dmesg collected in bundle; na-cli AVC-denial check is inconclusive")
@@ -263,28 +258,18 @@ func assertNoNaCLIDenials(t *testing.T, dmesg []byte) {
 	}
 }
 
-// naCLIBinaryName is the na-cli comm/name as it appears in AVC audit lines.
 const naCLIBinaryName = "aws-eks-na-cli"
 
-// assertEbpfCollection validates the network-policy eBPF collector's output in a
-// way that holds on ANY cluster, regardless of whether network policy is
-// enabled. The collector always runs the Networking collector, so ebpf-data.txt
-// must be present and must carry its self-describing selection line. It
-// deliberately does NOT require ebpf-maps-data.txt to exist: that file is written
-// only when the network policy agent has programmed maps on this node (policy
-// enforced and a selected pod present), which is not the case on a stock cluster
-// or on nodes without a selected pod. Requiring it here would false-fail.
-//
-// The only conditional check is a well-formedness one: IF a map dump was written,
-// it must contain the per-map header. "Maps exist" is asserted by the gated
-// EbpfMapCollectionWithNetworkPolicy feature, which sets up the conditions that
-// make maps mandatory.
+// assertEbpfCollection validates the collector's output on ANY cluster.
+// ebpf-data.txt is always written, so it must be present with a selection or
+// not-installed line. It deliberately does not require ebpf-maps-data.txt, which
+// exists only when maps are programmed (NP enforced, selected pod present) —
+// requiring it would false-fail on stock clusters. The gated
+// EbpfMapCollectionWithNetworkPolicy feature asserts maps do exist.
 func assertEbpfCollection(t *testing.T, ebpfData, ebpfMapsData []byte) {
 	if !assert.NotEmpty(t, ebpfData, "%s should always be present in the bundle", ebpfDataPath) {
 		return
 	}
-	// Either a binary was selected (selection line) or none was installed (skip
-	// line). These are the two states the collector can legitimately end in.
 	assert.True(t, containsLinePrefix(ebpfData, cliSelectionLinePrefix) || containsLinePrefix(ebpfData, cliNotInstalledPrefix),
 		"%s should contain the CLI selection line or the not-installed line; got:\n%s", ebpfDataPath, string(ebpfData))
 

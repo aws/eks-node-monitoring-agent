@@ -36,28 +36,17 @@ const (
 	awsNodeNamespace = "kube-system"
 	awsNodeDSName    = "aws-node"
 	nodeAgentName    = "aws-eks-nodeagent"
-	// nginx pinned by tag rather than :latest for reproducibility.
+	// Pinned tag, not :latest, for reproducibility.
 	npServerImage = "public.ecr.aws/nginx/nginx:1.27"
 )
 
-// EbpfMapCollectionWithNetworkPolicy exercises the "good path" of the
-// network-policy eBPF collector. It applies a default-deny NetworkPolicy and a
-// matching workload so the network policy agent programs eBPF maps on the
-// node(s) running the selected pods, captures a NodeDiagnostic bundle from those
-// specific nodes, and asserts the map dump is populated.
-//
-// It is defensive about preconditions that are not observable from this repo:
-//   - skips when --nodediagnostic-bucket-name is unset,
-//   - skips when the aws-eks-nodeagent container is absent (no agent at all),
-//   - and, because container presence does not imply enforcement is enabled,
-//     skips (rather than fails) if NO target node produced a map dump — that
-//     outcome means network policy is not being enforced on this cluster, which
-//     is a valid configuration, not a collector defect.
-//
-// The assertion only runs against nodes that actually host np-server pods, so a
-// larger cluster with idle nodes does not cause false failures.
+// EbpfMapCollectionWithNetworkPolicy applies a default-deny NetworkPolicy and a
+// matching workload so the network policy agent programs eBPF maps, then asserts
+// the map dump is populated in bundles captured from the node(s) hosting the
+// selected pods. It skips (rather than fails) when preconditions this repo can't
+// observe are unmet: no bucket flag, no nodeagent container, or no node produced
+// a dump (enforcement disabled).
 func EbpfMapCollectionWithNetworkPolicy(awsConfig aws.Config) types.Feature {
-	// nodeDiagnostics is keyed by node name, only for nodes running np-server.
 	nodeDiagnostics := map[string]v1alpha1.NodeDiagnostic{}
 	testTimestamp := time.Now().Format("2006-01-02.150405")
 
@@ -66,14 +55,11 @@ func EbpfMapCollectionWithNetworkPolicy(awsConfig aws.Config) types.Feature {
 		po.Expires = 30 * time.Minute
 	})
 
-	// Randomize the namespace so concurrent runs against one cluster do not
-	// collide on a fixed name.
+	// Random namespace so concurrent runs against one cluster don't collide.
 	nsName := envconf.RandomName("ebpf-np-e2e", 16)
 	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: nsName}}
 	labels := map[string]string{npPodLabelKey: npPodLabelVal}
 	deployment := npServerDeployment(nsName, labels)
-	// Default-deny ingress: makes the agent program per-pod policy maps for the
-	// selected pods.
 	policy := &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{Name: "default-deny-ingress", Namespace: nsName},
 		Spec: networkingv1.NetworkPolicySpec{
@@ -102,9 +88,8 @@ func EbpfMapCollectionWithNetworkPolicy(awsConfig aws.Config) types.Feature {
 			if err := v1alpha1.SchemeBuilder.AddToScheme(client.Resources().GetScheme()); err != nil {
 				t.Fatal(err)
 			}
-			// Create resources; on any failure, clean up what we made so a
-			// re-run does not hit a leaked namespace (Setup failures do not run
-			// the feature Teardown).
+			// Setup failures don't run the feature Teardown, so clean up
+			// explicitly to avoid leaking a namespace into the next run.
 			created := []k8s.Object{}
 			cleanup := func() {
 				for i := len(created) - 1; i >= 0; i-- {
@@ -131,17 +116,13 @@ func EbpfMapCollectionWithNetworkPolicy(awsConfig aws.Config) types.Feature {
 				t.Fatalf("np-server deployment did not become ready: %s", err)
 			}
 
-			// Find the node(s) actually running np-server pods; only those can
-			// have policy maps programmed.
+			// Only nodes hosting selected pods can have policy maps programmed.
 			targetNodes := nodesRunningSelectedPods(ctx, t, client, nsName)
 			if len(targetNodes) == 0 {
 				cleanup()
 				t.Fatal("no np-server pods were scheduled to any node")
 			}
 
-			// Bound the wait on pod readiness; the assessment's skip-vs-fail
-			// decision comes from the collector's recorded selection line, not
-			// from guessed timing.
 			waitForSelectedPodsRunning(ctx, client, nsName)
 
 			for node := range targetNodes {
@@ -200,9 +181,8 @@ func EbpfMapCollectionWithNetworkPolicy(awsConfig aws.Config) types.Feature {
 					nodesWithMaps++
 				}
 			}
-			// If no target node produced a map dump, network policy is not being
-			// enforced on this cluster (agent present but enforcement disabled).
-			// That is a valid configuration, so skip rather than fail.
+			// No dump on any target node means enforcement is disabled (agent
+			// present but off) — a valid config, so skip rather than fail.
 			if nodesWithMaps == 0 {
 				t.Skip("no target node produced an eBPF map dump; network policy enforcement appears disabled on this cluster")
 			}
@@ -214,7 +194,6 @@ func EbpfMapCollectionWithNetworkPolicy(awsConfig aws.Config) types.Feature {
 				nd := nodeDiagnostics[node]
 				_ = client.Resources().Delete(ctx, &nd)
 			}
-			// Deleting the namespace removes the deployment and policy with it.
 			_ = client.Resources().Delete(ctx, namespace)
 			waitForNamespaceGone(ctx, client, namespace)
 			return ctx
@@ -280,12 +259,10 @@ func nodesRunningSelectedPods(ctx context.Context, t *testing.T, client klient.C
 	return nodes
 }
 
-// waitForSelectedPodsRunning bounds how long we wait before capturing, by
-// polling until the np-server pods are Running. It does not guess at the agent's
-// reconcile latency with a fixed sleep: the assessment's skip-vs-fail decision is
-// made from the collector's recorded selection line (mapDumpPopulated), so a
-// slow-but-eventually-correct agent surfaces as an observed state, not a timing
-// race. Best-effort; it never fails the test.
+// waitForSelectedPodsRunning bounds the pre-capture wait on pod readiness. It
+// does not sleep on the agent's reconcile latency: mapDumpPopulated decides
+// skip-vs-fail from the recorded selection line, so a slow agent surfaces as an
+// observed state, not a timing race. Best-effort; never fails the test.
 func waitForSelectedPodsRunning(ctx context.Context, client klient.Client, namespace string) {
 	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
@@ -307,8 +284,8 @@ func waitForSelectedPodsRunning(ctx context.Context, client klient.Client, names
 	}
 }
 
-// waitForNamespaceGone blocks (bounded) until the namespace is fully deleted, so
-// a re-run does not collide with a terminating namespace. Best-effort.
+// waitForNamespaceGone waits (bounded) for full namespace deletion so a re-run
+// doesn't collide with a terminating namespace. Best-effort.
 func waitForNamespaceGone(ctx context.Context, client klient.Client, namespace *corev1.Namespace) {
 	_ = wait.For(
 		conditions.New(client.Resources()).ResourceDeleted(namespace),
@@ -317,11 +294,10 @@ func waitForNamespaceGone(ctx context.Context, client klient.Client, namespace *
 	)
 }
 
-// mapDumpPopulated reports whether the bundle for a node contains a populated
-// ebpf-maps-data.txt. When maps are present it also asserts well-formedness
-// (the selection line shows a chosen binary and the dump has per-map sections).
-// A node with no maps returns false without failing, so the caller can treat
-// "no maps on any target node" as an enforcement-disabled skip.
+// mapDumpPopulated reports whether the node's bundle has a populated
+// ebpf-maps-data.txt, asserting well-formedness when it does. It returns false
+// (without failing) on an empty dump with a skip reason, so the caller can treat
+// "no maps anywhere" as an enforcement-disabled skip.
 func mapDumpPopulated(t *testing.T, node string, reader io.Reader) bool {
 	files, err := readBundle(reader)
 	if err != nil {
@@ -335,10 +311,7 @@ func mapDumpPopulated(t *testing.T, node string, reader io.Reader) bool {
 	selected := haveLine && strings.Contains(line, cliSelectedMarker)
 
 	if len(ebpfMapsData) == 0 {
-		// The selection line disambiguates the two empty-map worlds, turning the
-		// timing guess into an observed-state decision:
-		//   selected but no maps  -> collector/agent defect: FAIL
-		//   skipped (not selected) -> family unconfirmed / not installed: skip
+		// Selected but no maps is a defect; a skip reason is enforcement-off.
 		if selected {
 			t.Errorf("node %s selected a na-cli binary but produced no map dump — collector or agent defect; selection line: %q", node, line)
 		} else {
@@ -346,8 +319,6 @@ func mapDumpPopulated(t *testing.T, node string, reader io.Reader) bool {
 		}
 		return false
 	}
-	// Maps are present: they must be well-formed and the collector must have
-	// recorded a selected binary.
 	assert.Contains(t, string(ebpfMapsData), mapIDMarker,
 		"%s on node %s should contain per-map dump sections", ebpfMapsDataPath, node)
 	assert.True(t, selected,
