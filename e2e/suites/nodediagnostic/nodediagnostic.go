@@ -173,6 +173,15 @@ func LogCollection(awsConfig aws.Config) types.Feature {
 
 const captureErrorLogFile = "log-capture-errors.log"
 
+const (
+	ebpfDataPath     = "networking/ebpf-data.txt"
+	ebpfMapsDataPath = "networking/ebpf-maps-data.txt"
+	// cliSelectedMarker appears in ebpf-data.txt when a na-cli binary was chosen
+	// and per-map dumps were collected; its absence means the collector recorded
+	// a skip (no binary, or family unconfirmed).
+	cliSelectedMarker = "using it"
+)
+
 func assertLogsValid(t *testing.T, reader io.Reader) {
 	gz, err := gzip.NewReader(reader)
 	if err != nil {
@@ -180,23 +189,55 @@ func assertLogsValid(t *testing.T, reader io.Reader) {
 	}
 	tr := tar.NewReader(gz)
 	var fileNames []string
+	var ebpfData, ebpfMapsData []byte
 	for {
 		h, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			break
 		}
-		if h.Name == captureErrorLogFile {
+		if err != nil {
+			t.Fatalf("failed to read tar entry: %s", err)
+		}
+		switch h.Name {
+		case captureErrorLogFile:
 			errLogs, err := io.ReadAll(tr)
 			assert.NoError(t, err)
 			defer t.Fatalf("%s content:\n%s", captureErrorLogFile, string(errLogs))
-		}
-		if err != nil {
-			t.Fatalf("failed to read tar entry: %s", err)
+		case ebpfDataPath:
+			ebpfData, err = io.ReadAll(tr)
+			assert.NoError(t, err)
+		case ebpfMapsDataPath:
+			ebpfMapsData, err = io.ReadAll(tr)
+			assert.NoError(t, err)
 		}
 		fileNames = append(fileNames, h.Name)
 	}
 	if assert.NotEmpty(t, fileNames) {
 		t.Logf("found the following paths from the log archive: %s", strings.Join(fileNames, ","))
+	}
+	assertEbpfCollection(t, ebpfData, ebpfMapsData)
+}
+
+// assertEbpfCollection validates the network-policy eBPF collector's output in a
+// way that holds on any cluster. ebpf-data.txt is always written (it records at
+// least a skip reason), so it must be present and self-describing. The map dump
+// only exists when a binary was selected; the collector's selection line tells
+// which path ran, so the assertion adapts:
+//   - selected  -> ebpf-maps-data.txt must be present and non-empty (good path)
+//   - skipped    -> no map dump is expected (bad path is a valid outcome)
+func assertEbpfCollection(t *testing.T, ebpfData, ebpfMapsData []byte) {
+	if !assert.NotEmpty(t, ebpfData, "%s should always be present in the bundle", ebpfDataPath) {
+		return
+	}
+	assert.Contains(t, string(ebpfData), "***",
+		"%s should contain a collector status marker", ebpfDataPath)
+
+	if strings.Contains(string(ebpfData), cliSelectedMarker) {
+		t.Logf("na-cli was selected; expecting populated map dump")
+		assert.NotEmpty(t, ebpfMapsData,
+			"%s must be non-empty when a na-cli binary was selected", ebpfMapsDataPath)
+	} else {
+		t.Logf("na-cli collection was skipped (family unconfirmed or not installed); no map dump expected. ebpf-data.txt:\n%s", string(ebpfData))
 	}
 }
 
