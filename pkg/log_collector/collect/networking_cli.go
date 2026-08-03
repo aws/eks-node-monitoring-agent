@@ -17,6 +17,27 @@ const (
 	naCLIv6Named = "aws-eks-na-cli-v6"
 )
 
+// Bundle contract for the network-policy eBPF collector. These are load-bearing:
+// tests (including e2e) key off them, so they are exported and referenced here
+// rather than duplicated as literals.
+const (
+	// EBPFDataFile holds the loaded-ebpfdata output and the CLI selection line.
+	EBPFDataFile = "networking/ebpf-data.txt"
+	// EBPFMapsDataFile holds the per-map dumps; written only when maps exist.
+	EBPFMapsDataFile = "networking/ebpf-maps-data.txt"
+	// CLISelectionLinePrefix begins the line recording which binary (if any) was
+	// chosen; always written once a binary is present.
+	CLISelectionLinePrefix = "*** network-policy CLI selection:"
+	// CLINotInstalledLinePrefix begins the line written when no na-cli is present.
+	CLINotInstalledLinePrefix = "*** " + naCLIDefault + "/" + naCLIv6Named + " not present"
+	// CLISelectedMarker appears in a selection reason when a binary was chosen
+	// (as opposed to a skip). Selection reasons must contain it; skip reasons
+	// must not.
+	CLISelectedMarker = "using it"
+	// MapIDMarker begins each per-map dump section in EBPFMapsDataFile.
+	MapIDMarker = "Map ID:"
+)
+
 // networkPolicyCLIDirs are searched in order. On Bottlerocket the /opt/cni/bin
 // copy is SELinux-labeled cni_exec_t, which the agent's domain (system_t) cannot
 // execute; the /usr/bin copy is os_t, which it can, so /usr/bin is tried first.
@@ -107,7 +128,7 @@ func chooseNetworkPolicyCLI(publishedCLI string, havePublished bool, defaultCLI 
 // whichever binary is installed; the per-map dump binary is chosen by
 // selectNetworkPolicyCLI.
 func networkPolicyEbpfInfo(acc *Accessor) error {
-	ebpfDataFile := "networking/ebpf-data.txt"
+	ebpfDataFile := EBPFDataFile
 
 	listCLI, listOK := findNetworkPolicyCLI(acc, naCLIDefault)
 	if !listOK {
@@ -136,19 +157,19 @@ func networkPolicyEbpfInfo(acc *Accessor) error {
 
 	// Record the selection reason even on skip: it is the bundle's diagnostic.
 	cliPath, reason, ok := selectNetworkPolicyCLI(acc)
-	if err := acc.appendOutput(ebpfDataFile, []byte(fmt.Sprintf("*** network-policy CLI selection: %s ***\n", reason))); err != nil {
+	if err := acc.appendOutput(ebpfDataFile, []byte(fmt.Sprintf("%s %s ***\n", CLISelectionLinePrefix, reason))); err != nil {
 		return fmt.Errorf("failed to append CLI selection to %s: %w", ebpfDataFile, err)
 	}
 	if !ok {
 		return nil
 	}
 
-	ebpfMapFile := "networking/ebpf-maps-data.txt"
+	ebpfMapFile := EBPFMapsDataFile
 	mapIDs := uniqueMapIDs(string(loaded))
 	var merr error
 	for _, mapID := range mapIDs {
 		merr = errors.Join(merr,
-			acc.appendOutput(ebpfMapFile, []byte(fmt.Sprintf("*** EBPF map data for Map ID: %s ***\n", mapID))),
+			acc.appendOutput(ebpfMapFile, []byte(fmt.Sprintf("*** EBPF map data for %s %s ***\n", MapIDMarker, mapID))),
 			acc.CommandOutput([]string{cliPath, "ebpf", "dump-maps", mapID}, ebpfMapFile, CommandOptionsAppend|CommandOptionsNoStderr),
 		)
 	}
@@ -161,11 +182,11 @@ func uniqueMapIDs(loaded string) []string {
 	seen := make(map[string]bool)
 	var ids []string
 	for _, line := range strings.Split(loaded, "\n") {
-		idx := strings.Index(line, "Map ID:")
+		idx := strings.Index(line, MapIDMarker)
 		if idx < 0 {
 			continue
 		}
-		id := strings.TrimSpace(line[idx+len("Map ID:"):])
+		id := strings.TrimSpace(line[idx+len(MapIDMarker):])
 		if id != "" && !seen[id] {
 			seen[id] = true
 			ids = append(ids, id)

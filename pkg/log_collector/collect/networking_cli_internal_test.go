@@ -196,3 +196,35 @@ func TestFindPublishedNetworkPolicyCLI(t *testing.T) {
 		}
 	})
 }
+
+// TestSelectionReasonMarkerInvariant pins the contract that e2e tests rely on:
+// every selection reason where ok=true contains CLISelectedMarker, and every
+// reason where ok=false does not. Rewording a reason in a way that breaks this
+// (which would silently break the e2e skip-vs-fail discriminator) fails here, in
+// the collector's own package.
+func TestSelectionReasonMarkerInvariant(t *testing.T) {
+	cases := []struct {
+		name          string
+		havePublished bool
+		haveDefault   bool
+		haveV6Named   bool
+	}{
+		{"published", true, true, true},
+		{"single default", false, true, false},
+		{"v6 named only", false, false, true},
+		{"both, no symlink -> skip", false, true, true},
+		{"none installed -> skip", false, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, reason, ok := chooseNetworkPolicyCLI(published, tc.havePublished, defaultName, tc.haveDefault, v6Named, tc.haveV6Named)
+			has := strings.Contains(reason, CLISelectedMarker)
+			if ok && !has {
+				t.Errorf("selected reason must contain %q marker; got %q", CLISelectedMarker, reason)
+			}
+			if !ok && has {
+				t.Errorf("skip reason must not contain %q marker; got %q", CLISelectedMarker, reason)
+			}
+		})
+	}
+}

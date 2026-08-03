@@ -31,7 +31,6 @@ import (
 )
 
 const (
-	npTestNamespace  = "ebpf-np-e2e"
 	npServerDeploy   = "np-server"
 	npServerReplicas = 2
 	npPodLabelKey    = "app"
@@ -69,13 +68,16 @@ func EbpfMapCollectionWithNetworkPolicy(awsConfig aws.Config) types.Feature {
 		po.Expires = 30 * time.Minute
 	})
 
-	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: npTestNamespace}}
+	// Randomize the namespace so concurrent runs against one cluster do not
+	// collide on a fixed name.
+	nsName := envconf.RandomName("ebpf-np-e2e", 16)
+	namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: nsName}}
 	labels := map[string]string{npPodLabelKey: npPodLabelVal}
-	deployment := npServerDeployment(labels)
+	deployment := npServerDeployment(nsName, labels)
 	// Default-deny ingress: makes the agent program per-pod policy maps for the
 	// selected pods.
 	policy := &networkingv1.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{Name: "default-deny-ingress", Namespace: npTestNamespace},
+		ObjectMeta: metav1.ObjectMeta{Name: "default-deny-ingress", Namespace: nsName},
 		Spec: networkingv1.NetworkPolicySpec{
 			PodSelector: metav1.LabelSelector{MatchLabels: labels},
 			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeIngress},
@@ -133,16 +135,16 @@ func EbpfMapCollectionWithNetworkPolicy(awsConfig aws.Config) types.Feature {
 
 			// Find the node(s) actually running np-server pods; only those can
 			// have policy maps programmed.
-			targetNodes := nodesRunningSelectedPods(ctx, t, client)
+			targetNodes := nodesRunningSelectedPods(ctx, t, client, nsName)
 			if len(targetNodes) == 0 {
 				cleanup()
 				t.Fatal("no np-server pods were scheduled to any node")
 			}
 
-			// Poll for the agent to reconcile the policy into maps rather than a
-			// fixed sleep. Best-effort: if it never converges we still capture and
-			// let the assessment decide (skip vs fail).
-			waitForNetworkPolicyMaps(ctx, t, client, targetNodes)
+			// Bound the wait on pod readiness; the assessment's skip-vs-fail
+			// decision comes from the collector's recorded selection line, not
+			// from guessed timing.
+			waitForSelectedPodsRunning(ctx, client, nsName)
 
 			for node := range targetNodes {
 				nodeDiagnosticLogKey := path.Join(nodeDiagnosticLogKeyPrefix, fmt.Sprintf("%s-ebpf-%s.tgz", testTimestamp, node))
@@ -222,10 +224,10 @@ func EbpfMapCollectionWithNetworkPolicy(awsConfig aws.Config) types.Feature {
 		Feature()
 }
 
-func npServerDeployment(labels map[string]string) *appsv1.Deployment {
+func npServerDeployment(namespace string, labels map[string]string) *appsv1.Deployment {
 	replicas := int32(npServerReplicas)
 	return &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: npServerDeploy, Namespace: npTestNamespace},
+		ObjectMeta: metav1.ObjectMeta{Name: npServerDeploy, Namespace: namespace},
 		Spec: appsv1.DeploymentSpec{
 			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{MatchLabels: labels},
@@ -265,9 +267,9 @@ func networkPolicyAgentPresent(ctx context.Context, t *testing.T, cfg *envconf.C
 }
 
 // nodesRunningSelectedPods returns the set of node names hosting np-server pods.
-func nodesRunningSelectedPods(ctx context.Context, t *testing.T, client klient.Client) map[string]struct{} {
+func nodesRunningSelectedPods(ctx context.Context, t *testing.T, client klient.Client, namespace string) map[string]struct{} {
 	var pods corev1.PodList
-	if err := client.Resources(npTestNamespace).List(ctx, &pods,
+	if err := client.Resources(namespace).List(ctx, &pods,
 		resources.WithLabelSelector(npPodLabelKey+"="+npPodLabelVal)); err != nil {
 		t.Fatalf("failed to list np-server pods: %s", err)
 	}
@@ -280,19 +282,17 @@ func nodesRunningSelectedPods(ctx context.Context, t *testing.T, client klient.C
 	return nodes
 }
 
-// waitForNetworkPolicyMaps gives the agent bounded time to publish the
-// family-correct na-cli symlink, as a proxy for "policy reconciled into maps",
-// instead of a fixed sleep. Best-effort: it does not fail the test, since the
-// symlink lives on the node and is not directly observable from here; it simply
-// bounds how long we wait before capturing. The assessment is the real gate.
-func waitForNetworkPolicyMaps(ctx context.Context, t *testing.T, client klient.Client, targetNodes map[string]struct{}) {
-	// The agent reconciles policy asynchronously; poll the np-server pods until
-	// they have been Running for a short settle window. This is a lightweight,
-	// observable proxy that avoids a blind fixed sleep.
+// waitForSelectedPodsRunning bounds how long we wait before capturing, by
+// polling until the np-server pods are Running. It does not guess at the agent's
+// reconcile latency with a fixed sleep: the assessment's skip-vs-fail decision is
+// made from the collector's recorded selection line (mapDumpPopulated), so a
+// slow-but-eventually-correct agent surfaces as an observed state, not a timing
+// race. Best-effort; it never fails the test.
+func waitForSelectedPodsRunning(ctx context.Context, client klient.Client, namespace string) {
 	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
 		var pods corev1.PodList
-		if err := client.Resources(npTestNamespace).List(ctx, &pods,
+		if err := client.Resources(namespace).List(ctx, &pods,
 			resources.WithLabelSelector(npPodLabelKey+"="+npPodLabelVal)); err != nil {
 			return
 		}
@@ -303,8 +303,6 @@ func waitForNetworkPolicyMaps(ctx context.Context, t *testing.T, client klient.C
 			}
 		}
 		if allRunning {
-			// Small settle window for the agent's reconcile loop.
-			time.Sleep(20 * time.Second)
 			return
 		}
 		time.Sleep(5 * time.Second)
@@ -351,18 +349,28 @@ func mapDumpPopulated(t *testing.T, node string, reader io.Reader) bool {
 		}
 	}
 	assert.NotEmpty(t, ebpfData, "%s should be present on node %s", ebpfDataPath, node)
+
+	line, haveLine := selectionLine(ebpfData)
+	selected := haveLine && strings.Contains(line, cliSelectedMarker)
+
 	if len(ebpfMapsData) == 0 {
-		t.Logf("node %s produced no eBPF map dump; ebpf-data.txt:\n%s", node, string(ebpfData))
+		// The selection line disambiguates the two empty-map worlds, turning the
+		// timing guess into an observed-state decision:
+		//   selected but no maps  -> collector/agent defect: FAIL
+		//   skipped (not selected) -> family unconfirmed / not installed: skip
+		if selected {
+			t.Errorf("node %s selected a na-cli binary but produced no map dump — collector or agent defect; selection line: %q", node, line)
+		} else {
+			t.Logf("node %s recorded a skip (not a selection); no map dump expected: %q", node, line)
+		}
 		return false
 	}
 	// Maps are present: they must be well-formed and the collector must have
 	// recorded a selected binary.
-	assert.Contains(t, string(ebpfMapsData), "Map ID:",
+	assert.Contains(t, string(ebpfMapsData), mapIDMarker,
 		"%s on node %s should contain per-map dump sections", ebpfMapsDataPath, node)
-	if line, ok := selectionLine(ebpfData); ok {
-		assert.Contains(t, line, "using it",
-			"node %s produced maps, so the CLI selection line should show a chosen binary; got %q", node, line)
-	}
+	assert.True(t, selected,
+		"node %s produced maps, so the CLI selection line should show a chosen binary; got %q", node, line)
 	return true
 }
 

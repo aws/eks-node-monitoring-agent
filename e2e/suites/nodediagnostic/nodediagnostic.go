@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/eks-node-monitoring-agent/api/v1alpha1"
+	"github.com/aws/eks-node-monitoring-agent/pkg/log_collector/collect"
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -173,15 +174,19 @@ func LogCollection(awsConfig aws.Config) types.Feature {
 
 const captureErrorLogFile = "log-capture-errors.log"
 
+// eBPF collector bundle contract, imported from the collector package so the
+// paths and marker strings have one definition across producer and test.
 const (
-	ebpfDataPath     = "networking/ebpf-data.txt"
-	ebpfMapsDataPath = "networking/ebpf-maps-data.txt"
-	// cliSelectionLinePrefix is the line the collector always writes to
-	// ebpf-data.txt recording which binary (if any) was chosen. It is matched as
-	// a line prefix, not anywhere in the file, so raw na-cli output cannot spoof
-	// it.
-	cliSelectionLinePrefix = "*** network-policy CLI selection:"
+	ebpfDataPath           = collect.EBPFDataFile
+	ebpfMapsDataPath       = collect.EBPFMapsDataFile
+	cliSelectionLinePrefix = collect.CLISelectionLinePrefix
+	cliNotInstalledPrefix  = collect.CLINotInstalledLinePrefix
+	cliSelectedMarker      = collect.CLISelectedMarker
+	mapIDMarker            = collect.MapIDMarker
 )
+
+// dmesg files the bundle collects; AVC denials surface here on EKS nodes.
+var dmesgPaths = []string{"kernel/dmesg.current", "kernel/dmesg.human.current", "kernel/dmesg.boot"}
 
 func assertLogsValid(t *testing.T, reader io.Reader) {
 	gz, err := gzip.NewReader(reader)
@@ -191,6 +196,7 @@ func assertLogsValid(t *testing.T, reader io.Reader) {
 	tr := tar.NewReader(gz)
 	var fileNames []string
 	var ebpfData, ebpfMapsData []byte
+	var dmesg []byte
 	for {
 		h, err := tr.Next()
 		if errors.Is(err, io.EOF) {
@@ -199,17 +205,21 @@ func assertLogsValid(t *testing.T, reader io.Reader) {
 		if err != nil {
 			t.Fatalf("failed to read tar entry: %s", err)
 		}
-		switch h.Name {
-		case captureErrorLogFile:
+		switch {
+		case h.Name == captureErrorLogFile:
 			errLogs, err := io.ReadAll(tr)
 			assert.NoError(t, err)
 			defer t.Fatalf("%s content:\n%s", captureErrorLogFile, string(errLogs))
-		case ebpfDataPath:
+		case h.Name == ebpfDataPath:
 			ebpfData, err = io.ReadAll(tr)
 			assert.NoError(t, err)
-		case ebpfMapsDataPath:
+		case h.Name == ebpfMapsDataPath:
 			ebpfMapsData, err = io.ReadAll(tr)
 			assert.NoError(t, err)
+		case isDmesgPath(h.Name):
+			b, err := io.ReadAll(tr)
+			assert.NoError(t, err)
+			dmesg = append(dmesg, b...)
 		}
 		fileNames = append(fileNames, h.Name)
 	}
@@ -217,7 +227,39 @@ func assertLogsValid(t *testing.T, reader io.Reader) {
 		t.Logf("found the following paths from the log archive: %s", strings.Join(fileNames, ","))
 	}
 	assertEbpfCollection(t, ebpfData, ebpfMapsData)
+	assertNoNaCLIDenials(t, dmesg)
 }
+
+func isDmesgPath(name string) bool {
+	for _, p := range dmesgPaths {
+		if name == p {
+			return true
+		}
+	}
+	return false
+}
+
+// assertNoNaCLIDenials fails if the node's kernel log shows an SELinux AVC
+// denial for the na-cli binary — the design's "expected: zero denials"
+// obligation. If no dmesg was collected, it cannot conclude "zero" and logs that
+// the check was inconclusive rather than passing silently.
+func assertNoNaCLIDenials(t *testing.T, dmesg []byte) {
+	if len(dmesg) == 0 {
+		t.Log("no dmesg collected in bundle; na-cli AVC-denial check is inconclusive")
+		return
+	}
+	for _, line := range strings.Split(string(dmesg), "\n") {
+		if !strings.Contains(line, "avc:") || !strings.Contains(line, "denied") {
+			continue
+		}
+		if strings.Contains(line, naCLIBinaryName) || strings.Contains(line, "cni_exec_t") {
+			t.Errorf("SELinux AVC denial involving na-cli found in kernel log: %s", line)
+		}
+	}
+}
+
+// naCLIBinaryName is the na-cli comm/name as it appears in AVC audit lines.
+const naCLIBinaryName = "aws-eks-na-cli"
 
 // assertEbpfCollection validates the network-policy eBPF collector's output in a
 // way that holds on ANY cluster, regardless of whether network policy is
@@ -236,11 +278,13 @@ func assertEbpfCollection(t *testing.T, ebpfData, ebpfMapsData []byte) {
 	if !assert.NotEmpty(t, ebpfData, "%s should always be present in the bundle", ebpfDataPath) {
 		return
 	}
-	assert.True(t, containsLinePrefix(ebpfData, cliSelectionLinePrefix) || containsLinePrefix(ebpfData, "*** "),
-		"%s should contain the collector's status/selection line; got:\n%s", ebpfDataPath, string(ebpfData))
+	// Either a binary was selected (selection line) or none was installed (skip
+	// line). These are the two states the collector can legitimately end in.
+	assert.True(t, containsLinePrefix(ebpfData, cliSelectionLinePrefix) || containsLinePrefix(ebpfData, cliNotInstalledPrefix),
+		"%s should contain the CLI selection line or the not-installed line; got:\n%s", ebpfDataPath, string(ebpfData))
 
 	if len(ebpfMapsData) > 0 {
-		assert.Contains(t, string(ebpfMapsData), "Map ID:",
+		assert.Contains(t, string(ebpfMapsData), mapIDMarker,
 			"%s, when present, must contain per-map dump sections", ebpfMapsDataPath)
 	} else {
 		t.Logf("no eBPF map dump on this node (network policy not enforced or no selected pod); ebpf-data.txt:\n%s", string(ebpfData))
