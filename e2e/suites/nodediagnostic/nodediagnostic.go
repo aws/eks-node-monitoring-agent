@@ -188,55 +188,60 @@ const (
 // dmesg files the bundle collects; AVC denials surface here on EKS nodes.
 var dmesgPaths = []string{"kernel/dmesg.current", "kernel/dmesg.human.current", "kernel/dmesg.boot"}
 
-func assertLogsValid(t *testing.T, reader io.Reader) {
+// readBundle reads a gzipped-tar diagnostic bundle once and returns every file
+// keyed by its archive path. Both bundle-inspecting callers use this and keep
+// their own assertions, so the tar/gzip walk lives in one place.
+func readBundle(reader io.Reader) (map[string][]byte, error) {
 	gz, err := gzip.NewReader(reader)
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	tr := tar.NewReader(gz)
-	var fileNames []string
-	var ebpfData, ebpfMapsData []byte
-	var dmesg []byte
+	files := map[string][]byte{}
 	for {
 		h, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			t.Fatalf("failed to read tar entry: %s", err)
+			return nil, fmt.Errorf("failed to read tar entry: %w", err)
 		}
-		switch {
-		case h.Name == captureErrorLogFile:
-			errLogs, err := io.ReadAll(tr)
-			assert.NoError(t, err)
-			defer t.Fatalf("%s content:\n%s", captureErrorLogFile, string(errLogs))
-		case h.Name == ebpfDataPath:
-			ebpfData, err = io.ReadAll(tr)
-			assert.NoError(t, err)
-		case h.Name == ebpfMapsDataPath:
-			ebpfMapsData, err = io.ReadAll(tr)
-			assert.NoError(t, err)
-		case isDmesgPath(h.Name):
-			b, err := io.ReadAll(tr)
-			assert.NoError(t, err)
-			dmesg = append(dmesg, b...)
+		b, err := io.ReadAll(tr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read %s: %w", h.Name, err)
 		}
-		fileNames = append(fileNames, h.Name)
+		files[h.Name] = b
+	}
+	return files, nil
+}
+
+func assertLogsValid(t *testing.T, reader io.Reader) {
+	files, err := readBundle(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if errLogs, ok := files[captureErrorLogFile]; ok {
+		defer t.Fatalf("%s content:\n%s", captureErrorLogFile, string(errLogs))
+	}
+	fileNames := make([]string, 0, len(files))
+	for name := range files {
+		fileNames = append(fileNames, name)
 	}
 	if assert.NotEmpty(t, fileNames) {
 		t.Logf("found the following paths from the log archive: %s", strings.Join(fileNames, ","))
 	}
-	assertEbpfCollection(t, ebpfData, ebpfMapsData)
-	assertNoNaCLIDenials(t, dmesg)
+	assertEbpfCollection(t, files[ebpfDataPath], files[ebpfMapsDataPath])
+	assertNoNaCLIDenials(t, concatDmesg(files))
 }
 
-func isDmesgPath(name string) bool {
+// concatDmesg joins whichever dmesg files the bundle collected; AVC denials
+// surface in these on EKS nodes.
+func concatDmesg(files map[string][]byte) []byte {
+	var dmesg []byte
 	for _, p := range dmesgPaths {
-		if name == p {
-			return true
-		}
+		dmesg = append(dmesg, files[p]...)
 	}
-	return false
+	return dmesg
 }
 
 // assertNoNaCLIDenials fails if the node's kernel log shows an SELinux AVC

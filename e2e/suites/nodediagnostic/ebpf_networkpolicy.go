@@ -1,8 +1,6 @@
 package nodediagnostic
 
 import (
-	"archive/tar"
-	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -325,29 +323,12 @@ func waitForNamespaceGone(ctx context.Context, client klient.Client, namespace *
 // A node with no maps returns false without failing, so the caller can treat
 // "no maps on any target node" as an enforcement-disabled skip.
 func mapDumpPopulated(t *testing.T, node string, reader io.Reader) bool {
-	gz, err := gzip.NewReader(reader)
+	files, err := readBundle(reader)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tr := tar.NewReader(gz)
-	var ebpfData, ebpfMapsData []byte
-	for {
-		h, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			t.Fatalf("failed to read tar entry: %s", err)
-		}
-		switch h.Name {
-		case ebpfDataPath:
-			ebpfData, err = io.ReadAll(tr)
-			assert.NoError(t, err)
-		case ebpfMapsDataPath:
-			ebpfMapsData, err = io.ReadAll(tr)
-			assert.NoError(t, err)
-		}
-	}
+	ebpfData := files[ebpfDataPath]
+	ebpfMapsData := files[ebpfMapsDataPath]
 	assert.NotEmpty(t, ebpfData, "%s should be present on node %s", ebpfDataPath, node)
 
 	line, haveLine := selectionLine(ebpfData)
