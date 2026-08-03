@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
 	"slices"
@@ -24,6 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	crmanager "sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
@@ -178,12 +181,6 @@ func run() error {
 		return err
 	}
 
-	for _, bootstrapper := range []Bootstrapper{
-		NewHybridNodesBootstrapper(monitoringKubeClient, nodeTemplate.DeepCopy()),
-	} {
-		bootstrapper.Bootstrap(ctx)
-	}
-
 	// Register runtime monitor plugin manually (requires node and kubeClient dependencies)
 	runtimePlugin := runtime.NewPlugin(nodeTemplate.DeepCopy(), monitoringKubeClient)
 	if err := registry.ValidateAndRegister(runtimePlugin); err != nil {
@@ -191,171 +188,194 @@ func run() error {
 		return err
 	}
 
-	// Load monitor configuration from ConfigMap mount
-	monitorConfig, configFound, err := config.LoadMonitorConfig(config.DefaultConfigPath)
-	if err != nil {
-		logger.Error(err, "failed to load monitor configuration")
-		return err
-	}
-	if !configFound {
-		logger.Info("monitor config file not found, all monitors will be enabled by default", "path", config.DefaultConfigPath)
-	}
+	// registered is closed once monitor registration completes. Observer startup
+	// cannot gate readiness: fileObserver.Init polls indefinitely for absent
+	// sources such as /var/log/cron.log, which never appears on Bottlerocket.
+	// Observer failures surface in MonitorManager.Start's logs.
+	registered := make(chan struct{})
 
-	// Filter plugins by configuration and log effective state
-	allPlugins := registry.GlobalRegistry().List()
-	var enabledMonitors []monitor.Monitor
-	var disabledNames []string
-
-	for _, plugin := range allPlugins {
-		enabled := monitorConfig.IsMonitorEnabled(plugin.Name())
-		logger.Info("monitor configuration", "plugin", plugin.Name(), "enabled", enabled)
-		if !enabled {
-			disabledNames = append(disabledNames, plugin.Name())
-			continue
-		}
-		enabledMonitors = append(enabledMonitors, plugin.Monitors()...)
-	}
-
-	if len(disabledNames) > 0 {
-		logger.Info("monitors disabled by configuration", "plugins", disabledNames)
-	}
-
-	// Inject per-monitor configuration into monitors that support it
-	if chains := monitorConfig.GetAllowedIPTablesChains(); len(chains) > 0 {
-		for _, mon := range enabledMonitors {
-			type chainConfigurable interface {
-				SetAllowedIPTablesChains([]string)
-			}
-			if c, ok := mon.(chainConfigurable); ok {
-				c.SetAllowedIPTablesChains(chains)
-				logger.Info("configured allowed iptables chains", "monitor", mon.Name(), "chains", chains)
+	// The bootstrap poll below is unbounded, so the startup path runs as a manager
+	// Runnable: the manager serves its health probes before starting any Runnable,
+	// which keeps the liveness probe answerable throughout startup. Bootstrap,
+	// registration and Start share one Runnable because Register mutates state that
+	// Start reads, and monitors read bootstrap-derived tags.
+	if err := mgr.Add(crmanager.RunnableFunc(func(ctx context.Context) error {
+		for _, bootstrapper := range []Bootstrapper{
+			NewHybridNodesBootstrapper(monitoringKubeClient, nodeTemplate.DeepCopy()),
+		} {
+			if err := bootstrapper.Bootstrap(ctx); err != nil {
+				// Not fatal: the agent monitors without the bootstrapped tags.
+				logger.Error(err, "failed to bootstrap node information")
 			}
 		}
-	}
 
-	if exprs := monitorConfig.GetExcludedInterfaceNameRegexps(); len(exprs) > 0 {
-		for _, mon := range enabledMonitors {
-			type interfaceExcludable interface {
-				SetExcludedInterfaceNameRegexps([]string) error
-			}
-			if c, ok := mon.(interfaceExcludable); ok {
-				if err := c.SetExcludedInterfaceNameRegexps(exprs); err != nil {
-					logger.Error(err, "failed to configure excluded interface name regexps", "monitor", mon.Name())
-					return err
-				}
-				logger.Info("configured excluded interface name regexps", "monitor", mon.Name(), "regexps", exprs)
-			}
-		}
-	}
-
-	if len(enabledMonitors) == 0 {
-		logger.Info("all monitors are disabled by configuration, NMA will not perform any monitoring")
-	} else {
-		logger.Info("enabled monitors", "count", len(enabledMonitors))
-		for _, mon := range enabledMonitors {
-			logger.Info("monitor available", "name", mon.Name())
-		}
-	}
-
-	// Build condition configs for node exporter, only for enabled monitors.
-	// NodeExporter unconditionally sets all provided conditions to ConditionTrue,
-	// so we must exclude conditions for disabled monitors to avoid falsely
-	// reporting health for subsystems that are not being monitored.
-	conditionConfigs := make(map[corev1.NodeConditionType]manager.NodeConditionConfig)
-	if monitorConfig.IsMonitorEnabled("kernel-monitor") {
-		conditionConfigs[conditions.KernelReady] = manager.NodeConditionConfig{
-			ReadyReason:  "KernelIsReady",
-			ReadyMessage: "Monitoring for the Kernel system is active",
-		}
-	}
-	if monitorConfig.IsMonitorEnabled("storage-monitor") {
-		conditionConfigs[conditions.StorageReady] = manager.NodeConditionConfig{
-			ReadyReason:  "DiskIsReady",
-			ReadyMessage: "Monitoring for the Disk system is active",
-		}
-	}
-	if monitorConfig.IsMonitorEnabled("runtime") {
-		conditionConfigs[conditions.ContainerRuntimeReady] = manager.NodeConditionConfig{
-			ReadyReason:  "ContainerRuntimeIsReady",
-			ReadyMessage: "Monitoring for the ContainerRuntime system is active",
-		}
-	}
-	if monitorConfig.IsMonitorEnabled("networking") {
-		conditionConfigs[conditions.NetworkingReady] = manager.NodeConditionConfig{
-			ReadyReason:  "NetworkingIsReady",
-			ReadyMessage: "Monitoring for the Networking system is active",
-		}
-	}
-
-	switch runtimeContext.AcceleratedHardware() {
-	case config.AcceleratedHardwareNvidia:
-		if monitorConfig.IsMonitorEnabled("nvidia") {
-			conditionConfigs[conditions.AcceleratedHardwareReady] = manager.NodeConditionConfig{
-				ReadyReason:  "NvidiaGPUIsReady",
-				ReadyMessage: "Monitoring for the Nvidia GPU system is active",
-			}
-		}
-	case config.AcceleratedHardwareNeuron:
-		if monitorConfig.IsMonitorEnabled("neuron") {
-			conditionConfigs[conditions.AcceleratedHardwareReady] = manager.NodeConditionConfig{
-				ReadyReason:  "NeuronAcceleratedHardwareIsReady",
-				ReadyMessage: "Monitoring for the Neuron AcceleratedHardware system is active",
-			}
-		}
-	}
-
-	// Initialize node exporter
-	logger.Info("initializing node exporter")
-	nodeExporter := manager.NewNodeExporter(
-		nodeTemplate.DeepCopy(),
-		monitoringKubeClient,
-		monitoringEventRecorder,
-		conditionConfigs,
-	)
-	go nodeExporter.Run(ctx)
-
-	// Initialize monitoring manager
-	logger.Info("initializing monitoring manager")
-	monitorMgr := manager.NewMonitorManager(hostname, nodeExporter)
-
-	// Register all monitors with the manager
-	for _, mon := range enabledMonitors {
-		monCtx := log.IntoContext(ctx, logger.WithValues("monitor", mon.Name()))
-		var conditionType corev1.NodeConditionType
-		switch mon.Name() {
-		case "kernel":
-			conditionType = conditions.KernelReady
-		case "storage":
-			conditionType = conditions.StorageReady
-		case "container-runtime":
-			conditionType = conditions.ContainerRuntimeReady
-		case "networking":
-			conditionType = conditions.NetworkingReady
-		case "nvidia":
-			if runtimeContext.AcceleratedHardware() != config.AcceleratedHardwareNvidia {
-				logger.Info("skipping monitor registration: no nvidia hardware detected", "monitor", mon.Name())
-				continue
-			}
-			conditionType = conditions.AcceleratedHardwareReady
-		case "neuron":
-			if runtimeContext.AcceleratedHardware() != config.AcceleratedHardwareNeuron {
-				logger.Info("skipping monitor registration: no neuron hardware detected", "monitor", mon.Name())
-				continue
-			}
-			conditionType = conditions.AcceleratedHardwareReady
-		default:
-			conditionType = conditions.KernelReady // Default fallback
-		}
-		if err := monitorMgr.Register(monCtx, mon, conditionType); err != nil {
-			logger.Error(err, "failed to register monitor", "name", mon.Name())
+		// Load monitor configuration from ConfigMap mount
+		monitorConfig, configFound, err := config.LoadMonitorConfig(config.DefaultConfigPath)
+		if err != nil {
+			logger.Error(err, "failed to load monitor configuration")
 			return err
 		}
-		logger.Info("registered monitor with manager", "name", mon.Name(), "conditionType", conditionType)
-	}
+		if !configFound {
+			logger.Info("monitor config file not found, all monitors will be enabled by default", "path", config.DefaultConfigPath)
+		}
 
-	// Add monitoring manager as a runnable to the controller manager
-	if err := mgr.Add(monitorMgr); err != nil {
-		logger.Error(err, "failed to add monitoring manager to controller")
+		// Filter plugins by configuration and log effective state
+		allPlugins := registry.GlobalRegistry().List()
+		var enabledMonitors []monitor.Monitor
+		var disabledNames []string
+
+		for _, plugin := range allPlugins {
+			enabled := monitorConfig.IsMonitorEnabled(plugin.Name())
+			logger.Info("monitor configuration", "plugin", plugin.Name(), "enabled", enabled)
+			if !enabled {
+				disabledNames = append(disabledNames, plugin.Name())
+				continue
+			}
+			enabledMonitors = append(enabledMonitors, plugin.Monitors()...)
+		}
+
+		if len(disabledNames) > 0 {
+			logger.Info("monitors disabled by configuration", "plugins", disabledNames)
+		}
+
+		// Inject per-monitor configuration into monitors that support it
+		if chains := monitorConfig.GetAllowedIPTablesChains(); len(chains) > 0 {
+			for _, mon := range enabledMonitors {
+				type chainConfigurable interface {
+					SetAllowedIPTablesChains([]string)
+				}
+				if c, ok := mon.(chainConfigurable); ok {
+					c.SetAllowedIPTablesChains(chains)
+					logger.Info("configured allowed iptables chains", "monitor", mon.Name(), "chains", chains)
+				}
+			}
+		}
+
+		if exprs := monitorConfig.GetExcludedInterfaceNameRegexps(); len(exprs) > 0 {
+			for _, mon := range enabledMonitors {
+				type interfaceExcludable interface {
+					SetExcludedInterfaceNameRegexps([]string) error
+				}
+				if c, ok := mon.(interfaceExcludable); ok {
+					if err := c.SetExcludedInterfaceNameRegexps(exprs); err != nil {
+						logger.Error(err, "failed to configure excluded interface name regexps", "monitor", mon.Name())
+						return err
+					}
+					logger.Info("configured excluded interface name regexps", "monitor", mon.Name(), "regexps", exprs)
+				}
+			}
+		}
+
+		if len(enabledMonitors) == 0 {
+			logger.Info("all monitors are disabled by configuration, NMA will not perform any monitoring")
+		} else {
+			logger.Info("enabled monitors", "count", len(enabledMonitors))
+			for _, mon := range enabledMonitors {
+				logger.Info("monitor available", "name", mon.Name())
+			}
+		}
+
+		// Build condition configs for node exporter, only for enabled monitors.
+		// NodeExporter unconditionally sets all provided conditions to ConditionTrue,
+		// so we must exclude conditions for disabled monitors to avoid falsely
+		// reporting health for subsystems that are not being monitored.
+		conditionConfigs := make(map[corev1.NodeConditionType]manager.NodeConditionConfig)
+		if monitorConfig.IsMonitorEnabled("kernel-monitor") {
+			conditionConfigs[conditions.KernelReady] = manager.NodeConditionConfig{
+				ReadyReason:  "KernelIsReady",
+				ReadyMessage: "Monitoring for the Kernel system is active",
+			}
+		}
+		if monitorConfig.IsMonitorEnabled("storage-monitor") {
+			conditionConfigs[conditions.StorageReady] = manager.NodeConditionConfig{
+				ReadyReason:  "DiskIsReady",
+				ReadyMessage: "Monitoring for the Disk system is active",
+			}
+		}
+		if monitorConfig.IsMonitorEnabled("runtime") {
+			conditionConfigs[conditions.ContainerRuntimeReady] = manager.NodeConditionConfig{
+				ReadyReason:  "ContainerRuntimeIsReady",
+				ReadyMessage: "Monitoring for the ContainerRuntime system is active",
+			}
+		}
+		if monitorConfig.IsMonitorEnabled("networking") {
+			conditionConfigs[conditions.NetworkingReady] = manager.NodeConditionConfig{
+				ReadyReason:  "NetworkingIsReady",
+				ReadyMessage: "Monitoring for the Networking system is active",
+			}
+		}
+
+		switch runtimeContext.AcceleratedHardware() {
+		case config.AcceleratedHardwareNvidia:
+			if monitorConfig.IsMonitorEnabled("nvidia") {
+				conditionConfigs[conditions.AcceleratedHardwareReady] = manager.NodeConditionConfig{
+					ReadyReason:  "NvidiaGPUIsReady",
+					ReadyMessage: "Monitoring for the Nvidia GPU system is active",
+				}
+			}
+		case config.AcceleratedHardwareNeuron:
+			if monitorConfig.IsMonitorEnabled("neuron") {
+				conditionConfigs[conditions.AcceleratedHardwareReady] = manager.NodeConditionConfig{
+					ReadyReason:  "NeuronAcceleratedHardwareIsReady",
+					ReadyMessage: "Monitoring for the Neuron AcceleratedHardware system is active",
+				}
+			}
+		}
+
+		// Initialize node exporter
+		logger.Info("initializing node exporter")
+		nodeExporter := manager.NewNodeExporter(
+			nodeTemplate.DeepCopy(),
+			monitoringKubeClient,
+			monitoringEventRecorder,
+			conditionConfigs,
+		)
+		go nodeExporter.Run(ctx)
+
+		// Initialize monitoring manager
+		logger.Info("initializing monitoring manager")
+		monitorMgr := manager.NewMonitorManager(hostname, nodeExporter)
+
+		// Register all monitors with the manager
+		for _, mon := range enabledMonitors {
+			monCtx := log.IntoContext(ctx, logger.WithValues("monitor", mon.Name()))
+			var conditionType corev1.NodeConditionType
+			switch mon.Name() {
+			case "kernel":
+				conditionType = conditions.KernelReady
+			case "storage":
+				conditionType = conditions.StorageReady
+			case "container-runtime":
+				conditionType = conditions.ContainerRuntimeReady
+			case "networking":
+				conditionType = conditions.NetworkingReady
+			case "nvidia":
+				if runtimeContext.AcceleratedHardware() != config.AcceleratedHardwareNvidia {
+					logger.Info("skipping monitor registration: no nvidia hardware detected", "monitor", mon.Name())
+					continue
+				}
+				conditionType = conditions.AcceleratedHardwareReady
+			case "neuron":
+				if runtimeContext.AcceleratedHardware() != config.AcceleratedHardwareNeuron {
+					logger.Info("skipping monitor registration: no neuron hardware detected", "monitor", mon.Name())
+					continue
+				}
+				conditionType = conditions.AcceleratedHardwareReady
+			default:
+				conditionType = conditions.KernelReady // Default fallback
+			}
+			if err := monitorMgr.Register(monCtx, mon, conditionType); err != nil {
+				logger.Error(err, "failed to register monitor", "name", mon.Name())
+				return err
+			}
+			logger.Info("registered monitor with manager", "name", mon.Name(), "conditionType", conditionType)
+		}
+
+		close(registered)
+
+		return monitorMgr.Start(ctx)
+	})); err != nil {
+		logger.Error(err, "failed to add monitor startup runnable")
 		return err
 	}
 
@@ -371,13 +391,27 @@ func run() error {
 		logger.Error(err, "failed to set up health check")
 		return err
 	}
-	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
+	if err := mgr.AddReadyzCheck("readyz", registeredCheck(registered)); err != nil {
 		logger.Error(err, "failed to set up ready check")
 		return err
 	}
 
 	logger.Info("starting controller manager")
 	return mgr.Start(ctx)
+}
+
+// registeredCheck reports ready only once registered is closed, so a node still
+// waiting for its Node object is not reported ready. Readiness covers bootstrap,
+// configuration and registration only — see registered in run().
+func registeredCheck(registered <-chan struct{}) healthz.Checker {
+	return func(_ *http.Request) error {
+		select {
+		case <-registered:
+			return nil
+		default:
+			return errors.New("monitor registration in progress")
+		}
+	}
 }
 
 // newLogger builds the JSON logger used by the agent. logr's V(n) maps to zap level -n, so a
