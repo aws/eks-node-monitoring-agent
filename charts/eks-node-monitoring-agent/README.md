@@ -86,7 +86,7 @@ The following table lists the configurable parameters for this chart and their d
 | nodeAgent.image.endpoint | string | `"ecr"` | ECR repository endpoint for the eks-node-monitoring-agent |
 | nodeAgent.image.pullPolicy | string | `"IfNotPresent"` | Container pull policyfor the eks-node-monitoring-agent |
 | nodeAgent.image.region | string | `"us-west-2"` | ECR repository region for the eks-node-monitoring-agent |
-| nodeAgent.image.tag | string | `"v1.6.7-eksbuild.1"` | Image tag for the eks-node-monitoring-agent |
+| nodeAgent.image.tag | string | `"v1.7.0-eksbuild.1"` | Image tag for the eks-node-monitoring-agent |
 | nodeAgent.monitors | object | `{}` | Per-monitor configuration keyed by plugin name. See the main README for details. |
 | nodeAgent.nodeSelector | object | `{}` | Node labels required for the eks-node-monitoring-agent to be scheduled on a node. |
 | nodeAgent.podAnnotations | object | `{}` | Pod annotations applied to the eks-node-monitoring-agent |

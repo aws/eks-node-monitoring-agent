@@ -5,6 +5,26 @@ All notable changes to the EKS Node Monitoring Agent will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.7.0] - 2026-08-04
+
+### What's Changed
+
+#### Features
+- Run nv-hostengine from the agent image ([366b33c](https://github.com/aws/eks-node-monitoring-agent/commit/366b33c110489fab76386109419b430586c3ce0f))
+- Add block device I/O error detection to the storage monitor ([81d2b59](https://github.com/aws/eks-node-monitoring-agent/commit/81d2b59af8e7f781907fd0c71b874d64b3843b2d))
+- Add regex based interface filtering ([18ad5aa](https://github.com/aws/eks-node-monitoring-agent/commit/18ad5aae682f9bda9fdf1ac5974006a4691e608e))
+
+#### Bug Fixes
+- Serve health probes before blocking startup work ([34ab39d](https://github.com/aws/eks-node-monitoring-agent/commit/34ab39dc7ba4bc4a63257a06c068ca6b20bfa829))
+- Expose nodeSelector and priorityClassName in the config schema ([5e46075](https://github.com/aws/eks-node-monitoring-agent/commit/5e46075af25574d29bd373b80d068e62df51916f))
+
+#### Dependencies
+- Update Go dependencies ([104b426](https://github.com/aws/eks-node-monitoring-agent/commit/104b426a8f81413da561e2323a509bc17eca62f4), [5a907d6](https://github.com/aws/eks-node-monitoring-agent/commit/5a907d6dbfb425c8b49710a95b71e2ae731067b2), [3781e60](https://github.com/aws/eks-node-monitoring-agent/commit/3781e601342c93fa1725e1ce49243b4bc39a1996))
+- Bump google.golang.org/grpc from 1.79.3 to 1.82.1 ([b577bee](https://github.com/aws/eks-node-monitoring-agent/commit/b577bee0f2a8a46247b5b8ad6bf40679c11aabf8))
+
+#### CI & Build
+- Derive dcgm-exporter flavor from pinned tag in the bump workflow ([950440d](https://github.com/aws/eks-node-monitoring-agent/commit/950440d0c34f2519abc90e227457264106ccb49c))
+
 ## [v1.6.7] - 2026-07-14
 
 ### What's Changed
@@ -183,6 +203,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### What's Changed
 - Update base DCGM image to 4.5.2-4.8.1-ubuntu22.04 to resolve CVEs ([1a2cda4](https://github.com/aws/eks-node-monitoring-agent/commit/1a2cda4))
 
+[v1.7.0]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.7...v1.7.0
 [v1.6.7]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.6...v1.6.7
 [v1.6.6]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.5...v1.6.6
 [v1.6.5]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.4...v1.6.5
