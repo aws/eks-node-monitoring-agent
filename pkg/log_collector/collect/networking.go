@@ -162,10 +162,9 @@ func apiServerConnectivity(acc *Accessor) error {
 		}
 		caData := cluster.CertificateAuthorityData
 		if len(caData) == 0 {
-			caCertPath := cluster.CertificateAuthority
-			// fixup the path if it comes from the host machine
-			if acc.cfg.Root != "/" && !strings.HasPrefix(caCertPath, acc.cfg.Root) {
-				caCertPath = filepath.Join(acc.cfg.Root, caCertPath)
+			caCertPath, err := pathlib.ResolveClusterCACert(acc.cfg.Root, cluster)
+			if err != nil {
+				return err
 			}
 			caBytes, err := os.ReadFile(caCertPath)
 			if err != nil {

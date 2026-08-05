@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -94,55 +93,14 @@ func rewriteExecProvider(restConfig *rest.Config, m chrootMapper) error {
 	return err
 }
 
-// resolveCACertPath determines the CA certificate the host kubeconfig expects.
-// It returns an empty path (no override needed) when the kubeconfig already
-// embeds certificate-authority-data, the host-root-prefixed path when the
-// kubeconfig references a CA file, and the well-known default location as a
-// last resort.
+// resolveCACertPath determines the CA certificate the host kubeconfig expects
+// for the cluster of its current context.
 func (rcp *podRestConfigProvider) resolveCACertPath(kubeconfigPath string) (string, error) {
-	hostRoot := config.HostRoot()
-
 	kubeconfig, err := clientcmd.LoadFromFile(kubeconfigPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to load kubeconfig %q: %w", kubeconfigPath, err)
 	}
-
-	cluster := clusterForCurrentContext(kubeconfig)
-	if cluster != nil {
-		// embedded CA data is self-contained; let clientcmd use it as-is.
-		if len(cluster.CertificateAuthorityData) > 0 {
-			return "", nil
-		}
-		// a referenced CA file path is relative to the host, so prefix it with
-		// the host root unless it already points inside the mount.
-		if caCertPath := cluster.CertificateAuthority; caCertPath != "" {
-			if hostRoot != "/" && !strings.HasPrefix(caCertPath, hostRoot) {
-				caCertPath = filepath.Join(hostRoot, caCertPath)
-			}
-			return caCertPath, nil
-		}
-	}
-
-	if caCertPath := pathlib.ResolveCACertPath(hostRoot); caCertPath != "" {
-		return caCertPath, nil
-	}
-	return "", fmt.Errorf("could not locate host CA Certificates in expected paths")
-}
-
-// clusterForCurrentContext returns the cluster referenced by the kubeconfig's
-// current context, falling back to the sole cluster when unambiguous.
-func clusterForCurrentContext(kubeconfig *clientcmdapi.Config) *clientcmdapi.Cluster {
-	if ctx, ok := kubeconfig.Contexts[kubeconfig.CurrentContext]; ok {
-		if cluster, ok := kubeconfig.Clusters[ctx.Cluster]; ok {
-			return cluster
-		}
-	}
-	if len(kubeconfig.Clusters) == 1 {
-		for _, cluster := range kubeconfig.Clusters {
-			return cluster
-		}
-	}
-	return nil
+	return pathlib.ResolveClusterCACert(config.HostRoot(), pathlib.ClusterForCurrentContext(kubeconfig))
 }
 
 type chrootMapper struct{}
