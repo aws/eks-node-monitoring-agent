@@ -41,38 +41,88 @@ func TestRewriteExecProvider(t *testing.T) {
 	})
 }
 
-func TestResolveCACertPath(t *testing.T) {
+func TestHostPathOverrides(t *testing.T) {
 	t.Run("resolves the CA of the kubeconfig's current context", func(t *testing.T) {
 		hostRoot := t.TempDir()
 		t.Setenv(config.HOST_ROOT_ENV, hostRoot)
 		kubeconfigPath := writeKubeconfig(t, hostRoot, &clientcmdapi.Cluster{
 			CertificateAuthority: "/etc/kubernetes/pki/ca.crt",
-		})
+		}, nil)
 
-		caCertPath, err := (&podRestConfigProvider{}).resolveCACertPath(kubeconfigPath)
+		overrides, err := (&podRestConfigProvider{}).hostPathOverrides(kubeconfigPath)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if want := filepath.Join(hostRoot, "/etc/kubernetes/pki/ca.crt"); caCertPath != want {
-			t.Fatalf("expected %q, got %q", want, caCertPath)
+		if want := filepath.Join(hostRoot, "/etc/kubernetes/pki/ca.crt"); overrides.ClusterInfo.CertificateAuthority != want {
+			t.Fatalf("expected %q, got %q", want, overrides.ClusterInfo.CertificateAuthority)
+		}
+	})
+
+	t.Run("resolves client certificate and key paths against the host root", func(t *testing.T) {
+		hostRoot := t.TempDir()
+		t.Setenv(config.HOST_ROOT_ENV, hostRoot)
+		kubeconfigPath := writeKubeconfig(t, hostRoot,
+			&clientcmdapi.Cluster{CertificateAuthority: "/srv/kubernetes/api-server-ca-bundle.crt"},
+			&clientcmdapi.AuthInfo{
+				ClientCertificate: "/srv/kubernetes/kubelet.crt",
+				ClientKey:         "/srv/kubernetes/kubelet.key",
+			},
+		)
+
+		overrides, err := (&podRestConfigProvider{}).hostPathOverrides(kubeconfigPath)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if want := filepath.Join(hostRoot, "/srv/kubernetes/kubelet.crt"); overrides.AuthInfo.ClientCertificate != want {
+			t.Fatalf("expected client certificate %q, got %q", want, overrides.AuthInfo.ClientCertificate)
+		}
+		if want := filepath.Join(hostRoot, "/srv/kubernetes/kubelet.key"); overrides.AuthInfo.ClientKey != want {
+			t.Fatalf("expected client key %q, got %q", want, overrides.AuthInfo.ClientKey)
+		}
+	})
+
+	t.Run("leaves embedded credentials untouched", func(t *testing.T) {
+		hostRoot := t.TempDir()
+		t.Setenv(config.HOST_ROOT_ENV, hostRoot)
+		kubeconfigPath := writeKubeconfig(t, hostRoot,
+			&clientcmdapi.Cluster{CertificateAuthorityData: []byte("ca")},
+			&clientcmdapi.AuthInfo{
+				ClientCertificateData: []byte("cert"),
+				ClientKeyData:         []byte("key"),
+			},
+		)
+
+		overrides, err := (&podRestConfigProvider{}).hostPathOverrides(kubeconfigPath)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if overrides.ClusterInfo.CertificateAuthority != "" {
+			t.Fatalf("expected no CA override, got %q", overrides.ClusterInfo.CertificateAuthority)
+		}
+		if overrides.AuthInfo.ClientCertificate != "" || overrides.AuthInfo.ClientKey != "" {
+			t.Fatalf("expected no client credential overrides, got %q / %q",
+				overrides.AuthInfo.ClientCertificate, overrides.AuthInfo.ClientKey)
 		}
 	})
 
 	t.Run("errors when the kubeconfig cannot be loaded", func(t *testing.T) {
-		if _, err := (&podRestConfigProvider{}).resolveCACertPath("/does/not/exist"); err == nil {
+		if _, err := (&podRestConfigProvider{}).hostPathOverrides("/does/not/exist"); err == nil {
 			t.Fatal("expected an error for a missing kubeconfig")
 		}
 	})
 }
 
-// writeKubeconfig writes a minimal kubeconfig with a single "test" cluster/context
-// under hostRoot and returns its path.
-func writeKubeconfig(t *testing.T, hostRoot string, cluster *clientcmdapi.Cluster) string {
+// writeKubeconfig writes a minimal kubeconfig with a single "test"
+// cluster/user/context under hostRoot and returns its path.
+func writeKubeconfig(t *testing.T, hostRoot string, cluster *clientcmdapi.Cluster, authInfo *clientcmdapi.AuthInfo) string {
 	t.Helper()
 	kubeconfig := clientcmdapi.Config{
 		CurrentContext: "test",
-		Contexts:       map[string]*clientcmdapi.Context{"test": {Cluster: "test"}},
+		Contexts:       map[string]*clientcmdapi.Context{"test": {Cluster: "test", AuthInfo: "test"}},
 		Clusters:       map[string]*clientcmdapi.Cluster{"test": cluster},
+	}
+	if authInfo != nil {
+		kubeconfig.AuthInfos = map[string]*clientcmdapi.AuthInfo{"test": authInfo}
 	}
 	kubeconfigPath := filepath.Join(hostRoot, "kubeconfig")
 	if err := clientcmd.WriteToFile(kubeconfig, kubeconfigPath); err != nil {
