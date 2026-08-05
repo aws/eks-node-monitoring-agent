@@ -47,15 +47,22 @@ func (rcp *podRestConfigProvider) Provide() (*rest.Config, error) {
 	if kubeconfigPath == "" {
 		return nil, fmt.Errorf("could not locate host kubeconfig in expected paths")
 	}
-	caCertPath := pathlib.ResolveCACertPath(config.HostRoot())
-	if caCertPath == "" {
-		return nil, fmt.Errorf("could not locate host CA Certificates in expected paths")
+
+	// the CA the cluster is configured with is the source of truth. it may be
+	// embedded in the kubeconfig (certificate-authority-data) or referenced as a
+	// host file path (certificate-authority); fall back to the well-known host
+	// location only when the kubeconfig specifies neither.
+	overrides := &clientcmd.ConfigOverrides{}
+	if caCertPath, err := rcp.resolveCACertPath(kubeconfigPath); err != nil {
+		return nil, err
+	} else if caCertPath != "" {
+		overrides.ClusterInfo = clientcmdapi.Cluster{CertificateAuthority: caCertPath}
 	}
 
 	// attempt to pick up kubelet's cluster config from the node.
 	restConfig, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
 		&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfigPath},
-		&clientcmd.ConfigOverrides{ClusterInfo: clientcmdapi.Cluster{CertificateAuthority: caCertPath}},
+		overrides,
 	).ClientConfig()
 	if err != nil {
 		return nil, err
@@ -84,6 +91,16 @@ func rewriteExecProvider(restConfig *rest.Config, m chrootMapper) error {
 		restConfig.ExecProvider.Args...,
 	)
 	return err
+}
+
+// resolveCACertPath determines the CA certificate the host kubeconfig expects
+// for the cluster of its current context.
+func (rcp *podRestConfigProvider) resolveCACertPath(kubeconfigPath string) (string, error) {
+	kubeconfig, err := clientcmd.LoadFromFile(kubeconfigPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to load kubeconfig %q: %w", kubeconfigPath, err)
+	}
+	return pathlib.ResolveClusterCACert(config.HostRoot(), pathlib.ClusterForCurrentContext(kubeconfig))
 }
 
 type chrootMapper struct{}

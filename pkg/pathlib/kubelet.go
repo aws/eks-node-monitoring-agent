@@ -1,14 +1,60 @@
 package pathlib
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
+
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
 const DefaultCACertPath = "/etc/kubernetes/pki/ca.crt"
 
 func ResolveCACertPath(hostRoot string) string {
 	return ResolvePathOption(hostRoot, filepath.Join(hostRoot, DefaultCACertPath))
+}
+
+// ResolveClusterCACert determines the CA certificate a kubeconfig cluster expects.
+// It returns an empty path when the cluster embeds certificate-authority-data
+// (which is self-contained and needs no file), the host-root-prefixed path when
+// the cluster references a CA file, and the well-known host location as a last
+// resort.
+func ResolveClusterCACert(hostRoot string, cluster *clientcmdapi.Cluster) (string, error) {
+	if cluster != nil {
+		if len(cluster.CertificateAuthorityData) > 0 {
+			return "", nil
+		}
+		// a referenced CA file path is relative to the host, so prefix it with
+		// the host root unless it already points inside the mount.
+		if caCertPath := cluster.CertificateAuthority; caCertPath != "" {
+			if hostRoot != "/" && !strings.HasPrefix(caCertPath, hostRoot) {
+				caCertPath = filepath.Join(hostRoot, caCertPath)
+			}
+			return caCertPath, nil
+		}
+	}
+
+	if caCertPath := ResolveCACertPath(hostRoot); caCertPath != "" {
+		return caCertPath, nil
+	}
+	return "", fmt.Errorf("could not locate host CA Certificates in expected paths")
+}
+
+// ClusterForCurrentContext returns the cluster referenced by the kubeconfig's
+// current context, falling back to the sole cluster when unambiguous.
+func ClusterForCurrentContext(kubeconfig *clientcmdapi.Config) *clientcmdapi.Cluster {
+	if ctx, ok := kubeconfig.Contexts[kubeconfig.CurrentContext]; ok {
+		if cluster, ok := kubeconfig.Clusters[ctx.Cluster]; ok {
+			return cluster
+		}
+	}
+	if len(kubeconfig.Clusters) == 1 {
+		for _, cluster := range kubeconfig.Clusters {
+			return cluster
+		}
+	}
+	return nil
 }
 
 func ResolveKubeletConfigDropIn(hostRoot string) string {
