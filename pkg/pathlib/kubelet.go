@@ -25,13 +25,8 @@ func ResolveClusterCACert(hostRoot string, cluster *clientcmdapi.Cluster) (strin
 		if len(cluster.CertificateAuthorityData) > 0 {
 			return "", nil
 		}
-		// a referenced CA file path is relative to the host, so prefix it with
-		// the host root unless it already points inside the mount.
 		if caCertPath := cluster.CertificateAuthority; caCertPath != "" {
-			if hostRoot != "/" && !strings.HasPrefix(caCertPath, hostRoot) {
-				caCertPath = filepath.Join(hostRoot, caCertPath)
-			}
-			return caCertPath, nil
+			return HostPath(hostRoot, caCertPath), nil
 		}
 	}
 
@@ -39,6 +34,32 @@ func ResolveClusterCACert(hostRoot string, cluster *clientcmdapi.Cluster) (strin
 		return caCertPath, nil
 	}
 	return "", fmt.Errorf("could not locate host CA Certificates in expected paths")
+}
+
+// HostPath prefixes a host-absolute path with the host root mount, so a path a
+// kubeconfig references can be opened from inside the container. Empty paths and
+// paths already pointing inside the mount are returned unchanged.
+func HostPath(hostRoot, path string) string {
+	if path == "" || hostRoot == "/" || strings.HasPrefix(path, hostRoot) {
+		return path
+	}
+	return filepath.Join(hostRoot, path)
+}
+
+// AuthInfoForCurrentContext returns the user referenced by the kubeconfig's
+// current context, falling back to the sole user when unambiguous.
+func AuthInfoForCurrentContext(kubeconfig *clientcmdapi.Config) *clientcmdapi.AuthInfo {
+	if ctx, ok := kubeconfig.Contexts[kubeconfig.CurrentContext]; ok {
+		if authInfo, ok := kubeconfig.AuthInfos[ctx.AuthInfo]; ok {
+			return authInfo
+		}
+	}
+	if len(kubeconfig.AuthInfos) == 1 {
+		for _, authInfo := range kubeconfig.AuthInfos {
+			return authInfo
+		}
+	}
+	return nil
 }
 
 // ClusterForCurrentContext returns the cluster referenced by the kubeconfig's
