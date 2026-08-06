@@ -55,6 +55,9 @@ func Validate(spec probe.Spec) error {
 	if spec.FailureThreshold < 1 {
 		return fmt.Errorf("probe %q: failureThreshold must be at least 1, got %d", spec.Subsystem, spec.FailureThreshold)
 	}
+	if spec.RecoveryThreshold < 0 {
+		return fmt.Errorf("probe %q: recoveryThreshold must not be negative, got %d", spec.Subsystem, spec.RecoveryThreshold)
+	}
 	if spec.StartupGracePeriod.Duration < 0 {
 		return fmt.Errorf("probe %q: startupGracePeriod must not be negative, got %v", spec.Subsystem, spec.StartupGracePeriod.Duration)
 	}
