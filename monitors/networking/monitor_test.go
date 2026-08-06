@@ -75,12 +75,15 @@ func TestNetworkingMonitor(t *testing.T) {
 		log    string
 		reason string
 		monitor.Severity
+		ttl time.Duration
 	}{
-		{"Failed to check API server connectivity: invalid configuration: no configuration has been provided", "IPAMDNotReady", monitor.SeverityFatal},
-		{"Unable to reach API Server", "IPAMDNotReady", monitor.SeverityFatal},
-		{"Failed to check API server connectivity", "IPAMDNotReady", monitor.SeverityFatal},
-		{"Starting L-IPAMD", "IPAMDRepeatedlyRestart", monitor.SeverityWarning},
-		{"InsufficientFreeAddressesInSubnet", "IPAMDNoIPs", monitor.SeverityWarning},
+		{"Failed to check API server connectivity: invalid configuration: no configuration has been provided", "IPAMDNotReady", monitor.SeverityFatal, 0},
+		// the unreachable-API-Server cases self-clear: IPAMD re-logs them every 2s
+		// while the failure is real, so a lone line is a transient boot race.
+		{"Unable to reach API Server", "IPAMDNotReady", monitor.SeverityFatal, ipamdAPIServerUnreachableTTL},
+		{"Failed to check API server connectivity", "IPAMDNotReady", monitor.SeverityFatal, ipamdAPIServerUnreachableTTL},
+		{"Starting L-IPAMD", "IPAMDRepeatedlyRestart", monitor.SeverityWarning, 0},
+		{"InsufficientFreeAddressesInSubnet", "IPAMDNoIPs", monitor.SeverityWarning, 0},
 	} {
 		t.Run(testCase.log, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -98,6 +101,7 @@ func TestNetworkingMonitor(t *testing.T) {
 			case monitorResult := <-mockManager.res:
 				assert.Equal(t, testCase.Severity, monitorResult.Severity)
 				assert.Equal(t, testCase.reason, monitorResult.Reason)
+				assert.Equal(t, testCase.ttl, monitorResult.TTL)
 			}
 		})
 	}

@@ -4,6 +4,7 @@ package reasons
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 )
@@ -36,6 +37,13 @@ func (r ConditionBuilder) Severity(sev monitor.Severity) ConditionBuilder {
 
 func (r ConditionBuilder) MinOccurrences(minOccurrences int64) ConditionBuilder {
 	r.Condition.MinOccurrences = minOccurrences
+	return r
+}
+
+// TTL marks the condition as self-clearing: if it is not re-observed within the
+// given duration, the exporter returns the node condition to its ready state.
+func (r ConditionBuilder) TTL(ttl time.Duration) ConditionBuilder {
+	r.Condition.TTL = ttl
 	return r
 }
 
