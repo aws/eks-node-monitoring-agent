@@ -89,9 +89,9 @@ func findPublishedNetworkPolicyCLI(acc *Accessor) (string, bool) {
 	return link, true
 }
 
-// selectNetworkPolicyCLI chooses which na-cli binary may decode eBPF maps.
-// Returns ok=false to skip decoding when no CLI is installed or the family is
-// unconfirmed. loaded-ebpfdata (family-agnostic) is collected regardless.
+// selectNetworkPolicyCLI chooses the family-confirmed na-cli binary to run.
+// Returns ok=false when no CLI is installed or the family is unconfirmed, in
+// which case no na-cli command is run at all.
 func selectNetworkPolicyCLI(acc *Accessor) (cliPath string, reason string, ok bool) {
 	publishedCLI, havePublished := findPublishedNetworkPolicyCLI(acc)
 	defaultCLI, haveDefault := findNetworkPolicyCLI(acc, naCLIDefault)
@@ -124,44 +124,44 @@ func chooseNetworkPolicyCLI(publishedCLI string, havePublished bool, defaultCLI 
 }
 
 // networkPolicyEbpfInfo dumps the network-policy eBPF loaded programs and map
-// contents via aws-eks-na-cli. loaded-ebpfdata is family-agnostic and runs with
-// whichever binary is installed; the per-map dump binary is chosen by
-// selectNetworkPolicyCLI.
+// contents via aws-eks-na-cli. The family is confirmed first (selectNetworkPolicyCLI),
+// and the confirmed binary runs BOTH loaded-ebpfdata and dump-maps. We do not
+// rely on any subcommand being family-agnostic: if the family is unconfirmed, no
+// na-cli command is run and only the selection reason is recorded.
 func networkPolicyEbpfInfo(acc *Accessor) error {
 	ebpfDataFile := EBPFDataFile
 
-	listCLI, listOK := findNetworkPolicyCLI(acc, naCLIDefault)
-	if !listOK {
-		listCLI, listOK = findNetworkPolicyCLI(acc, naCLIv6Named)
-	}
-	if !listOK {
+	// No binary at all is distinct from "installed but family unconfirmed"; report it plainly.
+	_, haveDefault := findNetworkPolicyCLI(acc, naCLIDefault)
+	_, haveV6Named := findNetworkPolicyCLI(acc, naCLIv6Named)
+	if !haveDefault && !haveV6Named {
 		return acc.appendOutput(ebpfDataFile, []byte(fmt.Sprintf("*** %s/%s not present, skipping eBPF map collection ***\n", naCLIDefault, naCLIv6Named)))
 	}
 
-	if err := acc.appendOutput(ebpfDataFile, []byte("*** EBPF loaded data ***\n")); err != nil {
-		return fmt.Errorf("failed to append output to %s: %w", ebpfDataFile, err)
-	}
-	loaded, err := acc.Command(listCLI, "ebpf", "loaded-ebpfdata").CombinedOutput()
-	if err != nil {
-		// Keep the artifact self-contained: record the failure under the header
-		// (a denied exec on Bottlerocket surfaces here) rather than only in the
-		// joined error.
-		return errors.Join(
-			acc.appendOutput(ebpfDataFile, []byte(fmt.Sprintf("*** failed to execute %s ebpf loaded-ebpfdata: %v ***\n", listCLI, err))),
-			fmt.Errorf("failed to execute %s: %w", listCLI, err),
-		)
-	}
-	if err := acc.appendOutput(ebpfDataFile, loaded); err != nil {
-		return fmt.Errorf("failed to append output to %s: %w", ebpfDataFile, err)
-	}
-
-	// Record the selection reason even on skip: it is the bundle's diagnostic.
 	cliPath, reason, ok := selectNetworkPolicyCLI(acc)
 	if err := acc.appendOutput(ebpfDataFile, []byte(fmt.Sprintf("%s %s ***\n", CLISelectionLinePrefix, reason))); err != nil {
 		return fmt.Errorf("failed to append CLI selection to %s: %w", ebpfDataFile, err)
 	}
 	if !ok {
+		// Family unconfirmed: run no na-cli command rather than guess a family.
 		return nil
+	}
+
+	if err := acc.appendOutput(ebpfDataFile, []byte("*** EBPF loaded data ***\n")); err != nil {
+		return fmt.Errorf("failed to append output to %s: %w", ebpfDataFile, err)
+	}
+	loaded, err := acc.Command(cliPath, "ebpf", "loaded-ebpfdata").CombinedOutput()
+	if err != nil {
+		// Keep the artifact self-contained: record the failure under the header
+		// (a denied exec on Bottlerocket surfaces here) rather than only in the
+		// joined error.
+		return errors.Join(
+			acc.appendOutput(ebpfDataFile, []byte(fmt.Sprintf("*** failed to execute %s ebpf loaded-ebpfdata: %v ***\n", cliPath, err))),
+			fmt.Errorf("failed to execute %s: %w", cliPath, err),
+		)
+	}
+	if err := acc.appendOutput(ebpfDataFile, loaded); err != nil {
+		return fmt.Errorf("failed to append output to %s: %w", ebpfDataFile, err)
 	}
 
 	ebpfMapFile := EBPFMapsDataFile
