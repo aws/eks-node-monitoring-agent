@@ -106,7 +106,9 @@ func TestRunner_EmitsAfterConsecutiveFailures(t *testing.T) {
 
 func TestRunner_SuccessResetsCounter(t *testing.T) {
 	mgr := &fakeManager{}
-	// U U H U U — never 3 consecutive, so nothing may be emitted.
+	// U U H U U — never 3 consecutive, so the failure condition may not be
+	// emitted. The completed below-threshold episode (U U H) emits exactly
+	// one Warning summary; the trailing in-progress streak emits nothing.
 	r := newTestRunner(t, runnerSpec(3, 0), mgr, unhealthy(), unhealthy(), healthy(), unhealthy(), unhealthy())
 
 	for i := 0; i < 5; i++ {
@@ -114,8 +116,18 @@ func TestRunner_SuccessResetsCounter(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if len(mgr.conditions) != 0 {
-		t.Fatalf("expected no emission without 3 consecutive failures, got %+v", mgr.conditions)
+	if len(mgr.conditions) != 1 {
+		t.Fatalf("expected exactly the episode summary, got %+v", mgr.conditions)
+	}
+	c := mgr.conditions[0]
+	if c.Severity != monitor.SeverityWarning || c.Resolved {
+		t.Errorf("episode summary must be a non-resolved Warning: %+v", c)
+	}
+	if c.Reason != "IPAMDNotRunning" {
+		t.Errorf("episode summary must use the probe's reason, got %q", c.Reason)
+	}
+	if !strings.Contains(c.Message, "ipamd liveness check") || !strings.Contains(c.Message, "2 consecutive checks") || !strings.Contains(c.Message, "recovered") {
+		t.Errorf("episode summary message should carry check, streak length, and recovery, got %q", c.Message)
 	}
 }
 
@@ -138,6 +150,92 @@ func TestRunner_RecoveryEmitsResolvedCondition(t *testing.T) {
 	c := mgr.conditions[1]
 	if !c.Resolved || c.Reason != "IPAMDNotRunning" {
 		t.Errorf("second condition should resolve the reason: %+v", c)
+	}
+}
+
+func TestRunner_RecoveryHysteresis(t *testing.T) {
+	mgr := &fakeManager{}
+	spec := runnerSpec(3, 0)
+	spec.RecoveryThreshold = 2
+	// U U U → failure fires; H counts 1 of 2 healthy; U resets the recovery
+	// counter (below the failure threshold, so no re-notification, and no
+	// episode summary while the failure is fired); H counts 1; H counts 2 →
+	// resolution.
+	r := newTestRunner(t, spec, mgr,
+		unhealthy(), unhealthy(), unhealthy(), healthy(), unhealthy(), healthy(), healthy())
+
+	for i := 0; i < 6; i++ {
+		if err := r.runOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// After 6 ticks: only the failure. A premature resolution here means the
+	// mid-recovery failure did not reset the counter; a Warning here means an
+	// episode summary was emitted while the failure was fired.
+	if len(mgr.conditions) != 1 || mgr.conditions[0].Resolved {
+		t.Fatalf("expected only the fired failure after 6 ticks, got %+v", mgr.conditions)
+	}
+
+	if err := r.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(mgr.conditions) != 2 || !mgr.conditions[1].Resolved {
+		t.Fatalf("expected resolution on 2nd consecutive healthy tick, got %+v", mgr.conditions)
+	}
+}
+
+func TestRunner_UnknownDoesNotCountTowardRecovery(t *testing.T) {
+	mgr := &fakeManager{}
+	spec := runnerSpec(1, 0)
+	spec.RecoveryThreshold = 2
+	// U → failure fires; H counts 1 of 2; ? leaves the recovery counter
+	// untouched; H counts 2 → resolution.
+	r := newTestRunner(t, spec, mgr, unhealthy(), healthy(), unknown(), healthy())
+
+	for i := 0; i < 3; i++ {
+		if err := r.runOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A resolution here would mean the unknown tick counted as healthy.
+	if len(mgr.conditions) != 1 {
+		t.Fatalf("expected only the fired failure after unknown tick, got %+v", mgr.conditions)
+	}
+
+	if err := r.runOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// A missing resolution here would mean the unknown tick reset the counter.
+	if len(mgr.conditions) != 2 || !mgr.conditions[1].Resolved {
+		t.Fatalf("expected resolution on 2nd countable healthy tick, got %+v", mgr.conditions)
+	}
+}
+
+func TestRunner_EpisodeInGraceEmitsNoSummary(t *testing.T) {
+	mgr := &fakeManager{}
+	r := newTestRunner(t, runnerSpec(3, 5*time.Minute), mgr,
+		unhealthy(), unhealthy(), healthy(), unhealthy(), healthy())
+
+	// U U H inside grace: a completed below-threshold episode, but it began
+	// during startup grace — boot noise, no summary.
+	for i := 0; i < 3; i++ {
+		if err := r.runOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(mgr.conditions) != 0 {
+		t.Fatalf("episode that began in grace must not emit, got %+v", mgr.conditions)
+	}
+
+	// Past grace: U H is a completed below-threshold episode — one summary.
+	r.now = func() time.Time { return r.startedAt.Add(10 * time.Minute) }
+	for i := 0; i < 2; i++ {
+		if err := r.runOnce(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(mgr.conditions) != 1 || mgr.conditions[0].Severity != monitor.SeverityWarning {
+		t.Fatalf("expected exactly one summary Warning for the post-grace episode, got %+v", mgr.conditions)
 	}
 }
 
