@@ -109,6 +109,15 @@ func TestValidate(t *testing.T) {
 			wantErr: "failureThreshold must be at least 1",
 		},
 		{
+			name:   "unset recovery threshold defaults later and is valid",
+			mutate: func(s *probe.Spec) { s.RecoveryThreshold = 0 },
+		},
+		{
+			name:    "negative recovery threshold",
+			mutate:  func(s *probe.Spec) { s.RecoveryThreshold = -1 },
+			wantErr: "recoveryThreshold must not be negative",
+		},
+		{
 			name:    "negative grace period",
 			mutate:  func(s *probe.Spec) { s.StartupGracePeriod = metav1.Duration{Duration: -time.Second} },
 			wantErr: "must not be negative",
