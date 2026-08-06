@@ -183,4 +183,8 @@ func TestWrapper(t *testing.T, Testenv env.Environment) {
 		nodediagnostic.LogCollection(awsCfg),
 		nodediagnostic.NodeDestination(),
 	)
+
+	// Forces the network-policy eBPF collector's good path by applying a
+	// NetworkPolicy; skips when the network policy agent is not installed.
+	Testenv.Test(t, nodediagnostic.EbpfMapCollectionWithNetworkPolicy(awsCfg))
 }
