@@ -34,8 +34,9 @@ helm uninstall eks-node-monitoring-agent --namespace kube-system
 
 On NVIDIA GPU nodes the agent collects GPU health from DCGM. It connects as a
 DCGM client in standalone mode, so an `nv-hostengine` process must be reachable
-on the node (`localhost:5555` by default). The chart provides one via the
-`dcgm-server` DaemonSet.
+on the node. The chart provides one via the `dcgm-server` DaemonSet
+(`dcgmAgent.enabled`, default `true`), which the node agent talks to on
+`localhost:5555` by default.
 
 `nv-hostengine`, `dcgmi` and the DCGM modules ship inside the
 `eks-node-monitoring-agent` image, so `dcgm-server` runs the same image as the
@@ -49,6 +50,29 @@ If you need to pin the DaemonSet back to a standalone DCGM image, set
 `dcgm-exporter` images carry the CVEs of their base OS and of the exporter
 binary, so treat this as a temporary break-glass measure.
 
+### Using an existing DCGM hostengine
+
+[NVIDIA documents standalone mode](https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/getting-started.html#standalone-mode) as its preferred mode when multiple clients interact with DCGM.
+Clusters that already run `nv-hostengine` on each GPU node — for example, GPU
+Operator with standalone DCGM enabled — should configure `nodeAgent.dcgmAddress`
+to reuse it rather than deploy the bundled instance.
+Set `dcgmAgent.enabled` to `false` to stop the chart from deploying its own
+`dcgm-server` DaemonSet, then point `nodeAgent.dcgmAddress` at the existing
+hostengine. Set `nodeAgent.dnsPolicy` to `ClusterFirstWithHostNet` when that
+address is a Kubernetes Service hostname, since the node agent otherwise runs
+with the host's DNS resolution:
+
+```yaml
+dcgmAgent:
+  enabled: false
+nodeAgent:
+  dcgmAddress: nvidia-dcgm.gpu-operator.svc:5555
+  dnsPolicy: ClusterFirstWithHostNet
+```
+
+Setting `dcgmAgent.enabled` to `false` without a `nodeAgent.dcgmAddress` disables
+DCGM monitoring entirely; the agent still runs but reports no GPU health data.
+
 ## Configuration
 
 The following table lists the configurable parameters for this chart and their default values.
@@ -56,6 +80,7 @@ The following table lists the configurable parameters for this chart and their d
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | dcgmAgent.affinity | object | see [`values.yaml`](./values.yaml) | Map of dcgm pod affinities |
+| dcgmAgent.enabled | bool | `true` | Deploy the bundled dcgm-server DaemonSet |
 | dcgmAgent.image.account | string | `"602401143452"` | ECR repository account number for the dcgm-exporter. Only used when a tag is set. |
 | dcgmAgent.image.containerRegistry | string | `""` | Full container registry URL override (e.g., 602401143452.dkr.ecr.us-west-2.amazonaws.com). When set, this takes precedence over account/endpoint/region/domain fields. Only used when a tag is set. |
 | dcgmAgent.image.domain | string | `"amazonaws.com"` | ECR repository domain for the dcgm-exporter. Only used when a tag is set. |
@@ -80,6 +105,8 @@ The following table lists the configurable parameters for this chart and their d
 | nameOverride | string | `"eks-node-monitoring-agent"` | A name override for the chart |
 | nodeAgent.additionalArgs | list | `["--metrics-address=:8003"]` | List of additional container arguments for the eks-node-monitoring-agent |
 | nodeAgent.affinity | object | see [`values.yaml`](./values.yaml) | Map of pod affinities for the eks-node-monitoring-agent |
+| nodeAgent.dcgmAddress | string | `""` | Optional DCGM hostengine endpoint. When empty, the agent uses localhost:5555. |
+| nodeAgent.dnsPolicy | string | `""` | Optional pod DNS policy. Set to ClusterFirstWithHostNet when dcgmAddress uses a Kubernetes Service hostname. |
 | nodeAgent.image.account | string | `"602401143452"` | ECR repository account number for the eks-node-monitoring-agent |
 | nodeAgent.image.containerRegistry | string | `""` | Full container registry URL override (e.g., 602401143452.dkr.ecr.us-west-2.amazonaws.com). When set, this takes precedence over account/endpoint/region/domain fields. |
 | nodeAgent.image.domain | string | `"amazonaws.com"` | ECR repository domain for the eks-node-monitoring-agent |
