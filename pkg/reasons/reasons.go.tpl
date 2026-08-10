@@ -3,13 +3,14 @@
 package reasons
 
 var (
-{{- range $condition, $reasons := . }}
+{{- range $condition, $reasons := .Conditions }}
 
     // reasons for the {{$condition}} condition.
 {{ range $reasonName, $reason := $reasons }}
     {{$reasonName}} = ReasonMeta{
         template:        "{{$reason.Template}}",
         defaultSeverity: "{{$reason.DefaultSeverity}}",
+        component:       "{{$reason.Component}}",
     }
 {{- end -}}
 {{- end -}}
@@ -19,9 +20,18 @@ var (
 // metadata. It backs the ByName lookup used to validate configuration that
 // references reasons by name.
 var byName = map[string]ReasonMeta{
-{{- range $condition, $reasons := . }}
+{{- range $condition, $reasons := .Conditions }}
 {{- range $reasonName, $reason := $reasons }}
     "{{$reasonName}}": {{$reasonName}},
 {{- end -}}
+{{- end }}
+}
+
+// components is the distinct set of event-budget components declared in
+// reasons.yaml. Together with the platform-reserved slots it is bounded by
+// the capacity ledger in tools/codegen-reasons.
+var components = map[string]struct{}{
+{{- range $component := .Components }}
+    "{{$component}}": {},
 {{- end }}
 }
