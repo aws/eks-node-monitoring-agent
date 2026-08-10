@@ -27,8 +27,9 @@ var reservedComponents = []string{"diagnostics"}
 
 // templateData is the root object rendered into reasons.go.
 type templateData struct {
-	Conditions map[string]map[string]internalReasonMeta
-	Components []string
+	Conditions    map[string]map[string]internalReasonMeta
+	Components    []string
+	MaxComponents int
 }
 
 func main() {
@@ -79,7 +80,7 @@ func main() {
 	}
 
 	var buf bytes.Buffer
-	err = template.Execute(&buf, templateData{Conditions: reasonConfig, Components: components})
+	err = template.Execute(&buf, templateData{Conditions: reasonConfig, Components: components, MaxComponents: maxComponents})
 	if err != nil {
 		panic(err)
 	}
