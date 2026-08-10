@@ -35,3 +35,9 @@ var components = map[string]struct{}{
     "{{$component}}": {},
 {{- end }}
 }
+
+// MaxComponents is N, the declared platform capacity for event-budget
+// components, mirrored from the capacity ledger in tools/codegen-reasons.
+// The node-global event ceiling is derived as N times the per-component
+// quota and must never be tuned independently.
+const MaxComponents = {{ .MaxComponents }}
