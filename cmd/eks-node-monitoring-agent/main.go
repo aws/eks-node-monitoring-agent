@@ -38,6 +38,7 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/pkg/diagnostic"
 	"github.com/aws/eks-node-monitoring-agent/pkg/manager"
 	"github.com/aws/eks-node-monitoring-agent/pkg/monitor/registry"
+	"github.com/aws/eks-node-monitoring-agent/pkg/reasons"
 
 	// Import monitor packages to trigger auto-registration via init()
 	_ "github.com/aws/eks-node-monitoring-agent/monitors/kernel"
@@ -344,6 +345,20 @@ func run() error {
 		// Initialize monitoring manager
 		logger.Info("initializing monitoring manager")
 		monitorMgr := manager.NewMonitorManager(hostname, nodeExporter)
+
+		// Every monitor name must be a declared component in reasons.yaml: the
+		// monitor name is the fallback event-budget key for reasons that cannot
+		// be resolved by name (parameterized templates render to unregistered
+		// strings), so an undeclared monitor would emit outside the component
+		// capacity ledger and break the derived node-ceiling arithmetic.
+		monitorNames := make([]string, 0, len(enabledMonitors))
+		for _, mon := range enabledMonitors {
+			monitorNames = append(monitorNames, mon.Name())
+		}
+		if err := reasons.ValidateMonitorComponents(monitorNames...); err != nil {
+			logger.Error(err, "monitor component validation failed")
+			return err
+		}
 
 		// Register all monitors with the manager
 		for _, mon := range enabledMonitors {
