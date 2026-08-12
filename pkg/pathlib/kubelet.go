@@ -38,9 +38,13 @@ func ResolveClusterCACert(hostRoot string, cluster *clientcmdapi.Cluster) (strin
 
 // HostPath prefixes a host-absolute path with the host root mount, so a path a
 // kubeconfig references can be opened from inside the container. Empty paths and
-// paths already pointing inside the mount are returned unchanged.
+// paths already pointing inside the mount are returned unchanged. The
+// inside-the-mount check compares whole path components, so a sibling like
+// /hostname/pki/ca.crt is still prefixed when the mount is /host.
 func HostPath(hostRoot, path string) string {
-	if path == "" || hostRoot == "/" || strings.HasPrefix(path, hostRoot) {
+	hostRoot = filepath.Clean(hostRoot)
+	insideHostRoot := path == hostRoot || strings.HasPrefix(path, hostRoot+"/")
+	if path == "" || hostRoot == "/" || insideHostRoot {
 		return path
 	}
 	return filepath.Join(hostRoot, path)

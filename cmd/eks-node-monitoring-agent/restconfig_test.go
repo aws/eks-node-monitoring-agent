@@ -81,6 +81,40 @@ func TestHostPathOverrides(t *testing.T) {
 		}
 	})
 
+	t.Run("resolves the token file against the host root", func(t *testing.T) {
+		hostRoot := t.TempDir()
+		t.Setenv(config.HOST_ROOT_ENV, hostRoot)
+		kubeconfigPath := writeKubeconfig(t, hostRoot,
+			&clientcmdapi.Cluster{CertificateAuthorityData: []byte("ca")},
+			&clientcmdapi.AuthInfo{TokenFile: "/var/lib/kubelet/token"},
+		)
+
+		overrides, err := (&podRestConfigProvider{}).hostPathOverrides(kubeconfigPath)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if want := filepath.Join(hostRoot, "/var/lib/kubelet/token"); overrides.AuthInfo.TokenFile != want {
+			t.Fatalf("expected token file %q, got %q", want, overrides.AuthInfo.TokenFile)
+		}
+	})
+
+	t.Run("leaves the token file untouched when an inline token takes precedence", func(t *testing.T) {
+		hostRoot := t.TempDir()
+		t.Setenv(config.HOST_ROOT_ENV, hostRoot)
+		kubeconfigPath := writeKubeconfig(t, hostRoot,
+			&clientcmdapi.Cluster{CertificateAuthorityData: []byte("ca")},
+			&clientcmdapi.AuthInfo{Token: "inline", TokenFile: "/var/lib/kubelet/token"},
+		)
+
+		overrides, err := (&podRestConfigProvider{}).hostPathOverrides(kubeconfigPath)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if overrides.AuthInfo.TokenFile != "" {
+			t.Fatalf("expected no token file override, got %q", overrides.AuthInfo.TokenFile)
+		}
+	})
+
 	t.Run("leaves embedded credentials untouched", func(t *testing.T) {
 		hostRoot := t.TempDir()
 		t.Setenv(config.HOST_ROOT_ENV, hostRoot)

@@ -91,9 +91,9 @@ func rewriteExecProvider(restConfig *rest.Config, m chrootMapper) error {
 }
 
 // hostPathOverrides builds clientcmd overrides that resolve the file paths the
-// host kubeconfig references (CA certificate, client certificate, client key)
-// against the host filesystem mount. Credentials embedded as *-data are
-// self-contained and left untouched.
+// host kubeconfig references (CA certificate, client certificate, client key,
+// token file) against the host filesystem mount. Credentials embedded in the
+// kubeconfig are self-contained and left untouched.
 func (rcp *podRestConfigProvider) hostPathOverrides(kubeconfigPath string) (*clientcmd.ConfigOverrides, error) {
 	hostRoot := config.HostRoot()
 
@@ -117,13 +117,19 @@ func (rcp *podRestConfigProvider) hostPathOverrides(kubeconfigPath string) (*cli
 	}
 
 	// kubeconfigs that authenticate with a client certificate (e.g. on
-	// kops-provisioned nodes) reference the certificate and key by host path too.
+	// kops-provisioned nodes) reference the certificate and key by host path too,
+	// as does a token read from a file (tokenFile).
 	if authInfo := pathlib.AuthInfoForCurrentContext(kubeconfig); authInfo != nil {
 		if len(authInfo.ClientCertificateData) == 0 {
 			overrides.AuthInfo.ClientCertificate = pathlib.HostPath(hostRoot, authInfo.ClientCertificate)
 		}
 		if len(authInfo.ClientKeyData) == 0 {
 			overrides.AuthInfo.ClientKey = pathlib.HostPath(hostRoot, authInfo.ClientKey)
+		}
+		// an inline token takes precedence over tokenFile, so only the latter
+		// needs a path.
+		if len(authInfo.Token) == 0 {
+			overrides.AuthInfo.TokenFile = pathlib.HostPath(hostRoot, authInfo.TokenFile)
 		}
 	}
 

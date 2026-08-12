@@ -114,6 +114,32 @@ func TestResolveClusterCACert(t *testing.T) {
 	})
 }
 
+func TestHostPath(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		hostRoot string
+		path     string
+		want     string
+	}{
+		{name: "prefixes a host path", hostRoot: "/host", path: "/srv/kubernetes/kubelet.key",
+			want: "/host/srv/kubernetes/kubelet.key"},
+		{name: "keeps an empty path", hostRoot: "/host", path: "", want: ""},
+		{name: "keeps every path when the host root is /", hostRoot: "/", path: "/etc/kubernetes/pki/ca.crt",
+			want: "/etc/kubernetes/pki/ca.crt"},
+		{name: "keeps a path already inside the host root", hostRoot: "/host", path: "/host/etc/ca.crt",
+			want: "/host/etc/ca.crt"},
+		{name: "keeps the host root itself", hostRoot: "/host", path: "/host", want: "/host"},
+		{name: "prefixes a path that only shares a prefix with the host root", hostRoot: "/host",
+			path: "/hostname/pki/ca.crt", want: "/host/hostname/pki/ca.crt"},
+		{name: "ignores a trailing slash on the host root", hostRoot: "/host/", path: "/host/etc/ca.crt",
+			want: "/host/etc/ca.crt"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, HostPath(test.hostRoot, test.path))
+		})
+	}
+}
+
 func TestClusterForCurrentContext(t *testing.T) {
 	t.Run("resolves the cluster referenced by the current context", func(t *testing.T) {
 		want := &clientcmdapi.Cluster{Server: "https://current"}
