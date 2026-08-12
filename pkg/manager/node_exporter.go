@@ -46,7 +46,9 @@ func NewNodeExporter(
 		nodeKey:                client.ObjectKeyFromObject(node),
 		kubeClient:             kubeClient,
 		recorder:               recorder,
+		conditionConfigs:       managedConditionConfigs,
 		managedConditions:      initializeManagedConditions(managedConditionConfigs),
+		expiries:               make(map[corev1.NodeConditionType]map[string]time.Time),
 		managedConditionsDirty: true,
 	}
 }
@@ -89,9 +91,16 @@ type nodeExporter struct {
 	nodeRef    *corev1.ObjectReference
 	nodeKey    client.ObjectKey
 
+	conditionConfigs       map[corev1.NodeConditionType]NodeConditionConfig
 	managedConditions      map[corev1.NodeConditionType]corev1.NodeCondition
 	managedConditionsDirty bool
 	managedConditionsLock  sync.Mutex
+
+	// expiries tracks, per condition type, the deadline by which each contributing
+	// reason must be re-observed to stay latched. Reasons reported without a TTL
+	// are absent here and therefore never expire. Keyed by reason so that a
+	// condition aggregating several failures only clears once all of them lapse.
+	expiries map[corev1.NodeConditionType]map[string]time.Time
 }
 
 // Info records an event for the specified condition.
@@ -119,6 +128,16 @@ func (e *nodeExporter) Fatal(ctx context.Context, monitorCondition monitor.Condi
 		Status:             corev1.ConditionFalse,
 		LastTransitionTime: now,
 		LastHeartbeatTime:  now,
+	}
+	if monitorCondition.TTL > 0 {
+		if e.expiries[conditionType] == nil {
+			e.expiries[conditionType] = make(map[string]time.Time)
+		}
+		e.expiries[conditionType][monitorCondition.Reason] = now.Add(monitorCondition.TTL)
+	} else {
+		// a reason reported without a TTL latches the condition, so drop any
+		// expiry previously recorded for it.
+		delete(e.expiries[conditionType], monitorCondition.Reason)
 	}
 	if oldCondition, ok := e.managedConditions[conditionType]; ok {
 		// if the status has not changed, use the old transition time
@@ -158,12 +177,60 @@ func (e *nodeExporter) RunWithTickers(ctx context.Context, heartbeatTicker <-cha
 		case <-heartbeatTicker:
 			e.updateHeartbeatTimes()
 		case <-reportTicker:
+			e.expireConditions(ctx)
 			if err := e.reportManagedConditions(ctx); err != nil {
 				log.FromContext(ctx).Error(err, "failed to report managed conditions")
 			}
 		case <-ctx.Done():
 			return
 		}
+	}
+}
+
+// expireConditions returns any Fatal condition whose contributing reasons have all
+// passed their TTL back to its configured ready state. A condition with at least one
+// un-expired or non-expiring reason is left alone.
+func (e *nodeExporter) expireConditions(ctx context.Context) {
+	e.managedConditionsLock.Lock()
+	defer e.managedConditionsLock.Unlock()
+	now := metav1.Now()
+	for conditionType, reasonExpiries := range e.expiries {
+		condition, ok := e.managedConditions[conditionType]
+		if !ok || condition.Status != corev1.ConditionFalse {
+			continue
+		}
+		// only clear when every reason holding this condition down has lapsed,
+		// otherwise a still-failing reason would be silently dropped.
+		for reason, expiry := range reasonExpiries {
+			if now.Time.Before(expiry) {
+				continue
+			}
+			delete(reasonExpiries, reason)
+		}
+		if len(reasonExpiries) > 0 {
+			continue
+		}
+		conditionConfig, ok := e.conditionConfigs[conditionType]
+		if !ok {
+			// without a ready reason/message there is nothing sane to revert to.
+			continue
+		}
+		delete(e.expiries, conditionType)
+		log.FromContext(ctx).Info("clearing expired condition",
+			"conditionType", conditionType,
+			"previousReason", condition.Reason,
+		)
+		e.recorder.Event(e.nodeRef, corev1.EventTypeNormal, string(conditionType),
+			fmt.Sprintf("%s: condition cleared, %s was not re-observed", conditionConfig.ReadyReason, condition.Reason))
+		e.managedConditions[conditionType] = corev1.NodeCondition{
+			Type:               conditionType,
+			Reason:             conditionConfig.ReadyReason,
+			Message:            conditionConfig.ReadyMessage,
+			Status:             corev1.ConditionTrue,
+			LastTransitionTime: now,
+			LastHeartbeatTime:  now,
+		}
+		e.managedConditionsDirty = true
 	}
 }
 
