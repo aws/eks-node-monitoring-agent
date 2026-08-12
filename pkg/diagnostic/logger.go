@@ -224,22 +224,33 @@ func readFileTail(path string, n int64) []byte {
 	return buf
 }
 
-func testAPIServerEndpoint(host string) []byte {
-	client := &http.Client{
-		Timeout: 5 * time.Second,
-		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				// Skipping TLS verification is ok as we are just validating the
-				// connectivity to the API server
-				InsecureSkipVerify: true,
-			},
+// apiServerClient is built once and reused for every check. A client and
+// transport per call would give each check its own connection pool, so every
+// cycle would pay a fresh TCP connect and TLS handshake for the life of the node.
+var apiServerClient = &http.Client{
+	Timeout: 5 * time.Second,
+	Transport: &http.Transport{
+		TLSClientConfig: &tls.Config{
+			// Skipping TLS verification is ok as we are just validating the
+			// connectivity to the API server
+			InsecureSkipVerify: true,
 		},
-	}
+		// A hand-built transport leaves this at zero, which means no limit, so
+		// idle connections would only ever be reclaimed by the peer closing them.
+		// Matches http.DefaultTransport and the API server's own idle timeout.
+		IdleConnTimeout: 90 * time.Second,
+	},
+}
+
+func testAPIServerEndpoint(host string) []byte {
 	url := fmt.Sprintf("%s/livez?verbose", host)
-	r, err := client.Get(url)
+	r, err := apiServerClient.Get(url)
 	if err != nil {
 		return []byte(fmt.Sprintf("failed to make request endpoint due to: %s\n", err))
 	}
+	// the body must be closed for the connection to be released, whether or not
+	// it is read successfully below.
+	defer r.Body.Close()
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		return []byte(fmt.Sprintf("failed to read response body due to: %s\n", err))
