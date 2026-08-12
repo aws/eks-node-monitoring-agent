@@ -5,11 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -68,6 +70,162 @@ func TestAPIServerEndpointUnreachable(t *testing.T) {
 	// response and therefore no body to close.
 	body := testAPIServerEndpoint("https://127.0.0.1:1")
 	assert.Contains(t, string(body), "failed to make request endpoint")
+}
+
+// newTestLogger builds a logger over an explicit producer set, bypassing the
+// host collectors so that blocking behaviour can be exercised directly.
+func newTestLogger(w io.Writer, timeout time.Duration, producers ...*producer) diagnosticLogger {
+	return diagnosticLogger{
+		settings:     Settings{LogInterval: time.Hour, CollectorTimeout: timeout},
+		writer:       w,
+		producers:    producers,
+		sectionBytes: 4096,
+	}
+}
+
+// blockingProducer never returns, standing in for a collector stuck on
+// unresponsive host I/O (a 'df' against a wedged NFS mount, for example).
+func blockingProducer(name string, entered chan<- struct{}) *producer {
+	return &producer{name: name, fn: func(context.Context) []byte {
+		if entered != nil {
+			entered <- struct{}{}
+		}
+		<-make(chan struct{})
+		return nil
+	}}
+}
+
+// Regression test for issue #219: a collector that never returns must cost its
+// own section only. Before the fix it stopped the cycle, so every later section
+// went missing for the remaining life of the node.
+func TestBlockedCollectorDoesNotStopCycle(t *testing.T) {
+	var buffer bytes.Buffer
+	logger := newTestLogger(&buffer, 50*time.Millisecond,
+		blockingProducer("blocked", nil),
+		&producer{name: "after", fn: func(context.Context) []byte { return []byte("after-ran") }},
+	)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		logger.RunOnce(context.Background())
+	}()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("RunOnce did not return, the blocked collector stopped the cycle")
+	}
+
+	out := buffer.String()
+	assert.Contains(t, out, "|blocked\ncollector \"blocked\" timed out after 50ms",
+		"the blocked section must report the timeout as its body")
+	assert.Contains(t, out, "|after\nafter-ran", "sections after a blocked collector must still be emitted")
+}
+
+// A collector still stuck from a previous cycle must not be started again: the
+// wedged process cannot be killed, so respawning it accumulates one stuck
+// process and goroutine per cycle for the life of the node.
+func TestBlockedCollectorIsNotRestarted(t *testing.T) {
+	var buffer bytes.Buffer
+	entered := make(chan struct{}, 10)
+	logger := newTestLogger(&buffer, 50*time.Millisecond, blockingProducer("blocked", entered))
+
+	logger.RunOnce(context.Background())
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("collector was never started")
+	}
+
+	// the second cycle must skip the outstanding collector rather than wait for
+	// the timeout again.
+	buffer.Reset()
+	start := time.Now()
+	logger.RunOnce(context.Background())
+
+	assert.Empty(t, entered, "outstanding collector must not be started again")
+	assert.Less(t, time.Since(start), 50*time.Millisecond, "skipping must not wait for the timeout")
+	assert.Contains(t, buffer.String(), "has not returned after", "the section must report the collector as outstanding")
+}
+
+// A collector that returns normally is re-run every cycle, i.e. the single
+// flight guard releases on completion.
+func TestHealthyCollectorRunsEveryCycle(t *testing.T) {
+	var buffer bytes.Buffer
+	var runs atomic.Int32
+	logger := newTestLogger(&buffer, time.Minute,
+		&producer{name: "healthy", fn: func(context.Context) []byte {
+			runs.Add(1)
+			return []byte("ok")
+		}},
+	)
+
+	logger.RunOnce(context.Background())
+	logger.RunOnce(context.Background())
+
+	assert.Equal(t, int32(2), runs.Load())
+	assert.Equal(t, 2, strings.Count(buffer.String(), "|healthy\nok"))
+}
+
+// The collector context is cancelled at the deadline so that a killable child
+// process is terminated rather than left running.
+func TestCollectorContextIsCancelledAtDeadline(t *testing.T) {
+	var buffer bytes.Buffer
+	cancelled := make(chan error, 1)
+	logger := newTestLogger(&buffer, 50*time.Millisecond,
+		&producer{name: "watcher", fn: func(ctx context.Context) []byte {
+			<-ctx.Done()
+			cancelled <- ctx.Err()
+			return nil
+		}},
+	)
+
+	logger.RunOnce(context.Background())
+
+	select {
+	case err := <-cancelled:
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+	case <-time.After(10 * time.Second):
+		t.Fatal("collector context was never cancelled")
+	}
+}
+
+// Shutdown is reported as shutdown rather than as a collector timeout.
+func TestShutdownDuringCollection(t *testing.T) {
+	var buffer bytes.Buffer
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	logger := newTestLogger(&buffer, time.Minute, blockingProducer("blocked", nil))
+	logger.RunOnce(ctx)
+
+	assert.Contains(t, buffer.String(), "did not finish before shutdown")
+}
+
+// RunOnce emits one cycle and returns, which is what makes it usable for the
+// final flush on exit; Start would block on its ticker forever.
+func TestRunOnceEmitsSingleCycle(t *testing.T) {
+	var buffer bytes.Buffer
+	logger := newTestLogger(&buffer, time.Minute,
+		&producer{name: "one", fn: func(context.Context) []byte { return []byte("body") }},
+	)
+
+	logger.RunOnce(context.Background())
+
+	assert.Equal(t, 1, strings.Count(buffer.String(), sectionMarker))
+}
+
+func TestNewDiagnosticLoggerDefaults(t *testing.T) {
+	logger := NewDiagnosticLogger(io.Discard, Settings{})
+	assert.Equal(t, defaultCollectorTimeout, logger.settings.CollectorTimeout)
+	assert.Equal(t, 5*time.Minute, logger.settings.LogInterval)
+	assert.NotEmpty(t, logger.producers, "producers must be built up front so they can track outstanding runs")
+	assert.Positive(t, logger.sectionBytes)
+
+	t.Run("RespectsExplicitTimeout", func(t *testing.T) {
+		logger := NewDiagnosticLogger(io.Discard, Settings{CollectorTimeout: time.Second})
+		assert.Equal(t, time.Second, logger.settings.CollectorTimeout)
+	})
 }
 
 func TestUtils(t *testing.T) {

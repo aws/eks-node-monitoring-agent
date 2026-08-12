@@ -81,7 +81,7 @@ func cpuThrottles(acc *Accessor) error {
 		return errors.Join(merr, err)
 	}
 
-	psOut, err := acc.Command("ps", "ax").CombinedOutput()
+	psOut, err := acc.CombinedOutput("ps", "ax")
 	if err != nil {
 		return errors.Join(merr, err)
 	}
