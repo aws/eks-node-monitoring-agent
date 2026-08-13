@@ -4,8 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,6 +33,41 @@ func Test_ContextStopsLogger(t *testing.T) {
 	if buffer.Len() == 0 {
 		t.Errorf("should have written diagnostic to logger")
 	}
+}
+
+// Regression test for issue #221: the client is reused across checks, so the
+// agent does not open a new connection and repeat the TLS handshake every cycle.
+// Reuse is only possible if the response body is released, so this covers the
+// missing Close as well.
+func TestAPIServerEndpointReusesConnection(t *testing.T) {
+	var newConnections atomic.Int32
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/livez", r.URL.Path)
+		assert.Equal(t, "verbose", r.URL.RawQuery)
+		fmt.Fprint(w, "livez check passed")
+	}))
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			newConnections.Add(1)
+		}
+	}
+	server.StartTLS()
+	defer server.Close()
+
+	for i := 0; i < 3; i++ {
+		body := testAPIServerEndpoint(server.URL)
+		require.Equal(t, "livez check passed", string(body), "call %d", i+1)
+	}
+
+	assert.Equal(t, int32(1), newConnections.Load(),
+		"the checks should share one connection; a client per call opens one each")
+}
+
+func TestAPIServerEndpointUnreachable(t *testing.T) {
+	// port 1 is not listening, so this exercises the path where there is no
+	// response and therefore no body to close.
+	body := testAPIServerEndpoint("https://127.0.0.1:1")
+	assert.Contains(t, string(body), "failed to make request endpoint")
 }
 
 func TestUtils(t *testing.T) {
