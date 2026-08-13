@@ -17,9 +17,11 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/eks-node-monitoring-agent/api/v1alpha1"
+	"github.com/aws/eks-node-monitoring-agent/pkg/log_collector/collect"
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/e2e-framework/klient"
 	"sigs.k8s.io/e2e-framework/klient/k8s"
 	"sigs.k8s.io/e2e-framework/klient/wait"
 	"sigs.k8s.io/e2e-framework/klient/wait/conditions"
@@ -36,6 +38,37 @@ var (
 func init() {
 	flag.StringVar(&nodeDiagnosticLogBucket, "nodediagnostic-bucket-name", "", "S3 bucket for NodeDiagnostic log collection testing")
 	flag.StringVar(&nodeDiagnosticLogKeyPrefix, "nodediagnostic-bucket-key-prefix", "nodediagnostic/logs/", "S3 bucket key prefix for NodeDiagnostic log collection testing")
+}
+
+// captureToS3 presigns an S3 PUT at key and creates a NodeDiagnostic on nodeName
+// that uploads its bundle there. Shared by the log-collection features.
+func captureToS3(ctx context.Context, client klient.Client, presign *s3.PresignClient, bucket, key, nodeName string) (v1alpha1.NodeDiagnostic, error) {
+	req, err := presign.PresignPutObject(ctx, &s3.PutObjectInput{Bucket: &bucket, Key: &key})
+	if err != nil {
+		return v1alpha1.NodeDiagnostic{}, fmt.Errorf("presign s3 PUT: %w", err)
+	}
+	nd := v1alpha1.NodeDiagnostic{
+		ObjectMeta: metav1.ObjectMeta{Name: nodeName},
+		Spec: v1alpha1.NodeDiagnosticSpec{
+			LogCapture: &v1alpha1.LogCapture{UploadDestination: v1alpha1.UploadDestination(req.URL)},
+		},
+	}
+	if err := client.Resources().Create(ctx, &nd); err != nil {
+		return v1alpha1.NodeDiagnostic{}, err
+	}
+	return nd, nil
+}
+
+// waitCaptureComplete blocks until nd's first capture reports Completed.
+func waitCaptureComplete(ctx context.Context, client klient.Client, nd *v1alpha1.NodeDiagnostic, timeout time.Duration) error {
+	return wait.For(
+		conditions.New(client.Resources()).ResourceMatch(nd, func(object k8s.Object) bool {
+			n := object.(*v1alpha1.NodeDiagnostic)
+			return len(n.Status.CaptureStatuses) > 0 && n.Status.CaptureStatuses[0].State.Completed != nil
+		}),
+		wait.WithTimeout(timeout),
+		wait.WithContext(ctx),
+	)
 }
 
 func LogCollection(awsConfig aws.Config) types.Feature {
@@ -81,25 +114,9 @@ func LogCollection(awsConfig aws.Config) types.Feature {
 				}
 
 				nodeDiagnosticLogKey := path.Join(nodeDiagnosticLogKeyPrefix, fmt.Sprintf("%s-%s.tgz", testTimestamp, node.Name))
-				presignedRequest, err := presignClient.PresignPutObject(ctx, &s3.PutObjectInput{
-					Bucket: &nodeDiagnosticLogBucket,
-					Key:    &nodeDiagnosticLogKey,
-				})
-				if err != nil {
-					t.Fatalf("failed to create presigned s3 PUT: %s", err)
-				}
-				nodeDiagnostic := v1alpha1.NodeDiagnostic{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: node.Name,
-					},
-					Spec: v1alpha1.NodeDiagnosticSpec{
-						LogCapture: &v1alpha1.LogCapture{
-							UploadDestination: v1alpha1.UploadDestination(presignedRequest.URL),
-						},
-					},
-				}
 				t.Logf("creating NodeDiagnostic for node %q", node.Name)
-				if err := client.Resources().Create(ctx, &nodeDiagnostic); err != nil {
+				nodeDiagnostic, err := captureToS3(ctx, client, presignClient, nodeDiagnosticLogBucket, nodeDiagnosticLogKey, node.Name)
+				if err != nil {
 					t.Fatal(err)
 				}
 				nodeDiagnostics = append(nodeDiagnostics, nodeDiagnostic)
@@ -116,14 +133,7 @@ func LogCollection(awsConfig aws.Config) types.Feature {
 						t.Fatal(err)
 					}
 
-					if err := wait.For(
-						conditions.New(cfg.Client().Resources()).ResourceMatch(&nodeDiagnostic, func(object k8s.Object) bool {
-							nd := object.(*v1alpha1.NodeDiagnostic)
-							return len(nd.Status.CaptureStatuses) > 0 && nd.Status.CaptureStatuses[0].State.Completed != nil
-						}),
-						wait.WithTimeout(time.Minute),
-						wait.WithContext(ctx),
-					); err != nil {
+					if err := waitCaptureComplete(ctx, cfg.Client(), &nodeDiagnostic, time.Minute); err != nil {
 						t.Error(err)
 					}
 					for _, status := range nodeDiagnostic.Status.CaptureStatuses {
@@ -173,31 +183,126 @@ func LogCollection(awsConfig aws.Config) types.Feature {
 
 const captureErrorLogFile = "log-capture-errors.log"
 
-func assertLogsValid(t *testing.T, reader io.Reader) {
+// eBPF collector bundle contract, imported from the collector package so the
+// paths and marker strings have one definition across producer and test.
+const (
+	ebpfDataPath           = collect.EBPFDataFile
+	ebpfMapsDataPath       = collect.EBPFMapsDataFile
+	cliSelectionLinePrefix = collect.CLISelectionLinePrefix
+	cliNotInstalledPrefix  = collect.CLINotInstalledLinePrefix
+	cliExecFailedPrefix    = collect.CLIExecFailedLinePrefix
+	mapIDMarker            = collect.MapIDMarker
+)
+
+// dmesg files the bundle collects; AVC denials surface here on EKS nodes.
+var dmesgPaths = []string{"kernel/dmesg.current", "kernel/dmesg.human.current", "kernel/dmesg.boot"}
+
+// readBundle reads a gzipped-tar diagnostic bundle once and returns every file
+// keyed by its archive path.
+func readBundle(reader io.Reader) (map[string][]byte, error) {
 	gz, err := gzip.NewReader(reader)
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	tr := tar.NewReader(gz)
-	var fileNames []string
+	files := map[string][]byte{}
 	for {
 		h, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			break
 		}
-		if h.Name == captureErrorLogFile {
-			errLogs, err := io.ReadAll(tr)
-			assert.NoError(t, err)
-			defer t.Fatalf("%s content:\n%s", captureErrorLogFile, string(errLogs))
-		}
 		if err != nil {
-			t.Fatalf("failed to read tar entry: %s", err)
+			return nil, fmt.Errorf("failed to read tar entry: %w", err)
 		}
-		fileNames = append(fileNames, h.Name)
+		b, err := io.ReadAll(tr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read %s: %w", h.Name, err)
+		}
+		files[h.Name] = b
+	}
+	return files, nil
+}
+
+func assertLogsValid(t *testing.T, reader io.Reader) {
+	files, err := readBundle(reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if errLogs, ok := files[captureErrorLogFile]; ok {
+		defer t.Fatalf("%s content:\n%s", captureErrorLogFile, string(errLogs))
+	}
+	fileNames := make([]string, 0, len(files))
+	for name := range files {
+		fileNames = append(fileNames, name)
 	}
 	if assert.NotEmpty(t, fileNames) {
 		t.Logf("found the following paths from the log archive: %s", strings.Join(fileNames, ","))
 	}
+	assertEbpfCollection(t, files[ebpfDataPath], files[ebpfMapsDataPath])
+	assertNoNaCLIDenials(t, concatDmesg(files))
+}
+
+func concatDmesg(files map[string][]byte) []byte {
+	var dmesg []byte
+	for _, p := range dmesgPaths {
+		dmesg = append(dmesg, files[p]...)
+	}
+	return dmesg
+}
+
+// assertNoNaCLIDenials fails on an SELinux AVC denial for na-cli in the kernel
+// log. With no dmesg it logs inconclusive rather than passing silently.
+func assertNoNaCLIDenials(t *testing.T, dmesg []byte) {
+	if len(dmesg) == 0 {
+		t.Log("no dmesg collected in bundle; na-cli AVC-denial check is inconclusive")
+		return
+	}
+	for _, line := range strings.Split(string(dmesg), "\n") {
+		if !strings.Contains(line, "avc:") || !strings.Contains(line, "denied") {
+			continue
+		}
+		if strings.Contains(line, naCLIBinaryName) || strings.Contains(line, "cni_exec_t") {
+			t.Errorf("SELinux AVC denial involving na-cli found in kernel log: %s", line)
+		}
+	}
+}
+
+const naCLIBinaryName = "aws-eks-na-cli"
+
+// assertEbpfCollection validates the collector's output on ANY cluster.
+// ebpf-data.txt is always written, so it must be present with a selection or
+// not-installed line. It deliberately does not require ebpf-maps-data.txt, which
+// exists only when maps are programmed (NP enforced, selected pod present) —
+// requiring it would false-fail on stock clusters. EbpfMapCollectionWithNetworkPolicy
+// is the feature that enables enforcement and checks map data was collected.
+func assertEbpfCollection(t *testing.T, ebpfData, ebpfMapsData []byte) {
+	if !assert.NotEmpty(t, ebpfData, "%s should always be present in the bundle", ebpfDataPath) {
+		return
+	}
+	assert.True(t, containsLinePrefix(ebpfData, cliSelectionLinePrefix) || containsLinePrefix(ebpfData, cliNotInstalledPrefix),
+		"%s should contain the CLI selection line or the not-installed line; got:\n%s", ebpfDataPath, string(ebpfData))
+
+	if len(ebpfMapsData) > 0 {
+		assert.Contains(t, string(ebpfMapsData), mapIDMarker,
+			"%s, when present, must contain per-map dump sections", ebpfMapsDataPath)
+	} else {
+		t.Logf("no eBPF map dump on this node (network policy not enforced or no selected pod); ebpf-data.txt:\n%s", string(ebpfData))
+	}
+}
+
+// findLine returns the first line of b starting with prefix, "" if there is none.
+func findLine(b []byte, prefix string) string {
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(line, prefix) {
+			return line
+		}
+	}
+	return ""
+}
+
+// containsLinePrefix reports whether any line of b starts with prefix.
+func containsLinePrefix(b []byte, prefix string) bool {
+	return findLine(b, prefix) != ""
 }
 
 func NodeDestination() types.Feature {
@@ -254,14 +359,7 @@ func NodeDestination() types.Feature {
 						t.Fatal(err)
 					}
 
-					if err := wait.For(
-						conditions.New(cfg.Client().Resources()).ResourceMatch(&nodeDiagnostic, func(object k8s.Object) bool {
-							nd := object.(*v1alpha1.NodeDiagnostic)
-							return len(nd.Status.CaptureStatuses) > 0 && nd.Status.CaptureStatuses[0].State.Completed != nil
-						}),
-						wait.WithTimeout(time.Minute),
-						wait.WithContext(ctx),
-					); err != nil {
+					if err := waitCaptureComplete(ctx, cfg.Client(), &nodeDiagnostic, time.Minute); err != nil {
 						t.Error(err)
 					}
 					for _, status := range nodeDiagnostic.Status.CaptureStatuses {
