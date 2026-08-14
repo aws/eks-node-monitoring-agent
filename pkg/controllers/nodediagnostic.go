@@ -57,6 +57,16 @@ type nodeDiagnosticController struct {
 	// logCaptureTimeout overrides LogCaptureTimeout. Zero means the default; it
 	// is only set in tests, which cannot wait out the real bound.
 	logCaptureTimeout time.Duration
+
+	// captureRunning reports whether a previous log collection has not returned
+	// yet. A collector blocked on unresponsive host I/O never returns, so
+	// without this every later NodeDiagnostic would start a fresh collection and
+	// leak both a goroutine and the temp directory that collection is writing
+	// into, for the life of the node.
+	captureRunning atomic.Bool
+	// captureStartedAt is the unix nano timestamp of the outstanding collection,
+	// and is only meaningful while captureRunning is true.
+	captureStartedAt atomic.Int64
 }
 
 func NewNodeDiagnosticController(kubeClient client.Client, nodeName string, runtimeContext *config.RuntimeContext) *nodeDiagnosticController {
@@ -579,11 +589,41 @@ const LogCaptureTimeout = 20 * time.Minute
 // collection is deliberately not archived — it writes into the temp directory
 // that collectLogs removes on return, and archiving a directory with a live
 // writer in it would race the archiver against a growing file.
+//
+// Abandoning is only safe because of captureRunning. An abandoned collection
+// still holds its goroutine and its temp directory: collectLogs removes that
+// directory with a deferred call which does not run until the blocked read
+// returns, and on a wedged mount it never does. While a collection is
+// outstanding this reports the block instead of starting another one, so a
+// permanently wedged collector costs one goroutine and one temp directory
+// rather than a fresh pair for every NodeDiagnostic.
 func (c *nodeDiagnosticController) collectLogsBounded(ctx context.Context, categories []v1alpha1.LogCategory) (io.Reader, int, error) {
 	timeout := c.logCaptureTimeout
 	if timeout <= 0 {
 		timeout = LogCaptureTimeout
 	}
+
+	if !c.captureRunning.CompareAndSwap(false, true) {
+		// zero means the winning caller has claimed the slot but has not stored its
+		// start time yet, so there is no duration to report. Reporting one anyway
+		// would measure from the epoch.
+		if startedAt := c.captureStartedAt.Load(); startedAt == 0 {
+			return nil, 0, fmt.Errorf(
+				"log collection from a previous NodeDiagnostic has not returned and is still blocked on host I/O; " +
+					"not starting another until it does")
+		} else {
+			blocked := time.Since(time.Unix(0, startedAt)).Truncate(time.Second)
+			return nil, 0, fmt.Errorf(
+				"log collection from a previous NodeDiagnostic has not returned after %s and is still blocked on host I/O; "+
+					"not starting another until it does", blocked)
+		}
+	}
+	// stored by the caller that claimed the slot, so the timestamp belongs to the
+	// outstanding collection. Storing it before the claim would let every refused
+	// caller overwrite it with the time of its own attempt, which reads back as
+	// zero elapsed; the refusal path above handles the not-yet-stored case instead.
+	c.captureStartedAt.Store(time.Now().UnixNano())
+
 	// not named "collect": that would shadow the log collector package.
 	collectFn := c.collectFunc
 	if collectFn == nil {
@@ -602,6 +642,9 @@ func (c *nodeDiagnosticController) collectLogsBounded(ctx context.Context, categ
 	done := make(chan result, 1)
 	go func() {
 		archive, issueCount, err := collectFn(collectCtx, categories)
+		// released before publishing, so that a caller which receives the result
+		// always observes the collection as free again.
+		c.captureRunning.Store(false)
 		done <- result{archive, issueCount, err}
 	}()
 

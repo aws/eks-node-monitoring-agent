@@ -148,6 +148,54 @@ func TestBlockedCollectorIsNotRestarted(t *testing.T) {
 	assert.Contains(t, buffer.String(), "has not returned after", "the section must report the collector as outstanding")
 }
 
+// The skip message reports how long the outstanding run has actually been
+// blocked. The timestamp is stored only by the caller that claimed the slot; if a
+// refused caller could overwrite it, every skip would measure the gap between its
+// own two statements and report 0s, losing the only information the message
+// carries.
+func TestSkipMessageReportsRealBlockDuration(t *testing.T) {
+	var buffer bytes.Buffer
+	entered := make(chan struct{}, 10)
+	logger := newTestLogger(&buffer, 20*time.Millisecond, blockingProducer("blocked", entered))
+
+	logger.RunOnce(context.Background())
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("collector was never started")
+	}
+
+	// long enough that a correct implementation must round to a whole second.
+	time.Sleep(1100 * time.Millisecond)
+
+	buffer.Reset()
+	logger.RunOnce(context.Background())
+
+	out := buffer.String()
+	require.Contains(t, out, "has not returned after")
+	assert.NotContains(t, out, "after 0s",
+		"the duration must be measured from the outstanding run, not from this attempt")
+	assert.Regexp(t, `has not returned after [1-9][0-9]*s`, out,
+		"a collector blocked for over a second must report at least 1s")
+}
+
+// A skip that lands before the claiming caller has stored its start time reports
+// the skip without a duration, rather than measuring from the zero value.
+func TestSkipBeforeStartedAtIsStoredOmitsDuration(t *testing.T) {
+	p := &producer{name: "blocked", fn: func(context.Context) []byte { return nil }}
+	// the state a caller sees in the window between another caller's successful
+	// claim and its store of the start time.
+	p.running.Store(true)
+
+	var buffer bytes.Buffer
+	logger := newTestLogger(&buffer, time.Second, p)
+	logger.RunOnce(context.Background())
+
+	out := buffer.String()
+	assert.Contains(t, out, "has not returned and is skipped until it does")
+	assert.NotContains(t, out, "after", "no duration can be reported before one is known")
+}
+
 // A collector that returns normally is re-run every cycle, i.e. the single
 // flight guard releases on completion.
 func TestHealthyCollectorRunsEveryCycle(t *testing.T) {

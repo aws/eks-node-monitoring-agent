@@ -2,6 +2,7 @@ package collect_test
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -110,4 +111,105 @@ func TestAccessorContextCancellation(t *testing.T) {
 
 	_, err = acc.CombinedOutput("sleep", "30")
 	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestAccessorCopyFileCancelled(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "source.log")
+	require.NoError(t, os.WriteFile(src, []byte("contents"), 0o644))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	dest := t.TempDir()
+	acc, err := collect.NewAccessor(ctx, collect.Config{Root: "/", Destination: dest})
+	require.NoError(t, err)
+	cancel()
+
+	err = acc.CopyFile(src, "copied.log")
+	require.ErrorIs(t, err, context.Canceled)
+	assert.NoFileExists(t, filepath.Join(dest, "copied.log"),
+		"a cancelled copy must not leave a destination file behind")
+}
+
+func TestAccessorCopyDirCancelled(t *testing.T) {
+	srcDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "a.log"), []byte("a"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "b.log"), []byte("b"), 0o644))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	acc, err := collect.NewAccessor(ctx, collect.Config{Root: "/", Destination: t.TempDir()})
+	require.NoError(t, err)
+	cancel()
+
+	err = acc.CopyDir(srcDir, "copied")
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+func TestAccessorCopyFileSucceedsWhenLive(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "source.log")
+	require.NoError(t, os.WriteFile(src, []byte("contents"), 0o644))
+
+	dest := t.TempDir()
+	acc, err := collect.NewAccessor(context.Background(), collect.Config{Root: "/", Destination: dest})
+	require.NoError(t, err)
+
+	require.NoError(t, acc.CopyFile(src, "copied.log"))
+	body, err := os.ReadFile(filepath.Join(dest, "copied.log"))
+	require.NoError(t, err)
+	assert.Equal(t, "contents", string(body), "bounding the copy must not change what it copies")
+}
+
+func TestAccessorCopyDirSucceedsWhenLive(t *testing.T) {
+	srcDir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(srcDir, "nested"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "a.log"), []byte("a"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "nested", "b.log"), []byte("b"), 0o644))
+
+	dest := t.TempDir()
+	acc, err := collect.NewAccessor(context.Background(), collect.Config{Root: "/", Destination: dest})
+	require.NoError(t, err)
+
+	require.NoError(t, acc.CopyDir(srcDir, "copied"))
+	for path, want := range map[string]string{
+		filepath.Join(dest, "copied", "a.log"):           "a",
+		filepath.Join(dest, "copied", "nested", "b.log"): "b",
+	} {
+		body, err := os.ReadFile(path)
+		require.NoErrorf(t, err, "expected %s to be copied", path)
+		assert.Equal(t, want, string(body))
+	}
+}
+
+// A copy cancelled mid-stream stops at a read boundary rather than running to the
+// end of a large source. Cancellation is driven from the source itself so the
+// assertions always run: a time based cancel would let a fast machine finish the
+// copy first and pass without testing anything.
+func TestAccessorCopyFileCancelledMidStream(t *testing.T) {
+	const size = 4 << 20 // several io.Copy chunks
+	src := filepath.Join(t.TempDir(), "big.log")
+	require.NoError(t, os.WriteFile(src, make([]byte, size), 0o644))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	dest := t.TempDir()
+	acc, err := collect.NewAccessor(ctx, collect.Config{Root: "/", Destination: dest})
+	require.NoError(t, err)
+
+	// cancel once the copy is demonstrably under way, using the destination file
+	// as the signal so this cannot race the copy to completion.
+	go func() {
+		for {
+			if info, err := os.Stat(filepath.Join(dest, "big.log")); err == nil && info.Size() > 0 {
+				cancel()
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	err = acc.CopyFile(src, "big.log")
+	require.ErrorIs(t, err, context.Canceled, "a cancelled copy must report cancellation")
+
+	info, statErr := os.Stat(filepath.Join(dest, "big.log"))
+	require.NoError(t, statErr)
+	assert.Less(t, info.Size(), int64(size),
+		"a cancelled copy must stop before writing the whole source")
 }

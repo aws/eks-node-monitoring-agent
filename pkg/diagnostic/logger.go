@@ -173,10 +173,21 @@ func (l diagnosticLogger) RunOnce(ctx context.Context) {
 // costs one goroutine and one process rather than a fresh pair every cycle.
 func (l diagnosticLogger) collect(ctx context.Context, p *producer) []byte {
 	if !p.running.CompareAndSwap(false, true) {
-		blocked := time.Since(time.Unix(0, p.startedAt.Load())).Truncate(time.Second)
-		return []byte(fmt.Sprintf(
-			"collector %q has not returned after %s and is skipped until it does", p.name, blocked))
+		// zero means the winning caller has claimed the slot but has not stored its
+		// start time yet, so there is no duration to report. Reporting one anyway
+		// would measure from the epoch.
+		if startedAt := p.startedAt.Load(); startedAt == 0 {
+			return []byte(fmt.Sprintf("collector %q has not returned and is skipped until it does", p.name))
+		} else {
+			blocked := time.Since(time.Unix(0, startedAt)).Truncate(time.Second)
+			return []byte(fmt.Sprintf(
+				"collector %q has not returned after %s and is skipped until it does", p.name, blocked))
+		}
 	}
+	// stored by the caller that claimed the slot, so the timestamp belongs to the
+	// outstanding run. Storing it before the claim would let every skipped caller
+	// overwrite it with the time of its own attempt, which reads back as zero
+	// elapsed; the skip path above handles the not-yet-stored case instead.
 	p.startedAt.Store(time.Now().UnixNano())
 
 	collectCtx, cancel := context.WithTimeout(ctx, l.settings.CollectorTimeout)
@@ -191,7 +202,10 @@ func (l diagnosticLogger) collect(ctx context.Context, p *producer) []byte {
 	go func() {
 		data := p.fn(collectCtx)
 		// released before publishing, so that a caller which receives the result
-		// always observes the producer as free again.
+		// always observes the producer as free again. Only the goroutine that
+		// claimed the slot ever releases it, and only once, so an abandoned
+		// collector cannot free a later run's claim: while it is outstanding the
+		// flag stays set and every other caller is skipped without claiming.
 		p.running.Store(false)
 		done <- data
 	}()

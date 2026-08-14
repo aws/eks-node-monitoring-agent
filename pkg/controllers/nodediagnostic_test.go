@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -397,6 +398,92 @@ func TestCollectLogsBounded_ParentCancellation(t *testing.T) {
 
 // TestHandleDelete_ActiveCapture_CancelCalled verifies that when a
 // NodeDiagnostic is deleted while a capture is active, the cancel func is called.
+func TestCollectLogsBounded_OutstandingRunIsNotRestarted(t *testing.T) {
+	release := make(chan struct{})
+	var starts atomic.Int32
+
+	c := &nodeDiagnosticController{
+		logCaptureTimeout: 50 * time.Millisecond,
+		collectFunc: func(ctx context.Context, _ []v1alpha1.LogCategory) (io.Reader, int, error) {
+			starts.Add(1)
+			// blocks past the bound and ignores cancellation, standing in for a
+			// collector stuck on an unresponsive mount.
+			<-release
+			return strings.NewReader("archive"), 0, nil
+		},
+	}
+
+	// first attempt gives up on the bound and abandons the collection.
+	_, _, err := c.collectLogsBounded(context.Background(), nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timed out")
+
+	// second attempt must report the outstanding run rather than start another.
+	_, _, err = c.collectLogsBounded(context.Background(), nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "has not returned")
+	assert.Contains(t, err.Error(), "not starting another")
+	assert.NotContains(t, err.Error(), "timed out",
+		"the skip must be reported as a skip, not as a fresh timeout")
+	assert.Equal(t, int32(1), starts.Load(),
+		"a second collection must not be started while the first is outstanding")
+
+	// once the abandoned collection returns, the next attempt runs normally.
+	close(release)
+	require.Eventually(t, func() bool { return !c.captureRunning.Load() },
+		time.Second, 10*time.Millisecond, "the slot must be released when the collection returns")
+
+	archive, _, err := c.collectLogsBounded(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), starts.Load())
+	body, err := io.ReadAll(archive)
+	require.NoError(t, err)
+	assert.Equal(t, "archive", string(body))
+}
+
+func TestCollectLogsBounded_SkipReportsRealBlockDuration(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+
+	c := &nodeDiagnosticController{
+		logCaptureTimeout: 20 * time.Millisecond,
+		collectFunc: func(ctx context.Context, _ []v1alpha1.LogCategory) (io.Reader, int, error) {
+			<-release
+			return nil, 0, nil
+		},
+	}
+
+	_, _, err := c.collectLogsBounded(context.Background(), nil)
+	require.Error(t, err)
+
+	// long enough that a correct implementation must round to a whole second.
+	time.Sleep(1100 * time.Millisecond)
+
+	_, _, err = c.collectLogsBounded(context.Background(), nil)
+	require.Error(t, err)
+	// the timestamp belongs to the outstanding collection. If a refused caller
+	// could overwrite it, this would measure the gap between two adjacent
+	// statements and report 0s.
+	assert.NotContains(t, err.Error(), "after 0s",
+		"the duration must be measured from the outstanding collection, not from this attempt")
+	assert.Regexp(t, `has not returned after [1-9][0-9]*s`, err.Error(),
+		"a collection blocked for over a second must report at least 1s")
+}
+
+func TestCollectLogsBounded_SlotReleasedOnSuccess(t *testing.T) {
+	c := &nodeDiagnosticController{
+		logCaptureTimeout: time.Second,
+		collectFunc: func(ctx context.Context, _ []v1alpha1.LogCategory) (io.Reader, int, error) {
+			return strings.NewReader("archive"), 0, nil
+		},
+	}
+
+	for i := range 3 {
+		_, _, err := c.collectLogsBounded(context.Background(), nil)
+		require.NoErrorf(t, err, "attempt %d must not be skipped: a completed collection frees the slot", i+1)
+	}
+}
+
 func TestHandleDelete_ActiveCapture_CancelCalled(t *testing.T) {
 	c := &nodeDiagnosticController{nodeName: "test-node"}
 
