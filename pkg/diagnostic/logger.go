@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"k8s.io/client-go/tools/clientcmd"
@@ -20,6 +21,11 @@ import (
 type Settings struct {
 	LogInterval       time.Duration
 	ApiServerEndpoint string
+	// CollectorTimeout bounds how long a single collector may take before its
+	// section is emitted as a timeout notice and the cycle moves on. It should
+	// stay comfortably below LogInterval so that a slow collector does not
+	// consume the whole cycle. Defaults to defaultCollectorTimeout.
+	CollectorTimeout time.Duration
 }
 
 // NOTE: the functions in this logger don't check the host root path, which is
@@ -30,10 +36,35 @@ type Settings struct {
 type diagnosticLogger struct {
 	settings Settings
 	writer   io.Writer
+	// producers are built once and reused for every cycle so that they can
+	// track whether a previous run of themselves is still outstanding.
+	producers []*producer
+	// sectionBytes is the per section budget for the console buffer.
+	sectionBytes int
+}
+
+// producer emits the body of one console section.
+type producer struct {
+	name string
+	fn   func(context.Context) []byte
+
+	// running reports whether a previous cycle's run of this producer has not
+	// returned yet. A collector blocked in uninterruptible sleep never returns,
+	// so without this the loop would start a fresh copy every cycle and
+	// accumulate stuck processes and goroutines for the life of the node.
+	running atomic.Bool
+	// startedAt is the unix nano timestamp of the outstanding run, and is only
+	// meaningful while running is true.
+	startedAt atomic.Int64
 }
 
 const (
 	sectionMarker = "NMA::LOG"
+	// defaultCollectorTimeout bounds a single collector. Collectors read host
+	// state that can block indefinitely (a 'df' on an unresponsive NFS or EFS
+	// mount is enough), and the cycle is sequential, so an unbounded collector
+	// silently stops every later section as well.
+	defaultCollectorTimeout = 30 * time.Second
 	// maxTailReadBytes bounds how much of a large file is read into memory.
 	// It is generously larger than any per-section console budget, so the
 	// tail-trimmed output is unchanged while memory stays bounded.
@@ -51,6 +82,9 @@ func NewDiagnosticLogger(writer io.Writer, settings Settings) diagnosticLogger {
 	if settings.LogInterval <= 0 {
 		settings.LogInterval = 5 * time.Minute
 	}
+	if settings.CollectorTimeout <= 0 {
+		settings.CollectorTimeout = defaultCollectorTimeout
+	}
 	if settings.ApiServerEndpoint == "" {
 		config, err := clientcmd.BuildConfigFromFlags("", clientcmd.RecommendedHomeFile)
 		if err == nil {
@@ -58,27 +92,17 @@ func NewDiagnosticLogger(writer io.Writer, settings Settings) diagnosticLogger {
 		}
 	}
 
-	return diagnosticLogger{
-		settings: settings,
-		writer:   writer,
-	}
-}
-
-func (l diagnosticLogger) Start(ctx context.Context) error {
-	var producers = []struct {
-		name string
-		fn   func() []byte
-	}{
+	producers := []*producer{
 		{name: "cpu", fn: cpuUsage},
 		{name: "memory", fn: memoryUsage},
 		{name: "disk", fn: diskUsage},
 		{name: "interfaces", fn: listNetworkInterfaces},
-		{name: "ipamd", fn: func() []byte { return tailx(ipamd(), 5000) }},
-		{name: "apiserver", fn: func() []byte { return testAPIServerEndpoint(l.settings.ApiServerEndpoint) }},
-		{name: "dmesg", fn: func() []byte { return dmesg() }},
-		{name: "systemd", fn: func() []byte { return systemdStatus("containerd", "kubelet") }},
-		{name: "kubelet", fn: func() []byte { return journalctl("kubelet") }},
-		{name: "containerd", fn: func() []byte { return journalctl("containerd") }},
+		{name: "ipamd", fn: func(context.Context) []byte { return tailx(ipamd(), 5000) }},
+		{name: "apiserver", fn: func(context.Context) []byte { return testAPIServerEndpoint(settings.ApiServerEndpoint) }},
+		{name: "dmesg", fn: dmesg},
+		{name: "systemd", fn: func(ctx context.Context) []byte { return systemdStatus(ctx, "containerd", "kubelet") }},
+		{name: "kubelet", fn: func(ctx context.Context) []byte { return journalctl(ctx, "kubelet") }},
+		{name: "containerd", fn: func(ctx context.Context) []byte { return journalctl(ctx, "containerd") }},
 	}
 
 	// to calculate the sections size that would best fit in the 68K buffer, we
@@ -97,20 +121,21 @@ func (l diagnosticLogger) Start(ctx context.Context) error {
 		constSectionBytes += length
 	}
 	freeBytes := bufferLength - (constSectionBytes + (len(producers) * headerBytes))
-	sectionBytes := freeBytes / (len(producers) - len(constLengthSections))
 
+	return diagnosticLogger{
+		settings:     settings,
+		writer:       writer,
+		producers:    producers,
+		sectionBytes: freeBytes / (len(producers) - len(constLengthSections)),
+	}
+}
+
+func (l diagnosticLogger) Start(ctx context.Context) error {
 	ticker := time.NewTicker(l.settings.LogInterval)
 	defer ticker.Stop()
 
 	for {
-		for _, producer := range producers {
-			timestamp := time.Now().UTC().Format(time.RFC3339)
-			header := strings.Join([]string{sectionMarker, timestamp, producer.name}, "|")
-			data := tailx(producer.fn(), sectionBytes)
-			if _, err := fmt.Fprintf(l.writer, "%s\n%s\n", header, data); err != nil {
-				log.FromContext(ctx).Error(err, "error logging to writer")
-			}
-		}
+		l.RunOnce(ctx)
 		select {
 		case <-ticker.C:
 		case <-ctx.Done():
@@ -120,43 +145,124 @@ func (l diagnosticLogger) Start(ctx context.Context) error {
 	}
 }
 
-func systemdStatus(services ...string) []byte {
-	args := []string{"status", "--all", "-n", "0"}
-	if out, err := exec.Command("systemctl", append(args, services...)...).Output(); err != nil {
-		return []byte(fmt.Sprintf("failed to call systemctl due to: %s", err))
+// RunOnce writes exactly one cycle of diagnostic sections and returns. Every
+// section is emitted, whether or not its collector produced anything, and the
+// cycle is bounded by CollectorTimeout per collector.
+func (l diagnosticLogger) RunOnce(ctx context.Context) {
+	for _, producer := range l.producers {
+		timestamp := time.Now().UTC().Format(time.RFC3339)
+		header := strings.Join([]string{sectionMarker, timestamp, producer.name}, "|")
+		data := tailx(l.collect(ctx, producer), l.sectionBytes)
+		if _, err := fmt.Fprintf(l.writer, "%s\n%s\n", header, data); err != nil {
+			log.FromContext(ctx).Error(err, "error logging to writer")
+		}
+	}
+}
+
+// collect returns the producer's output, or a notice to emit in its place when
+// the producer does not finish in time. It never blocks for longer than
+// CollectorTimeout, which is what keeps the cycle — and therefore every later
+// section — making progress when a collector wedges.
+//
+// The collector runs on its own goroutine, which is abandoned rather than waited
+// on once the bound is hit. The context handed to the collector is cancelled at
+// the same deadline, so a killable child is terminated; a child in
+// uninterruptible sleep is not, and its goroutine stays outstanding. That is
+// what the running flag is for: while a run is outstanding the producer is
+// skipped instead of started again, so a single permanently wedged collector
+// costs one goroutine and one process rather than a fresh pair every cycle.
+func (l diagnosticLogger) collect(ctx context.Context, p *producer) []byte {
+	if !p.running.CompareAndSwap(false, true) {
+		// zero means the winning caller has claimed the slot but has not stored its
+		// start time yet, so there is no duration to report. Reporting one anyway
+		// would measure from the epoch.
+		if startedAt := p.startedAt.Load(); startedAt == 0 {
+			return []byte(fmt.Sprintf("collector %q has not returned and is skipped until it does", p.name))
+		} else {
+			blocked := time.Since(time.Unix(0, startedAt)).Truncate(time.Second)
+			return []byte(fmt.Sprintf(
+				"collector %q has not returned after %s and is skipped until it does", p.name, blocked))
+		}
+	}
+	// stored by the caller that claimed the slot, so the timestamp belongs to the
+	// outstanding run. Storing it before the claim would let every skipped caller
+	// overwrite it with the time of its own attempt, which reads back as zero
+	// elapsed; the skip path above handles the not-yet-stored case instead.
+	p.startedAt.Store(time.Now().UnixNano())
+
+	collectCtx, cancel := context.WithTimeout(ctx, l.settings.CollectorTimeout)
+	// cancelled here rather than by the collector goroutine. Cancelling from the
+	// goroutine would make collectCtx.Done ready as soon as the collector
+	// finished, so the select below would pick between a real result and a
+	// spurious timeout at random.
+	defer cancel()
+
+	// buffered so that an abandoned collector can still publish and exit.
+	done := make(chan []byte, 1)
+	go func() {
+		data := p.fn(collectCtx)
+		// released before publishing, so that a caller which receives the result
+		// always observes the producer as free again. Only the goroutine that
+		// claimed the slot ever releases it, and only once, so an abandoned
+		// collector cannot free a later run's claim: while it is outstanding the
+		// flag stays set and every other caller is skipped without claiming.
+		p.running.Store(false)
+		done <- data
+	}()
+
+	select {
+	case data := <-done:
+		return data
+	case <-collectCtx.Done():
+		if err := ctx.Err(); err != nil {
+			return []byte(fmt.Sprintf("collector %q did not finish before shutdown", p.name))
+		}
+		return []byte(fmt.Sprintf("collector %q timed out after %s", p.name, l.settings.CollectorTimeout))
+	}
+}
+
+// commandOutput runs a command bound to ctx and returns its standard output, or
+// the failure as the section body, matching the convention of reporting a
+// collector's problem as its content rather than dropping the section.
+//
+// The command is run in the foreground and is deliberately not wrapped in
+// osext.Output: the caller (diagnosticLogger.collect) already bounds this
+// collector, and it needs the collector to stay outstanding for as long as its
+// child does. Returning early here instead would let the next cycle start
+// another copy of a command that can never be killed.
+func commandOutput(ctx context.Context, name string, arg ...string) []byte {
+	cmd := exec.CommandContext(ctx, name, arg...)
+	// bound the wait for the child's pipes to close after it is killed, so that
+	// a grandchild holding stdout open cannot keep this collector outstanding.
+	cmd.WaitDelay = 5 * time.Second
+	if out, err := cmd.Output(); err != nil {
+		return []byte(fmt.Sprintf("failed to call %s due to: %s", name, err))
 	} else {
 		return out
 	}
 }
 
-func journalctl(unit string) []byte {
+func systemdStatus(ctx context.Context, services ...string) []byte {
+	args := []string{"status", "--all", "-n", "0"}
+	return commandOutput(ctx, "systemctl", append(args, services...)...)
+}
+
+func journalctl(ctx context.Context, unit string) []byte {
 	// Bound the journal read with --lines: without it the entire unit journal
 	// is buffered into memory each cycle and grows unbounded over the node's
 	// lifetime. The output is tail-trimmed to the section budget anyway.
-	if out, err := exec.Command("journalctl", "-o", "short-iso-precise", "--unit", unit, "--lines", journalMaxLines).Output(); err != nil {
-		return []byte(fmt.Sprintf("failed to call journalctl due to: %s", err))
-	} else {
-		return out
-	}
+	return commandOutput(ctx, "journalctl", "-o", "short-iso-precise", "--unit", unit, "--lines", journalMaxLines)
 }
 
-func cpuUsage() []byte {
-	if out, err := exec.Command("ps", "aux").Output(); err != nil {
-		return []byte(fmt.Sprintf("failed to call ps due to: %s", err))
-	} else {
-		return out
-	}
+func cpuUsage(ctx context.Context) []byte {
+	return commandOutput(ctx, "ps", "aux")
 }
 
-func diskUsage() []byte {
-	if out, err := exec.Command("df", "-T").Output(); err != nil {
-		return []byte(fmt.Sprintf("failed to call df due to: %s", err))
-	} else {
-		return out
-	}
+func diskUsage(ctx context.Context) []byte {
+	return commandOutput(ctx, "df", "-T")
 }
 
-func memoryUsage() []byte {
+func memoryUsage(context.Context) []byte {
 	if out, err := os.ReadFile("/proc/meminfo"); err != nil {
 		return []byte(fmt.Sprintf("failed to read /pro/meminfo due to: %s", err))
 	} else {
@@ -164,7 +270,7 @@ func memoryUsage() []byte {
 	}
 }
 
-func listNetworkInterfaces() []byte {
+func listNetworkInterfaces(context.Context) []byte {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return []byte(fmt.Sprintf("failed to get network interfaces due to: %s", err))
@@ -185,12 +291,8 @@ func listNetworkInterfaces() []byte {
 	return out.Bytes()
 }
 
-func dmesg() []byte {
-	if out, err := exec.Command("dmesg").Output(); err != nil {
-		return []byte(fmt.Sprintf("failed to call dmesg due to: %s", err))
-	} else {
-		return out
-	}
+func dmesg(ctx context.Context) []byte {
+	return commandOutput(ctx, "dmesg")
 }
 
 func ipamd() []byte {
