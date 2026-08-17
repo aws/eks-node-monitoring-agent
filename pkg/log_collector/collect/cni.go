@@ -22,7 +22,7 @@ func cniConfig(acc *Accessor) error {
 }
 
 func cniVariables(acc *Accessor) error {
-	listOutput, err := acc.Command("ctr", "--namespace", "k8s.io", "container", "list").CombinedOutput()
+	listOutput, err := acc.CombinedOutput("ctr", "--namespace", "k8s.io", "container", "list")
 	if err != nil {
 		return nil
 	}

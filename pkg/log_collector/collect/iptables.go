@@ -30,7 +30,7 @@ func (i IPTables) Collect(acc *Accessor) error {
 }
 
 func (i IPTables) collectRules(acc *Accessor, cmd []string, filename string) error {
-	output, err := acc.Command(cmd[0], cmd[1:]...).CombinedOutput()
+	output, err := acc.CombinedOutput(cmd...)
 	if err != nil {
 		return fmt.Errorf("error running %q, %w", cmd, err)
 	}

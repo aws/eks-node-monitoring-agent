@@ -65,6 +65,10 @@ var (
 
 const (
 	envNodeName = "MY_NODE_NAME"
+
+	// consoleFlushTimeout bounds the final diagnostic cycle written on exit, so
+	// that a collector blocked on host I/O cannot hold up the process teardown.
+	consoleFlushTimeout = 30 * time.Second
 )
 
 func init() {
@@ -84,8 +88,13 @@ func main() {
 			f, _ := openDevConsole()
 			defer f.Close()
 			// ensures that at least one run of the diagnostic is always
-			// completed and written to console before exiting.
-			diagnostic.NewDiagnosticLogger(f, diagnostic.Settings{}).Start(context.Background())
+			// completed and written to console before exiting. RunOnce emits a
+			// single cycle and returns; Start would block on its ticker and keep
+			// a crashing agent from ever exiting. The bound keeps a collector
+			// that is wedged on host I/O from delaying the exit indefinitely.
+			flushCtx, cancelFlush := context.WithTimeout(context.Background(), consoleFlushTimeout)
+			defer cancelFlush()
+			diagnostic.NewDiagnosticLogger(f, diagnostic.Settings{}).RunOnce(flushCtx)
 
 			// increase visibility on errors/panics propagated from main.
 			if r := recover(); r != nil {

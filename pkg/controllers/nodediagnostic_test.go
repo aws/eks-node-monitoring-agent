@@ -3,6 +3,9 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"io"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -303,8 +306,184 @@ func TestHandlePacketCapture_CancelledDuringCapture(t *testing.T) {
 	}
 }
 
+// Regression test for issue #219: a blocked collector must not leave the capture
+// in Running forever. handleLogCapture has to complete the status with a failure
+// naming the timeout, so that a hung capture is distinguishable from a slow one.
+func TestHandleLogCapture_BlockedCollectorCompletesWithTimeout(t *testing.T) {
+	scheme := runtime.NewScheme()
+	require.NoError(t, v1alpha1.SchemeBuilder.AddToScheme(scheme))
+
+	nd := &v1alpha1.NodeDiagnostic{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-node", Generation: 1},
+		Spec: v1alpha1.NodeDiagnosticSpec{
+			LogCapture: &v1alpha1.LogCapture{
+				UploadDestination: "node",
+				Categories:        []v1alpha1.LogCategory{v1alpha1.LogCategoryAll},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(nd).
+		WithStatusSubresource(&v1alpha1.NodeDiagnostic{}).
+		Build()
+
+	collectorEntered := make(chan struct{})
+	c := &nodeDiagnosticController{
+		kubeClient:        fakeClient,
+		nodeName:          "test-node",
+		logCaptureTimeout: 100 * time.Millisecond,
+		// stands in for a collector wedged on unresponsive host I/O: it ignores
+		// cancellation, exactly as a process in uninterruptible sleep does.
+		collectFunc: func(ctx context.Context, _ []v1alpha1.LogCategory) (io.Reader, int, error) {
+			close(collectorEntered)
+			<-make(chan struct{})
+			return nil, 0, nil
+		},
+	}
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- c.handleLogCapture(context.Background(), nd) }()
+
+	select {
+	case err := <-errCh:
+		require.NoError(t, err, "the status patch itself should succeed")
+	case <-time.After(30 * time.Second):
+		t.Fatal("handleLogCapture did not return, a blocked collector still hangs the capture")
+	}
+
+	<-collectorEntered
+	status := nd.Status.GetCaptureStatus(v1alpha1.CaptureTypeLog)
+	require.NotNil(t, status)
+	require.NotNil(t, status.State.Completed, "capture must not be left in Running")
+	assert.Nil(t, status.State.Running)
+	assert.Equal(t, v1alpha1.CaptureStateFailure, status.State.Completed.Reason)
+	assert.Contains(t, status.State.Completed.Message, "timed out after 100ms")
+}
+
+// A collection that finishes inside the bound is unaffected.
+func TestCollectLogsBounded_CompletesWithinTimeout(t *testing.T) {
+	c := &nodeDiagnosticController{
+		logCaptureTimeout: 30 * time.Second,
+		collectFunc: func(ctx context.Context, _ []v1alpha1.LogCategory) (io.Reader, int, error) {
+			return strings.NewReader("archive"), 2, nil
+		},
+	}
+
+	archive, issueCount, err := c.collectLogsBounded(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, 2, issueCount, "the failed task count must be passed through")
+	body, err := io.ReadAll(archive)
+	require.NoError(t, err)
+	assert.Equal(t, "archive", string(body))
+}
+
+// Shutdown is reported as cancellation rather than as a capture timeout.
+func TestCollectLogsBounded_ParentCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	c := &nodeDiagnosticController{
+		collectFunc: func(ctx context.Context, _ []v1alpha1.LogCategory) (io.Reader, int, error) {
+			<-ctx.Done()
+			return nil, 0, ctx.Err()
+		},
+	}
+
+	_, _, err := c.collectLogsBounded(ctx, nil)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.NotContains(t, err.Error(), "timed out")
+}
+
 // TestHandleDelete_ActiveCapture_CancelCalled verifies that when a
 // NodeDiagnostic is deleted while a capture is active, the cancel func is called.
+func TestCollectLogsBounded_OutstandingRunIsNotRestarted(t *testing.T) {
+	release := make(chan struct{})
+	var starts atomic.Int32
+
+	c := &nodeDiagnosticController{
+		logCaptureTimeout: 50 * time.Millisecond,
+		collectFunc: func(ctx context.Context, _ []v1alpha1.LogCategory) (io.Reader, int, error) {
+			starts.Add(1)
+			// blocks past the bound and ignores cancellation, standing in for a
+			// collector stuck on an unresponsive mount.
+			<-release
+			return strings.NewReader("archive"), 0, nil
+		},
+	}
+
+	// first attempt gives up on the bound and abandons the collection.
+	_, _, err := c.collectLogsBounded(context.Background(), nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timed out")
+
+	// second attempt must report the outstanding run rather than start another.
+	_, _, err = c.collectLogsBounded(context.Background(), nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "has not returned")
+	assert.Contains(t, err.Error(), "not starting another")
+	assert.NotContains(t, err.Error(), "timed out",
+		"the skip must be reported as a skip, not as a fresh timeout")
+	assert.Equal(t, int32(1), starts.Load(),
+		"a second collection must not be started while the first is outstanding")
+
+	// once the abandoned collection returns, the next attempt runs normally.
+	close(release)
+	require.Eventually(t, func() bool { return !c.captureRunning.Load() },
+		time.Second, 10*time.Millisecond, "the slot must be released when the collection returns")
+
+	archive, _, err := c.collectLogsBounded(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), starts.Load())
+	body, err := io.ReadAll(archive)
+	require.NoError(t, err)
+	assert.Equal(t, "archive", string(body))
+}
+
+func TestCollectLogsBounded_SkipReportsRealBlockDuration(t *testing.T) {
+	release := make(chan struct{})
+	defer close(release)
+
+	c := &nodeDiagnosticController{
+		logCaptureTimeout: 20 * time.Millisecond,
+		collectFunc: func(ctx context.Context, _ []v1alpha1.LogCategory) (io.Reader, int, error) {
+			<-release
+			return nil, 0, nil
+		},
+	}
+
+	_, _, err := c.collectLogsBounded(context.Background(), nil)
+	require.Error(t, err)
+
+	// long enough that a correct implementation must round to a whole second.
+	time.Sleep(1100 * time.Millisecond)
+
+	_, _, err = c.collectLogsBounded(context.Background(), nil)
+	require.Error(t, err)
+	// the timestamp belongs to the outstanding collection. If a refused caller
+	// could overwrite it, this would measure the gap between two adjacent
+	// statements and report 0s.
+	assert.NotContains(t, err.Error(), "after 0s",
+		"the duration must be measured from the outstanding collection, not from this attempt")
+	assert.Regexp(t, `has not returned after [1-9][0-9]*s`, err.Error(),
+		"a collection blocked for over a second must report at least 1s")
+}
+
+func TestCollectLogsBounded_SlotReleasedOnSuccess(t *testing.T) {
+	c := &nodeDiagnosticController{
+		logCaptureTimeout: time.Second,
+		collectFunc: func(ctx context.Context, _ []v1alpha1.LogCategory) (io.Reader, int, error) {
+			return strings.NewReader("archive"), 0, nil
+		},
+	}
+
+	for i := range 3 {
+		_, _, err := c.collectLogsBounded(context.Background(), nil)
+		require.NoErrorf(t, err, "attempt %d must not be skipped: a completed collection frees the slot", i+1)
+	}
+}
+
 func TestHandleDelete_ActiveCapture_CancelCalled(t *testing.T) {
 	c := &nodeDiagnosticController{nodeName: "test-node"}
 

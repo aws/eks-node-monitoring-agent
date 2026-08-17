@@ -1,6 +1,7 @@
 package osext
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -23,7 +24,24 @@ type execExt struct {
 }
 
 func (a *execExt) Command(name string, arg ...string) *exec.Cmd {
-	proc := exec.Command(name, arg...)
+	return a.resolve(exec.Command(name, arg...), name)
+}
+
+// CommandContext is Command with the process bound to ctx, so the child is
+// signalled when ctx is cancelled or its deadline passes.
+//
+// Binding the context is necessary but not sufficient for bounding execution: a
+// process wedged in uninterruptible sleep (state D, e.g. 'df' on an unresponsive
+// NFS/EFS mount) never receives the signal, so Wait on the returned command can
+// still block forever. Callers that must make progress regardless should use
+// Output or CombinedOutput rather than waiting on the command themselves.
+func (a *execExt) CommandContext(ctx context.Context, name string, arg ...string) *exec.Cmd {
+	return a.resolve(exec.CommandContext(ctx, name, arg...), name)
+}
+
+// resolve applies the host root to a command, so that the executable is looked
+// up on the host filesystem and the process is chrooted into it.
+func (a *execExt) resolve(proc *exec.Cmd, name string) *exec.Cmd {
 	if a.root != "/" {
 		if errors.Is(proc.Err, exec.ErrNotFound) {
 			// if the binary could not be discovered using exec.LookPath then
