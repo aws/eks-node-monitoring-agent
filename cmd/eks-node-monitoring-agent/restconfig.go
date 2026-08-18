@@ -47,32 +47,93 @@ func (rcp *podRestConfigProvider) Provide() (*rest.Config, error) {
 	if kubeconfigPath == "" {
 		return nil, fmt.Errorf("could not locate host kubeconfig in expected paths")
 	}
-	caCertPath := pathlib.ResolveCACertPath(config.HostRoot())
-	if caCertPath == "" {
-		return nil, fmt.Errorf("could not locate host CA Certificates in expected paths")
+
+	// the kubeconfig references its TLS material by path relative to the host,
+	// but the agent reads the host filesystem through a mount, so build
+	// overrides that resolve those paths against it.
+	overrides, err := rcp.hostPathOverrides(kubeconfigPath)
+	if err != nil {
+		return nil, err
 	}
 
 	// attempt to pick up kubelet's cluster config from the node.
 	restConfig, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
 		&clientcmd.ClientConfigLoadingRules{ExplicitPath: kubeconfigPath},
-		&clientcmd.ConfigOverrides{ClusterInfo: clientcmdapi.Cluster{CertificateAuthority: caCertPath}},
+		overrides,
 	).ClientConfig()
 	if err != nil {
 		return nil, err
 	}
 
-	// transform the exec provider arugments, because it needs to call host
-	// binaries in order to get a token from the iam authenticator.
-	// NOTE: reminder that these calls also utilize hostNetworking in order to
-	// reach IMDS to get host credentials.
-	if restConfig.ExecProvider.Command, restConfig.ExecProvider.Args, err = rcp.execMapper.Map(
-		restConfig.ExecProvider.Command,
-		restConfig.ExecProvider.Args...,
-	); err != nil {
+	if err := rewriteExecProvider(restConfig, rcp.execMapper); err != nil {
 		return nil, err
 	}
 
 	return restConfig, nil
+}
+
+// rewriteExecProvider transforms the exec provider arguments, because they need
+// to call host binaries in order to get a token from the iam authenticator.
+// NOTE: reminder that these calls also utilize hostNetworking in order to
+// reach IMDS to get host credentials.
+// kubeconfigs that authenticate without an exec credential plugin (e.g. a
+// client certificate) have no ExecProvider, so only rewrite it when present.
+func rewriteExecProvider(restConfig *rest.Config, m chrootMapper) error {
+	if restConfig.ExecProvider == nil {
+		return nil
+	}
+	var err error
+	restConfig.ExecProvider.Command, restConfig.ExecProvider.Args, err = m.Map(
+		restConfig.ExecProvider.Command,
+		restConfig.ExecProvider.Args...,
+	)
+	return err
+}
+
+// hostPathOverrides builds clientcmd overrides that resolve the file paths the
+// host kubeconfig references (CA certificate, client certificate, client key,
+// token file) against the host filesystem mount. Credentials embedded in the
+// kubeconfig are self-contained and left untouched.
+func (rcp *podRestConfigProvider) hostPathOverrides(kubeconfigPath string) (*clientcmd.ConfigOverrides, error) {
+	hostRoot := config.HostRoot()
+
+	kubeconfig, err := clientcmd.LoadFromFile(kubeconfigPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load kubeconfig %q: %w", kubeconfigPath, err)
+	}
+
+	overrides := &clientcmd.ConfigOverrides{}
+
+	// the CA the cluster is configured with is the source of truth. it may be
+	// embedded in the kubeconfig (certificate-authority-data) or referenced as a
+	// host file path (certificate-authority); fall back to the well-known host
+	// location only when the kubeconfig specifies neither.
+	caCertPath, err := pathlib.ResolveClusterCACert(hostRoot, pathlib.ClusterForCurrentContext(kubeconfig))
+	if err != nil {
+		return nil, err
+	}
+	if caCertPath != "" {
+		overrides.ClusterInfo = clientcmdapi.Cluster{CertificateAuthority: caCertPath}
+	}
+
+	// kubeconfigs that authenticate with a client certificate (e.g. on
+	// kops-provisioned nodes) reference the certificate and key by host path too,
+	// as does a token read from a file (tokenFile).
+	if authInfo := pathlib.AuthInfoForCurrentContext(kubeconfig); authInfo != nil {
+		if len(authInfo.ClientCertificateData) == 0 {
+			overrides.AuthInfo.ClientCertificate = pathlib.HostPath(hostRoot, authInfo.ClientCertificate)
+		}
+		if len(authInfo.ClientKeyData) == 0 {
+			overrides.AuthInfo.ClientKey = pathlib.HostPath(hostRoot, authInfo.ClientKey)
+		}
+		// an inline token takes precedence over tokenFile, so only the latter
+		// needs a path.
+		if len(authInfo.Token) == 0 {
+			overrides.AuthInfo.TokenFile = pathlib.HostPath(hostRoot, authInfo.TokenFile)
+		}
+	}
+
+	return overrides, nil
 }
 
 type chrootMapper struct{}

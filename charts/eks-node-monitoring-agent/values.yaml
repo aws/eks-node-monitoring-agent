@@ -29,7 +29,7 @@ serviceAccount:
 nodeAgent:
   image:
     # -- Image tag for the eks-node-monitoring-agent
-    tag: v1.6.6-eksbuild.1
+    tag: v1.7.0-eksbuild.1
     # -- Full container registry URL override (e.g., 602401143452.dkr.ecr.us-west-2.amazonaws.com).
     # When set, this takes precedence over account/endpoint/region/domain fields.
     containerRegistry: ""
@@ -95,6 +95,10 @@ nodeAgent:
     - operator: Exists
   # -- Pod labels applied to the eks-node-monitoring-agent
   podLabels: {}
+  # -- Node labels required for the eks-node-monitoring-agent to be scheduled on a node.
+  nodeSelector: {}
+  # -- PriorityClass for the eks-node-monitoring-agent.
+  priorityClassName: system-node-critical
   # -- Per-monitor configuration keyed by plugin name. See the main README for details.
   monitors: {}
   # -- Pod annotations applied to the eks-node-monitoring-agent
@@ -102,20 +106,21 @@ nodeAgent:
 
 dcgmAgent:
   image:
-    # -- Image tag for the dcgm-exporter
-    tag: 4.5.2-4.8.1-ubuntu22.04
-    # -- Full container registry URL override (e.g., 602401143452.dkr.ecr.us-west-2.amazonaws.com).
-    # When set, this takes precedence over account/endpoint/region/domain fields.
+    # -- Image tag that pins the dcgm-server DaemonSet back to a standalone eks/observability/dcgm-exporter image. Empty by default, so the DaemonSet runs the nv-hostengine bundled in the eks-node-monitoring-agent image. See the "DCGM host engine" section of the chart README before setting this.
+    tag: ""
+    # -- Full image override (registry/repository:tag) for the dcgm-server DaemonSet. Takes precedence over all other fields.
+    override: ""
+    # -- Full container registry URL override (e.g., 602401143452.dkr.ecr.us-west-2.amazonaws.com). When set, this takes precedence over account/endpoint/region/domain fields. Only used when a tag is set.
     containerRegistry: ""
-    # -- ECR repository domain for the dcgm-exporter
+    # -- ECR repository domain for the dcgm-exporter. Only used when a tag is set.
     domain: amazonaws.com
-    # -- ECR repository region for the dcgm-exporter
+    # -- ECR repository region for the dcgm-exporter. Only used when a tag is set.
     region: us-west-2
-    # -- ECR repository endpoint for the dcgm-exporter
+    # -- ECR repository endpoint for the dcgm-exporter. Only used when a tag is set.
     endpoint: ecr
-    # -- ECR repository account number for the dcgm-exporter
+    # -- ECR repository account number for the dcgm-exporter. Only used when a tag is set.
     account: "602401143452"
-    # -- Container pull policy for the dcgm-exporter
+    # -- Container pull policy for the dcgm-server DaemonSet
     pullPolicy: IfNotPresent
   # -- Map of dcgm pod affinities
   # @default -- see [`values.yaml`](./values.yaml)
@@ -127,7 +132,7 @@ dcgmAgent:
             # Only schedule on NVIDIA GPU nodes
           - key: node.kubernetes.io/instance-type
             operator: In
-            values: [g3.16xlarge, g3.4xlarge, g3.8xlarge, g3s.xlarge, g4dn.12xlarge, g4dn.16xlarge, g4dn.2xlarge, g4dn.4xlarge, g4dn.8xlarge, g4dn.metal, g4dn.xlarge, g5.12xlarge, g5.16xlarge, g5.24xlarge, g5.2xlarge, g5.48xlarge, g5.4xlarge, g5.8xlarge, g5.xlarge, g5g.16xlarge, g5g.2xlarge, g5g.4xlarge, g5g.8xlarge, g5g.metal, g5g.xlarge, g6.12xlarge, g6.16xlarge, g6.24xlarge, g6.2xlarge, g6.48xlarge, g6.4xlarge, g6.8xlarge, g6.xlarge, g6e.12xlarge, g6e.16xlarge, g6e.24xlarge, g6e.2xlarge, g6e.48xlarge, g6e.4xlarge, g6e.8xlarge, g6e.xlarge, g6f.2xlarge, g6f.4xlarge, g6f.large, g6f.xlarge, g7e.12xlarge, g7e.24xlarge, g7e.2xlarge, g7e.48xlarge, g7e.4xlarge, g7e.8xlarge, gr6.4xlarge, gr6.8xlarge, gr6f.4xlarge, p2.16xlarge, p2.8xlarge, p2.xlarge, p3.16xlarge, p3.2xlarge, p3.8xlarge, p3dn.24xlarge, p4d.24xlarge, p4de.24xlarge, p5.48xlarge, p5.4xlarge, p5e.48xlarge, p5en.48xlarge, p6-b200.48xlarge, p6-b300.48xlarge, p6e-gb200.36xlarge, p6e-gb300.36xlarge]
+            values: [g3.16xlarge, g3.4xlarge, g3.8xlarge, g3s.xlarge, g4dn.12xlarge, g4dn.16xlarge, g4dn.2xlarge, g4dn.4xlarge, g4dn.8xlarge, g4dn.metal, g4dn.xlarge, g5.12xlarge, g5.16xlarge, g5.24xlarge, g5.2xlarge, g5.48xlarge, g5.4xlarge, g5.8xlarge, g5.xlarge, g5g.16xlarge, g5g.2xlarge, g5g.4xlarge, g5g.8xlarge, g5g.metal, g5g.xlarge, g6.12xlarge, g6.16xlarge, g6.24xlarge, g6.2xlarge, g6.48xlarge, g6.4xlarge, g6.8xlarge, g6.xlarge, g6e.12xlarge, g6e.16xlarge, g6e.24xlarge, g6e.2xlarge, g6e.48xlarge, g6e.4xlarge, g6e.8xlarge, g6e.xlarge, g6f.2xlarge, g6f.4xlarge, g6f.large, g6f.xlarge, g7.12xlarge, g7.24xlarge, g7.2xlarge, g7.48xlarge, g7.4xlarge, g7.8xlarge, g7e.12xlarge, g7e.24xlarge, g7e.2xlarge, g7e.48xlarge, g7e.4xlarge, g7e.8xlarge, gr6.4xlarge, gr6.8xlarge, gr6f.4xlarge, p2.16xlarge, p2.8xlarge, p2.xlarge, p3.16xlarge, p3.2xlarge, p3.8xlarge, p3dn.24xlarge, p4d.24xlarge, p4de.24xlarge, p5.48xlarge, p5.4xlarge, p5e.48xlarge, p5en.48xlarge, p6-b200.48xlarge, p6-b300.48xlarge, p6e-gb200.36xlarge, p6e-gb300.36xlarge]
             # Don't schedule on special compute types
           - key: eks.amazonaws.com/compute-type
             operator: NotIn
@@ -153,6 +158,10 @@ dcgmAgent:
   tolerations: []
   # -- Pod labels applied to the dcgm exporter
   podLabels: {}
+  # -- Node labels required for the dcgm exporter to be scheduled on a node.
+  nodeSelector: {}
+  # -- PriorityClass for the dcgm exporter.
+  priorityClassName: system-node-critical
   # -- Pod annotations applied to the dcgm exporter
   podAnnotations: {}  
 

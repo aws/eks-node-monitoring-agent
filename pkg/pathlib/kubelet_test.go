@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
 func TestResolvePath(t *testing.T) {
@@ -66,6 +67,107 @@ func TestResolvePath(t *testing.T) {
 			assert.Empty(t, test.resolver(root))
 		})
 	}
+}
+
+func TestResolveClusterCACert(t *testing.T) {
+	t.Run("embedded CA data needs no path", func(t *testing.T) {
+		caCertPath, err := ResolveClusterCACert(t.TempDir(), &clientcmdapi.Cluster{
+			CertificateAuthorityData: []byte("---embedded ca---"),
+		})
+		assert.NoError(t, err)
+		assert.Empty(t, caCertPath)
+	})
+
+	t.Run("referenced CA file is prefixed with the host root", func(t *testing.T) {
+		root := t.TempDir()
+		caCertPath, err := ResolveClusterCACert(root, &clientcmdapi.Cluster{
+			CertificateAuthority: DefaultCACertPath,
+		})
+		assert.NoError(t, err)
+		assert.Equal(t, filepath.Join(root, DefaultCACertPath), caCertPath)
+	})
+
+	t.Run("referenced CA file already inside the host root is left as-is", func(t *testing.T) {
+		root := t.TempDir()
+		want := filepath.Join(root, DefaultCACertPath)
+		caCertPath, err := ResolveClusterCACert(root, &clientcmdapi.Cluster{CertificateAuthority: want})
+		assert.NoError(t, err)
+		assert.Equal(t, want, caCertPath)
+	})
+
+	t.Run("falls back to the well-known host location", func(t *testing.T) {
+		root := t.TempDir()
+		SetupFile(t, root, DefaultCACertPath)
+		caCertPath, err := ResolveClusterCACert(root, &clientcmdapi.Cluster{})
+		assert.NoError(t, err)
+		assert.Equal(t, filepath.Join(root, DefaultCACertPath), caCertPath)
+	})
+
+	t.Run("errors when no CA can be located", func(t *testing.T) {
+		_, err := ResolveClusterCACert(t.TempDir(), &clientcmdapi.Cluster{})
+		assert.Error(t, err)
+	})
+
+	t.Run("errors for a nil cluster without a well-known CA", func(t *testing.T) {
+		_, err := ResolveClusterCACert(t.TempDir(), nil)
+		assert.Error(t, err)
+	})
+}
+
+func TestHostPath(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		hostRoot string
+		path     string
+		want     string
+	}{
+		{name: "prefixes a host path", hostRoot: "/host", path: "/srv/kubernetes/kubelet.key",
+			want: "/host/srv/kubernetes/kubelet.key"},
+		{name: "keeps an empty path", hostRoot: "/host", path: "", want: ""},
+		{name: "keeps every path when the host root is /", hostRoot: "/", path: "/etc/kubernetes/pki/ca.crt",
+			want: "/etc/kubernetes/pki/ca.crt"},
+		{name: "keeps a path already inside the host root", hostRoot: "/host", path: "/host/etc/ca.crt",
+			want: "/host/etc/ca.crt"},
+		{name: "keeps the host root itself", hostRoot: "/host", path: "/host", want: "/host"},
+		{name: "prefixes a path that only shares a prefix with the host root", hostRoot: "/host",
+			path: "/hostname/pki/ca.crt", want: "/host/hostname/pki/ca.crt"},
+		{name: "ignores a trailing slash on the host root", hostRoot: "/host/", path: "/host/etc/ca.crt",
+			want: "/host/etc/ca.crt"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, HostPath(test.hostRoot, test.path))
+		})
+	}
+}
+
+func TestClusterForCurrentContext(t *testing.T) {
+	t.Run("resolves the cluster referenced by the current context", func(t *testing.T) {
+		want := &clientcmdapi.Cluster{Server: "https://current"}
+		assert.Same(t, want, ClusterForCurrentContext(&clientcmdapi.Config{
+			CurrentContext: "ctx",
+			Contexts:       map[string]*clientcmdapi.Context{"ctx": {Cluster: "wanted"}},
+			Clusters: map[string]*clientcmdapi.Cluster{
+				"wanted": want,
+				"other":  {Server: "https://other"},
+			},
+		}))
+	})
+
+	t.Run("falls back to the sole cluster when the context is missing", func(t *testing.T) {
+		want := &clientcmdapi.Cluster{Server: "https://only"}
+		assert.Same(t, want, ClusterForCurrentContext(&clientcmdapi.Config{
+			Clusters: map[string]*clientcmdapi.Cluster{"only": want},
+		}))
+	})
+
+	t.Run("returns nil when the context is missing and clusters are ambiguous", func(t *testing.T) {
+		assert.Nil(t, ClusterForCurrentContext(&clientcmdapi.Config{
+			Clusters: map[string]*clientcmdapi.Cluster{
+				"a": {Server: "https://a"},
+				"b": {Server: "https://b"},
+			},
+		}))
+	})
 }
 
 func SetupFile(t *testing.T, root, file string) {

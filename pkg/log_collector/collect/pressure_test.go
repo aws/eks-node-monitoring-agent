@@ -1,6 +1,7 @@
 package collect_test
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -77,7 +78,7 @@ func TestPressureCollect(t *testing.T) {
 				}
 			}
 
-			acc, err := collect.NewAccessor(collect.Config{
+			acc, err := collect.NewAccessor(context.Background(), collect.Config{
 				Root:        root,
 				Destination: dst,
 			})

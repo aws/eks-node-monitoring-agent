@@ -69,7 +69,7 @@ func interfaces(acc *Accessor) error {
 	}
 	var merr error
 	for _, netInterface := range netInterfaces {
-		output, err := acc.Command("ethtool", "-S", netInterface.Name).CombinedOutput()
+		output, err := acc.CombinedOutput("ethtool", "-S", netInterface.Name)
 		// we can still use the output of ethtool if there is an error.
 		if err != nil && len(output) == 0 {
 			merr = errors.Join(merr, err)
@@ -162,10 +162,9 @@ func apiServerConnectivity(acc *Accessor) error {
 		}
 		caData := cluster.CertificateAuthorityData
 		if len(caData) == 0 {
-			caCertPath := cluster.CertificateAuthority
-			// fixup the path if it comes from the host machine
-			if acc.cfg.Root != "/" && !strings.HasPrefix(caCertPath, acc.cfg.Root) {
-				caCertPath = filepath.Join(acc.cfg.Root, caCertPath)
+			caCertPath, err := pathlib.ResolveClusterCACert(acc.cfg.Root, cluster)
+			if err != nil {
+				return err
 			}
 			caBytes, err := os.ReadFile(caCertPath)
 			if err != nil {

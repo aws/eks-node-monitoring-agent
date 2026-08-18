@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 	"github.com/aws/eks-node-monitoring-agent/api/monitor/resource"
@@ -152,4 +153,80 @@ func TestPeriodic(t *testing.T) {
 		}
 		assert.Error(t, mon.checkIODelays([]byte(procBytes)))
 	})
+}
+
+func TestBlockDeviceIOErrors(t *testing.T) {
+	tests := []struct {
+		name           string
+		logLine        string
+		shouldDetect   bool
+		expectedDevice string
+		expectedLoc    string
+	}{
+		{
+			name:           "end_request I/O error on sde",
+			logLine:        "[9943662.053217] end_request: I/O error, dev sde, sector 52428288",
+			shouldDetect:   true,
+			expectedDevice: "sde",
+			expectedLoc:    "sector 52428288",
+		},
+		{
+			name:           "Buffer I/O error on md0",
+			logLine:        "[9943664.191262] Buffer I/O error on device md0, logical block 209713024",
+			shouldDetect:   true,
+			expectedDevice: "md0",
+			expectedLoc:    "logical block 209713024",
+		},
+		{
+			name:           "blk_update_request I/O error on nvme1n1",
+			logLine:        "[12345.678901] blk_update_request: I/O error, dev nvme1n1, sector 1234567",
+			shouldDetect:   true,
+			expectedDevice: "nvme1n1",
+			expectedLoc:    "sector 1234567",
+		},
+		{
+			name:           "blk_update_request I/O error on dm-0",
+			logLine:        "[12345.678901] blk_update_request: I/O error, dev dm-0, sector 7654321",
+			shouldDetect:   true,
+			expectedDevice: "dm-0",
+			expectedLoc:    "sector 7654321",
+		},
+		{
+			name:         "Non-I/O error log line",
+			logLine:      "[12345.678901] Some other kernel message",
+			shouldDetect: false,
+		},
+		{
+			name:         "Empty log line",
+			logLine:      "",
+			shouldDetect: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockManager := &mockManager{res: make(chan monitor.Condition, 1)}
+			mon := NewStorageMonitor()
+			mon.manager = mockManager
+
+			require.NoError(t, mon.handleBlockDeviceIOErrors(tt.logLine))
+
+			if tt.shouldDetect {
+				select {
+				case monitorResult := <-mockManager.res:
+					require.Equal(t, "BlockDeviceIOError", monitorResult.Reason)
+					require.Contains(t, monitorResult.Message, tt.expectedDevice)
+					require.Contains(t, monitorResult.Message, tt.expectedLoc)
+				default:
+					require.Fail(t, "expected a condition to be emitted, but none was emitted")
+				}
+			} else {
+				select {
+				case <-mockManager.res:
+					require.Fail(t, "expected no condition to be emitted, but one was emitted")
+				default:
+				}
+			}
+		})
+	}
 }

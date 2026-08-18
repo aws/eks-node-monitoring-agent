@@ -72,6 +72,10 @@ type NetworkingMonitor struct {
 	exec                  osext.Exec
 	runtimeContext        *config.RuntimeContext
 	allowedIPTablesChains []string
+	// excludedInterfaceNameRegexps holds compiled regexps. Interfaces whose
+	// name matches any of these are skipped during InterfaceNotUp /
+	// InterfaceNotRunning checks.
+	excludedInterfaceNameRegexps []*regexp.Regexp
 }
 
 func (m *NetworkingMonitor) Name() string {
@@ -114,6 +118,33 @@ func WithRuntimeService(svc cri.RuntimeService) Option {
 
 func (m *NetworkingMonitor) SetAllowedIPTablesChains(chains []string) {
 	m.allowedIPTablesChains = chains
+}
+
+// SetExcludedInterfaceNameRegexps compiles the provided regexps and stores them
+// for use during interface checks. An error is returned if any regexp is
+// invalid, allowing the caller to fail fast on misconfiguration.
+func (m *NetworkingMonitor) SetExcludedInterfaceNameRegexps(exprs []string) error {
+	compiled := make([]*regexp.Regexp, 0, len(exprs))
+	for _, expr := range exprs {
+		re, err := regexp.Compile(expr)
+		if err != nil {
+			return fmt.Errorf("invalid excludedInterfaceNameRegexps entry %q: %w", expr, err)
+		}
+		compiled = append(compiled, re)
+	}
+	m.excludedInterfaceNameRegexps = compiled
+	return nil
+}
+
+// isInterfaceExcluded reports whether the given interface name matches any of
+// the configured exclusion regexps.
+func (m *NetworkingMonitor) isInterfaceExcluded(name string) bool {
+	for _, re := range m.excludedInterfaceNameRegexps {
+		if re.MatchString(name) {
+			return true
+		}
+	}
+	return false
 }
 
 func NewNetworkingMonitor(options ...Option) *NetworkingMonitor {
@@ -427,6 +458,7 @@ func (m *NetworkingMonitor) handleInterfaces() error {
 func (m *NetworkingMonitor) checkInterfaces(interfaces []net.Interface) error {
 	hasLoopback := false
 	for _, intf := range interfaces {
+		m.log.Info("Checking interface", "interface", intf.Name)
 		// ignores things like docker0 for now.
 		// NetworkingReady         False   Tue, 11 Mar 2025 14:47:30 +0000   Fri, 07 Mar 2025 21:27:30 +0000   InterfaceNotRunning          Interface "docker0" is not running
 		if strings.HasPrefix(intf.Name, "docker") {
@@ -437,6 +469,15 @@ func (m *NetworkingMonitor) checkInterfaces(interfaces []net.Interface) error {
 		} else if net.FlagMulticast&intf.Flags == 0 || net.FlagBroadcast&intf.Flags == 0 {
 			// Intended as a catch-all for dummy interfaces based on a pattern observed with
 			// nodelocaldns and kube-proxy when using IPVS mode, but not a hard rule
+			continue
+		}
+
+		// Operators can configure regexps to exclude known non-node-networking
+		// interfaces (e.g. Mellanox/NVIDIA IPoIB interfaces such as ibp115s0f0)
+		// that may legitimately remain down or lack an IP address. Skip the
+		// InterfaceNotUp / InterfaceNotRunning checks for these.
+		if m.isInterfaceExcluded(intf.Name) {
+			m.log.V(1).Info("skipping interface checks due to excludedInterfaceNameRegexps configuration", "interface", intf.Name)
 			continue
 		}
 

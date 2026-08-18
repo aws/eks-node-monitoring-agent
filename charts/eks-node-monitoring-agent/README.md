@@ -30,6 +30,25 @@ To uninstall:
 helm uninstall eks-node-monitoring-agent --namespace kube-system
 ```
 
+## DCGM host engine
+
+On NVIDIA GPU nodes the agent collects GPU health from DCGM. It connects as a
+DCGM client in standalone mode, so an `nv-hostengine` process must be reachable
+on the node (`localhost:5555` by default). The chart provides one via the
+`dcgm-server` DaemonSet.
+
+`nv-hostengine`, `dcgmi` and the DCGM modules ship inside the
+`eks-node-monitoring-agent` image, so `dcgm-server` runs the same image as the
+node agent and no separate DCGM image is pulled. Previously this DaemonSet ran
+`eks/observability/dcgm-exporter`, which bundled an Ubuntu userland and the
+`dcgm-exporter` binary that the agent never used.
+
+If you need to pin the DaemonSet back to a standalone DCGM image, set
+`dcgmAgent.image.tag` (resolved against `eks/observability/dcgm-exporter`) or
+`dcgmAgent.image.override` for a full image reference. Note that the
+`dcgm-exporter` images carry the CVEs of their base OS and of the exporter
+binary, so treat this as a temporary break-glass measure.
+
 ## Configuration
 
 The following table lists the configurable parameters for this chart and their default values.
@@ -37,15 +56,18 @@ The following table lists the configurable parameters for this chart and their d
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | dcgmAgent.affinity | object | see [`values.yaml`](./values.yaml) | Map of dcgm pod affinities |
-| dcgmAgent.image.account | string | `"602401143452"` | ECR repository account number for the dcgm-exporter |
-| dcgmAgent.image.containerRegistry | string | `""` | Full container registry URL override (e.g., 602401143452.dkr.ecr.us-west-2.amazonaws.com). When set, this takes precedence over account/endpoint/region/domain fields. |
-| dcgmAgent.image.domain | string | `"amazonaws.com"` | ECR repository domain for the dcgm-exporter |
-| dcgmAgent.image.endpoint | string | `"ecr"` | ECR repository endpoint for the dcgm-exporter |
-| dcgmAgent.image.pullPolicy | string | `"IfNotPresent"` | Container pull policy for the dcgm-exporter |
-| dcgmAgent.image.region | string | `"us-west-2"` | ECR repository region for the dcgm-exporter |
-| dcgmAgent.image.tag | string | `"4.5.2-4.8.1-ubuntu22.04"` | Image tag for the dcgm-exporter |
+| dcgmAgent.image.account | string | `"602401143452"` | ECR repository account number for the dcgm-exporter. Only used when a tag is set. |
+| dcgmAgent.image.containerRegistry | string | `""` | Full container registry URL override (e.g., 602401143452.dkr.ecr.us-west-2.amazonaws.com). When set, this takes precedence over account/endpoint/region/domain fields. Only used when a tag is set. |
+| dcgmAgent.image.domain | string | `"amazonaws.com"` | ECR repository domain for the dcgm-exporter. Only used when a tag is set. |
+| dcgmAgent.image.endpoint | string | `"ecr"` | ECR repository endpoint for the dcgm-exporter. Only used when a tag is set. |
+| dcgmAgent.image.override | string | `""` | Full image override (registry/repository:tag) for the dcgm-server DaemonSet. Takes precedence over all other fields. |
+| dcgmAgent.image.pullPolicy | string | `"IfNotPresent"` | Container pull policy for the dcgm-server DaemonSet |
+| dcgmAgent.image.region | string | `"us-west-2"` | ECR repository region for the dcgm-exporter. Only used when a tag is set. |
+| dcgmAgent.image.tag | string | `""` | Image tag that pins the dcgm-server DaemonSet back to a standalone eks/observability/dcgm-exporter image. Empty by default, so the DaemonSet runs the nv-hostengine bundled in the eks-node-monitoring-agent image. See the "DCGM host engine" section of the chart README before setting this. |
+| dcgmAgent.nodeSelector | object | `{}` | Node labels required for the dcgm exporter to be scheduled on a node. |
 | dcgmAgent.podAnnotations | object | `{}` | Pod annotations applied to the dcgm exporter |
 | dcgmAgent.podLabels | object | `{}` | Pod labels applied to the dcgm exporter |
+| dcgmAgent.priorityClassName | string | `"system-node-critical"` | PriorityClass for the dcgm exporter. |
 | dcgmAgent.resizePolicy | list | `[]` | Container resize policy for in-place pod vertical scaling (requires Kubernetes 1.33+) |
 | dcgmAgent.resources | object | `{}` | Container resources for the dcgm deployment |
 | dcgmAgent.tolerations | list | `[]` | Deployment tolerations for the dcgm |
@@ -64,10 +86,12 @@ The following table lists the configurable parameters for this chart and their d
 | nodeAgent.image.endpoint | string | `"ecr"` | ECR repository endpoint for the eks-node-monitoring-agent |
 | nodeAgent.image.pullPolicy | string | `"IfNotPresent"` | Container pull policyfor the eks-node-monitoring-agent |
 | nodeAgent.image.region | string | `"us-west-2"` | ECR repository region for the eks-node-monitoring-agent |
-| nodeAgent.image.tag | string | `"v1.6.6-eksbuild.1"` | Image tag for the eks-node-monitoring-agent |
+| nodeAgent.image.tag | string | `"v1.7.0-eksbuild.1"` | Image tag for the eks-node-monitoring-agent |
 | nodeAgent.monitors | object | `{}` | Per-monitor configuration keyed by plugin name. See the main README for details. |
+| nodeAgent.nodeSelector | object | `{}` | Node labels required for the eks-node-monitoring-agent to be scheduled on a node. |
 | nodeAgent.podAnnotations | object | `{}` | Pod annotations applied to the eks-node-monitoring-agent |
 | nodeAgent.podLabels | object | `{}` | Pod labels applied to the eks-node-monitoring-agent |
+| nodeAgent.priorityClassName | string | `"system-node-critical"` | PriorityClass for the eks-node-monitoring-agent. |
 | nodeAgent.probePort | int | `8002` | Health probe port for the eks-node-monitoring-agent. Used for both the --probe-address arg and the liveness probe. |
 | nodeAgent.resizePolicy | list | `[]` | Container resize policy for in-place pod vertical scaling (requires Kubernetes 1.33+) |
 | nodeAgent.resources | object | `{"limits":{"cpu":"250m","memory":"200Mi"},"requests":{"cpu":"10m","memory":"30Mi"}}` | Container resources for the eks-node-monitoring-agent |
