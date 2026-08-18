@@ -63,7 +63,9 @@ nodeAgent:
         - "filter/MY-CUSTOM-CHAIN"
 ```
 
-The networking monitor also supports `excludedInterfaceNameRegexps` to suppress `InterfaceNotUp` / `InterfaceNotRunning` findings for interfaces that are not part of Kubernetes node networking. This is useful on accelerated instance types (e.g. P6) that expose host-visible Mellanox/NVIDIA IPoIB interfaces such as `ibp115s0f0`, which may legitimately remain down. Each entry is a Go regular expression matched against the interface name; invalid regexps fail fast at startup:
+The networking monitor also supports `excludedInterfaceNameRegexps` to suppress `InterfaceNotUp` / `InterfaceNotRunning` findings for interfaces that are not part of Kubernetes node networking. This is useful on accelerated instance types (e.g. P6) that expose host-visible Mellanox/NVIDIA IPoIB interfaces such as `ibp115s0f0`, which may legitimately remain down. Each entry is a Go regular expression matched against the interface name; invalid regexps fail fast at startup.
+
+By default the following interfaces are excluded: kernel tunnel fallback devices (`gre*`, `gretap*`, `erspan*`, `ip6gre*`, `ip6gretap*`, `tunl*`, `sit*`, `ip6tnl*`) and InfiniBand / IPoIB interfaces (`ib*`, `ibp*`). Setting `excludedInterfaceNameRegexps` overrides this default; set it to an empty list to disable exclusions entirely.
 
 ```yaml
 nodeAgent:
