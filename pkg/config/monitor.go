@@ -63,11 +63,27 @@ func (mc *MonitorConfig) GetAllowedIPTablesChains() []string {
 }
 
 // DefaultExcludedInterfaceNameRegexps are the interface-name exclusion regexps
-// applied when the networking monitor has none explicitly configured. It
-// excludes Mellanox/NVIDIA IPoIB interfaces (e.g. "ibp115s0f0") by default,
-// which are not node-networking interfaces and would otherwise cause false
-// positive InterfaceNotUp / InterfaceNotRunning notifications.
-var DefaultExcludedInterfaceNameRegexps = []string{`^ibp[0-9]+s[0-9]+f[0-9]+$`}
+// applied when the networking monitor has none explicitly configured. These
+// interfaces are not part of Kubernetes node networking and would otherwise
+// cause false positive InterfaceNotUp / InterfaceNotRunning notifications:
+//   - Kernel tunnel fallback devices (gre, gretap, erspan, ip6gre, ip6gretap,
+//     tunl, sit, ip6tnl) that the kernel creates but leaves administratively down.
+//   - Mellanox/NVIDIA InfiniBand / IPoIB interfaces (e.g. "ib0", "ibp115s0f0")
+//     found on accelerated instance families such as P6.
+var DefaultExcludedInterfaceNameRegexps = []string{
+	// Kernel tunnel fallback devices
+	`^gre[0-9]+$`,
+	`^gretap[0-9]+$`,
+	`^erspan[0-9]+$`,
+	`^ip6gre[0-9]+$`,
+	`^ip6gretap[0-9]+$`,
+	`^tunl[0-9]+$`,
+	`^sit[0-9]+$`,
+	`^ip6tnl[0-9]+$`,
+	// InfiniBand / IPoIB (P6 etc.)
+	`^ib[0-9]+$`,
+	`^ibp[0-9]+s[0-9]+(f[0-9]+)?$`,
+}
 
 // GetExcludedInterfaceNameRegexps returns the interface-name exclusion regexps
 // configured for the networking monitor. When the networking monitor has no

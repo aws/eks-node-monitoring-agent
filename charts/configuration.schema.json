@@ -242,8 +242,8 @@
                 },
                 "excludedInterfaceNameRegexps": {
                     "type": "array",
-                    "description": "List of regular expressions matching interface names that should be excluded from InterfaceNotUp / InterfaceNotRunning checks. Use this to suppress false positives from known non-node-networking interfaces (e.g. Mellanox/NVIDIA IPoIB interfaces such as \"^ibp[0-9]+s[0-9]+f[0-9]+$\"). Defaults to excluding IPoIB interfaces; set to an empty list to disable the default exclusion.",
-                    "default": ["^ibp[0-9]+s[0-9]+f[0-9]+$"],
+                    "description": "List of regular expressions matching interface names that should be excluded from InterfaceNotUp / InterfaceNotRunning checks. Use this to suppress false positives from known non-node-networking interfaces (e.g. Mellanox/NVIDIA IPoIB interfaces such as \"^ibp[0-9]+s[0-9]+f[0-9]+$\"). Defaults to excluding kernel tunnel fallback devices (gre, gretap, erspan, ip6gre, ip6gretap, tunl, sit, ip6tnl) and InfiniBand / IPoIB interfaces; set to an empty list to disable the default exclusion.",
+                    "default": ["^gre[0-9]+$", "^gretap[0-9]+$", "^erspan[0-9]+$", "^ip6gre[0-9]+$", "^ip6gretap[0-9]+$", "^tunl[0-9]+$", "^sit[0-9]+$", "^ip6tnl[0-9]+$", "^ib[0-9]+$", "^ibp[0-9]+s[0-9]+(f[0-9]+)?$"],
                     "items": {
                       "type": "string"
                     }
