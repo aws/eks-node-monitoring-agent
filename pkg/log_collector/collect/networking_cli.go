@@ -35,8 +35,7 @@ const (
 	// but the exec itself failed (e.g. an SELinux denial on the Auto Mode managed
 	// agent). It lets a reader distinguish a denied exec from an empty-map result.
 	cliExecFailedMarker = "failed to execute"
-	// cliExecFailedLinePrefix is the start of that artifact line; tests match the
-	// whole prefix, so it is defined with the line rather than reassembled per caller.
+	// cliExecFailedLinePrefix is the start of that artifact line.
 	cliExecFailedLinePrefix = "*** " + cliExecFailedMarker
 )
 
@@ -91,10 +90,9 @@ func findPublishedNetworkPolicyCLI(acc *Accessor) (string, bool) {
 }
 
 // chooseNetworkPolicyCLI is the pure selection decision, split from the filesystem
-// side for unit testing. The published symlink is the only family signal; there is
-// no family query and no decode probe. EC2 installs the family-correct build under
-// the default name, so a single default-named binary is safe to run; two builds
-// without a symlink (Auto Mode) leaves the family unconfirmed, so it skips.
+// side for unit testing. The published symlink is the only family signal (no family
+// query, no decode probe): a single installed binary is family-correct by the CNI
+// daemonset; two builds without a symlink leave the family unconfirmed, so it skips.
 func chooseNetworkPolicyCLI(publishedCLI string, havePublished bool, defaultCLI string, haveDefault, haveV6Named bool) (cliPath string, reason string, ok bool) {
 	switch {
 	case havePublished:
@@ -136,10 +134,9 @@ func networkPolicyEbpfInfo(acc *Accessor) error {
 	}
 	loaded, err := acc.Command(cliPath, "ebpf", "loaded-ebpfdata").CombinedOutput()
 	if err != nil {
-		// Best-effort: record the failure line in the bundle (a denied exec on the
-		// Auto Mode managed agent surfaces here) but don't fail the capture — a
-		// missing optional diagnostic shouldn't mark the whole bundle as failed. Same
-		// contract as the best-effort per-map dumps below.
+		// Best-effort: record the failure line and return nil, so a denied exec (e.g.
+		// on the Auto Mode managed agent) doesn't fail the whole capture. Same as the
+		// per-map dumps below.
 		return acc.appendOutput(ebpfDataFile, []byte(fmt.Sprintf("%s %s ebpf loaded-ebpfdata: %v ***\n", cliExecFailedLinePrefix, cliPath, err)))
 	}
 	if err := acc.appendOutput(ebpfDataFile, loaded); err != nil {

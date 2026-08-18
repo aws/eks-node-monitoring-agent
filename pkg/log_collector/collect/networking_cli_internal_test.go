@@ -12,12 +12,10 @@ const (
 	published   = "/run/aws-network-policy-agent/aws-eks-na-cli"
 )
 
-// TestChooseNetworkPolicyCLI pins the symlink-only selection model: a binary
-// decodes maps only when the node's family is confirmed by the NPA-published
-// symlink (or when a single binary is installed, i.e. EC2). On Auto Mode with
-// both binaries but no symlink, decoding is skipped — there is no family query
-// and no decode probe in this vertical. The single-binary rows are regression
-// pins for EC2 behavior, which must not change.
+// TestChooseNetworkPolicyCLI pins the selection model: a binary is used only when
+// the family is confirmed by the NPA-published symlink, or when a single binary is
+// installed (EC2). With both binaries and no symlink (Auto Mode), it skips. The
+// single-binary rows are EC2 regression pins.
 func TestChooseNetworkPolicyCLI(t *testing.T) {
 	tests := []struct {
 		name          string
