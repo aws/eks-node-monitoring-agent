@@ -24,19 +24,15 @@ const (
 	ebpfDataFile = "networking/ebpf-data.txt"
 	// ebpfMapsDataFile holds the per-map dumps; written only when maps exist.
 	ebpfMapsDataFile = "networking/ebpf-maps-data.txt"
-	// cliSelectionLinePrefix begins the line recording which binary (if any) was
-	// chosen; always written once a binary is present.
+	// cliSelectionLinePrefix begins the line recording the CLI selection outcome:
+	// which binary was chosen, or why none was. Always written.
 	cliSelectionLinePrefix = "*** network-policy CLI selection:"
-	// cliNotInstalledLinePrefix begins the line written when no na-cli is present.
-	cliNotInstalledLinePrefix = "*** " + naCLIDefault + "/" + naCLIv6Named + " not present"
 	// mapIDMarker begins each per-map dump section in ebpfMapsDataFile.
 	mapIDMarker = "Map ID:"
-	// cliExecFailedMarker begins the line recorded when a chosen binary was run
+	// cliExecFailedLinePrefix begins the line recorded when a chosen binary was run
 	// but the exec itself failed (e.g. an SELinux denial on the Auto Mode managed
 	// agent). It lets a reader distinguish a denied exec from an empty-map result.
-	cliExecFailedMarker = "failed to execute"
-	// cliExecFailedLinePrefix is the start of that artifact line.
-	cliExecFailedLinePrefix = "*** " + cliExecFailedMarker
+	cliExecFailedLinePrefix = "*** failed to execute"
 )
 
 // networkPolicyCLIDirs are searched in order. The Auto Mode managed agent runs as
@@ -77,7 +73,7 @@ func findPublishedNetworkPolicyCLI(acc *Accessor) (string, bool) {
 	}
 	// Re-root an absolute target under Root; a relative target is already
 	// relative to the link's directory.
-	resolved := target
+	var resolved string
 	if filepath.IsAbs(target) {
 		resolved = filepath.Join(acc.cfg.Root, target)
 	} else {
@@ -115,17 +111,14 @@ func networkPolicyEbpfInfo(acc *Accessor) error {
 	defaultCLI, haveDefault := findNetworkPolicyCLI(acc, naCLIDefault)
 	_, haveV6Named := findNetworkPolicyCLI(acc, naCLIv6Named)
 
-	// No binary at all is distinct from "installed but family unconfirmed"; report it plainly.
-	if !haveDefault && !haveV6Named {
-		return acc.appendOutput(ebpfDataFile, []byte(cliNotInstalledLinePrefix+", skipping eBPF map collection ***\n"))
-	}
-
+	// chooseNetworkPolicyCLI owns the whole decision, including "not installed",
+	// so the selection line is the single record of what happened.
 	cliPath, reason, ok := chooseNetworkPolicyCLI(publishedCLI, havePublished, defaultCLI, haveDefault, haveV6Named)
 	if err := acc.appendOutput(ebpfDataFile, []byte(fmt.Sprintf("%s %s ***\n", cliSelectionLinePrefix, reason))); err != nil {
 		return fmt.Errorf("failed to append CLI selection to %s: %w", ebpfDataFile, err)
 	}
 	if !ok {
-		// Family unconfirmed: run no na-cli command rather than guess a family.
+		// No binary, or family unconfirmed: run no na-cli command rather than guess.
 		return nil
 	}
 
@@ -157,7 +150,7 @@ func networkPolicyEbpfInfo(acc *Accessor) error {
 }
 
 // uniqueMapIDs extracts the distinct "Map ID: <n>" values from loaded-ebpfdata
-// output, sorted, so map collection is deterministic run-to-run.
+// output, lexically sorted, so map collection is deterministic run-to-run.
 func uniqueMapIDs(loaded string) []string {
 	seen := make(map[string]bool)
 	var ids []string
