@@ -198,7 +198,8 @@ func TestFindPublishedNetworkPolicyCLI(t *testing.T) {
 
 // TestNetworkPolicyEbpfInfoRecordsExecFailure checks that when a selected binary
 // cannot be executed, the failure is recorded in the bundle as a
-// CLIExecFailedLinePrefix line — the signal the e2e exec-failure check keys off.
+// cliExecFailedLinePrefix line and is best-effort: it is not returned as an error,
+// so a denied exec does not fail the whole capture.
 func TestNetworkPolicyEbpfInfoRecordsExecFailure(t *testing.T) {
 	root, dest := t.TempDir(), t.TempDir()
 	binDir := filepath.Join(root, "usr", "bin")
@@ -211,25 +212,21 @@ func TestNetworkPolicyEbpfInfoRecordsExecFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := networkPolicyEbpfInfo(&Accessor{cfg: Config{Root: root, Destination: dest}})
-	if err == nil {
-		t.Fatal("expected an error when the selected na-cli cannot be executed")
-	}
-	if !strings.Contains(err.Error(), CLIExecFailedMarker) {
-		t.Errorf("returned error must mention %q; got %v", CLIExecFailedMarker, err)
+	if err := networkPolicyEbpfInfo(&Accessor{cfg: Config{Root: root, Destination: dest}}); err != nil {
+		t.Fatalf("a failed exec must be best-effort (recorded, not returned); got %v", err)
 	}
 
-	data, readErr := os.ReadFile(filepath.Join(dest, EBPFDataFile))
+	data, readErr := os.ReadFile(filepath.Join(dest, ebpfDataFile))
 	if readErr != nil {
-		t.Fatalf("reading %s: %v", EBPFDataFile, readErr)
+		t.Fatalf("reading %s: %v", ebpfDataFile, readErr)
 	}
 	var found bool
 	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, CLIExecFailedLinePrefix) {
+		if strings.HasPrefix(line, cliExecFailedLinePrefix) {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("%s must contain a line starting with %q; got:\n%s", EBPFDataFile, CLIExecFailedLinePrefix, data)
+		t.Errorf("%s must contain a line starting with %q; got:\n%s", ebpfDataFile, cliExecFailedLinePrefix, data)
 	}
 }

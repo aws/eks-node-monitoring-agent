@@ -17,28 +17,27 @@ const (
 	naCLIv6Named = "aws-eks-na-cli-v6"
 )
 
-// Bundle contract for the network-policy eBPF collector. These are load-bearing:
-// tests (including e2e) key off them, so they are exported and referenced here
-// rather than duplicated as literals.
+// The collector's output contract: the bundle file paths and the marker strings it
+// writes, as named constants rather than inline literals so there is one definition.
 const (
-	// EBPFDataFile holds the loaded-ebpfdata output and the CLI selection line.
-	EBPFDataFile = "networking/ebpf-data.txt"
-	// EBPFMapsDataFile holds the per-map dumps; written only when maps exist.
-	EBPFMapsDataFile = "networking/ebpf-maps-data.txt"
-	// CLISelectionLinePrefix begins the line recording which binary (if any) was
+	// ebpfDataFile holds the loaded-ebpfdata output and the CLI selection line.
+	ebpfDataFile = "networking/ebpf-data.txt"
+	// ebpfMapsDataFile holds the per-map dumps; written only when maps exist.
+	ebpfMapsDataFile = "networking/ebpf-maps-data.txt"
+	// cliSelectionLinePrefix begins the line recording which binary (if any) was
 	// chosen; always written once a binary is present.
-	CLISelectionLinePrefix = "*** network-policy CLI selection:"
-	// CLINotInstalledLinePrefix begins the line written when no na-cli is present.
-	CLINotInstalledLinePrefix = "*** " + naCLIDefault + "/" + naCLIv6Named + " not present"
-	// MapIDMarker begins each per-map dump section in EBPFMapsDataFile.
-	MapIDMarker = "Map ID:"
-	// CLIExecFailedMarker begins the line recorded when a chosen binary was run
+	cliSelectionLinePrefix = "*** network-policy CLI selection:"
+	// cliNotInstalledLinePrefix begins the line written when no na-cli is present.
+	cliNotInstalledLinePrefix = "*** " + naCLIDefault + "/" + naCLIv6Named + " not present"
+	// mapIDMarker begins each per-map dump section in ebpfMapsDataFile.
+	mapIDMarker = "Map ID:"
+	// cliExecFailedMarker begins the line recorded when a chosen binary was run
 	// but the exec itself failed (e.g. an SELinux denial on the Auto Mode managed
 	// agent). It lets a reader distinguish a denied exec from an empty-map result.
-	CLIExecFailedMarker = "failed to execute"
-	// CLIExecFailedLinePrefix is the start of that artifact line; tests match the
+	cliExecFailedMarker = "failed to execute"
+	// cliExecFailedLinePrefix is the start of that artifact line; tests match the
 	// whole prefix, so it is defined with the line rather than reassembled per caller.
-	CLIExecFailedLinePrefix = "*** " + CLIExecFailedMarker
+	cliExecFailedLinePrefix = "*** " + cliExecFailedMarker
 )
 
 // networkPolicyCLIDirs are searched in order. The Auto Mode managed agent runs as
@@ -114,20 +113,17 @@ func chooseNetworkPolicyCLI(publishedCLI string, havePublished bool, defaultCLI 
 // rely on any subcommand being family-agnostic: if the family is unconfirmed, no
 // na-cli command is run and only the selection reason is recorded.
 func networkPolicyEbpfInfo(acc *Accessor) error {
-	ebpfDataFile := EBPFDataFile
-
 	publishedCLI, havePublished := findPublishedNetworkPolicyCLI(acc)
 	defaultCLI, haveDefault := findNetworkPolicyCLI(acc, naCLIDefault)
 	_, haveV6Named := findNetworkPolicyCLI(acc, naCLIv6Named)
 
-	// No binary at all is distinct from "installed but family unconfirmed"; report it
-	// plainly, via the shared prefix constant so the producer and the e2e can't drift.
+	// No binary at all is distinct from "installed but family unconfirmed"; report it plainly.
 	if !haveDefault && !haveV6Named {
-		return acc.appendOutput(ebpfDataFile, []byte(CLINotInstalledLinePrefix+", skipping eBPF map collection ***\n"))
+		return acc.appendOutput(ebpfDataFile, []byte(cliNotInstalledLinePrefix+", skipping eBPF map collection ***\n"))
 	}
 
 	cliPath, reason, ok := chooseNetworkPolicyCLI(publishedCLI, havePublished, defaultCLI, haveDefault, haveV6Named)
-	if err := acc.appendOutput(ebpfDataFile, []byte(fmt.Sprintf("%s %s ***\n", CLISelectionLinePrefix, reason))); err != nil {
+	if err := acc.appendOutput(ebpfDataFile, []byte(fmt.Sprintf("%s %s ***\n", cliSelectionLinePrefix, reason))); err != nil {
 		return fmt.Errorf("failed to append CLI selection to %s: %w", ebpfDataFile, err)
 	}
 	if !ok {
@@ -140,26 +136,24 @@ func networkPolicyEbpfInfo(acc *Accessor) error {
 	}
 	loaded, err := acc.Command(cliPath, "ebpf", "loaded-ebpfdata").CombinedOutput()
 	if err != nil {
-		// Record the failure under the header (e.g. a denied exec on the Auto Mode
-		// managed agent) rather than only in the joined error.
-		return errors.Join(
-			acc.appendOutput(ebpfDataFile, []byte(fmt.Sprintf("%s %s ebpf loaded-ebpfdata: %v ***\n", CLIExecFailedLinePrefix, cliPath, err))),
-			fmt.Errorf("%s %s: %w", CLIExecFailedMarker, cliPath, err),
-		)
+		// Best-effort: record the failure line in the bundle (a denied exec on the
+		// Auto Mode managed agent surfaces here) but don't fail the capture — a
+		// missing optional diagnostic shouldn't mark the whole bundle as failed. Same
+		// contract as the best-effort per-map dumps below.
+		return acc.appendOutput(ebpfDataFile, []byte(fmt.Sprintf("%s %s ebpf loaded-ebpfdata: %v ***\n", cliExecFailedLinePrefix, cliPath, err)))
 	}
 	if err := acc.appendOutput(ebpfDataFile, loaded); err != nil {
 		return fmt.Errorf("failed to append output to %s: %w", ebpfDataFile, err)
 	}
 
-	ebpfMapFile := EBPFMapsDataFile
 	mapIDs := uniqueMapIDs(string(loaded))
 	var merr error
 	for _, mapID := range mapIDs {
 		// Per-map dump is best-effort (IgnoreFailure): one undumpable map (e.g. GC'd
 		// between enumerate and dump) must not fail the whole bundle capture.
 		merr = errors.Join(merr,
-			acc.appendOutput(ebpfMapFile, []byte(fmt.Sprintf("*** EBPF map data for %s %s ***\n", MapIDMarker, mapID))),
-			acc.CommandOutput([]string{cliPath, "ebpf", "dump-maps", mapID}, ebpfMapFile, CommandOptionsAppend|CommandOptionsNoStderr|CommandOptionsIgnoreFailure),
+			acc.appendOutput(ebpfMapsDataFile, []byte(fmt.Sprintf("*** EBPF map data for %s %s ***\n", mapIDMarker, mapID))),
+			acc.CommandOutput([]string{cliPath, "ebpf", "dump-maps", mapID}, ebpfMapsDataFile, CommandOptionsAppend|CommandOptionsNoStderr|CommandOptionsIgnoreFailure),
 		)
 	}
 	return merr
@@ -171,11 +165,11 @@ func uniqueMapIDs(loaded string) []string {
 	seen := make(map[string]bool)
 	var ids []string
 	for _, line := range strings.Split(loaded, "\n") {
-		idx := strings.Index(line, MapIDMarker)
+		idx := strings.Index(line, mapIDMarker)
 		if idx < 0 {
 			continue
 		}
-		id := strings.TrimSpace(line[idx+len(MapIDMarker):])
+		id := strings.TrimSpace(line[idx+len(mapIDMarker):])
 		if id != "" && !seen[id] {
 			seen[id] = true
 			ids = append(ids, id)
