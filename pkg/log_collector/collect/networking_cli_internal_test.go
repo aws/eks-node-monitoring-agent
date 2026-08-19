@@ -16,10 +16,9 @@ const (
 	published   = "/run/aws-network-policy-agent/aws-eks-na-cli"
 )
 
-// TestChooseNetworkPolicyCLI pins the selection model: a binary is used only when
-// the family is confirmed by the NPA-published symlink, or when a single binary is
-// installed (EC2). With both binaries and no symlink (Auto Mode), it skips. The
-// single-binary rows are EC2 regression pins.
+// TestChooseNetworkPolicyCLI pins the selection table: use a binary only when the
+// family is confirmed (NPA symlink) or a single binary is installed (EC2); with both
+// binaries and no symlink (Auto Mode), skip.
 func TestChooseNetworkPolicyCLI(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -124,10 +123,9 @@ func TestUniqueMapIDs(t *testing.T) {
 	}
 }
 
-// TestFindPublishedNetworkPolicyCLI exercises the real filesystem seam: the
-// link and its target must both be resolved under acc.cfg.Root, and a dangling
-// link (target missing) must read as absent — the fail-safe the whole
-// symlink-skip contract depends on.
+// TestFindPublishedNetworkPolicyCLI exercises the filesystem seam: link and target
+// are resolved under acc.cfg.Root, and a dangling link reads as absent (the skip
+// fail-safe).
 func TestFindPublishedNetworkPolicyCLI(t *testing.T) {
 	// Layout under a fake Root:
 	//   <root>/usr/bin/aws-eks-na-cli-v6        (the family target build)
@@ -214,8 +212,7 @@ func TestNetworkPolicyEbpfInfoRecordsExecFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Commands run through the accessor are bound to its context (see NewAccessor),
-	// so a hand-built accessor must supply one or CombinedOutput panics.
+	// A hand-built accessor must set ctx, or the context-bound CombinedOutput panics.
 	acc := &Accessor{
 		cfg:    Config{Root: root, Destination: dest, CommandTimeout: 5 * time.Second},
 		ctx:    context.Background(),

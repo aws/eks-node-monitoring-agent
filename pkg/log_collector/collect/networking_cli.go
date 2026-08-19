@@ -17,8 +17,7 @@ const (
 	naCLIv6Named = "aws-eks-na-cli-v6"
 )
 
-// The collector's output contract: the bundle file paths and the marker strings it
-// writes, as named constants rather than inline literals so there is one definition.
+// Output contract: the bundle file paths and marker strings the collector writes.
 const (
 	// ebpfDataFile holds the loaded-ebpfdata output and the CLI selection line.
 	ebpfDataFile = "networking/ebpf-data.txt"
@@ -29,22 +28,19 @@ const (
 	cliSelectionLinePrefix = "*** network-policy CLI selection:"
 	// mapIDMarker begins each per-map dump section in ebpfMapsDataFile.
 	mapIDMarker = "Map ID:"
-	// cliExecFailedLinePrefix begins the line recorded when a chosen binary was run
-	// but the exec itself failed (e.g. an SELinux denial on the Auto Mode managed
-	// agent). It lets a reader distinguish a denied exec from an empty-map result.
+	// cliExecFailedLinePrefix begins the line written when the chosen binary could not
+	// be executed (e.g. an SELinux denial on the Auto Mode agent), distinct from empty maps.
 	cliExecFailedLinePrefix = "*** failed to execute"
 )
 
-// networkPolicyCLIDirs are searched in order. The Auto Mode managed agent runs as
-// SELinux system_t, which can exec /usr/bin (os_t) but not the /opt/cni/bin copy
-// (cni_exec_t), so /usr/bin is tried first. On EC2 the agent runs as a privileged
-// container domain that can exec either.
+// networkPolicyCLIDirs are searched in order. /usr/bin is first because the Auto Mode
+// managed agent (SELinux system_t) can exec it but not the /opt/cni/bin copy (cni_exec_t);
+// on EC2 the agent can exec either.
 var networkPolicyCLIDirs = []string{"/usr/bin", "/opt/cni/bin"}
 
 // naCLIPublishedDir is where the network policy agent publishes a symlink to the
-// family-correct build at startup (it knows the family from its own config). In
-// /run because /usr is immutable; absent until the agent starts, cleared on
-// reboot. Absence means the family is unconfirmed and map decoding is skipped.
+// family-correct build at startup. Absence means the family is unconfirmed, so map
+// decoding is skipped.
 const naCLIPublishedDir = "/run/aws-network-policy-agent"
 
 // findNetworkPolicyCLI returns the Root-prefixed path of the named CLI if it
@@ -59,12 +55,10 @@ func findNetworkPolicyCLI(acc *Accessor, name string) (string, bool) {
 	return "", false
 }
 
-// findPublishedNetworkPolicyCLI returns the published symlink if it exists and
-// its target exists, both resolved under acc.cfg.Root. The network policy agent
-// writes an absolute target, so it is re-rooted under Root before the existence
-// check rather than followed by os.Stat (which would resolve against the wrong
-// namespace when Root != "/"). A dangling link reads as absent, so decoding is
-// skipped.
+// findPublishedNetworkPolicyCLI returns the published symlink if both it and its
+// target exist under acc.cfg.Root. The target is absolute, so it is re-rooted under
+// Root before the check rather than os.Stat'd directly (which would resolve against
+// the wrong namespace when Root != "/"). A dangling link reads as absent.
 func findPublishedNetworkPolicyCLI(acc *Accessor) (string, bool) {
 	link := filepath.Join(acc.cfg.Root, naCLIPublishedDir, naCLIDefault)
 	target, err := os.Readlink(link)
@@ -85,10 +79,9 @@ func findPublishedNetworkPolicyCLI(acc *Accessor) (string, bool) {
 	return link, true
 }
 
-// chooseNetworkPolicyCLI is the pure selection decision, split from the filesystem
-// side for unit testing. The published symlink is the only family signal (no family
-// query, no decode probe): a single installed binary is family-correct by the CNI
-// daemonset; two builds without a symlink leave the family unconfirmed, so it skips.
+// chooseNetworkPolicyCLI is the pure selection decision. The published symlink is the
+// only family signal: a single installed binary is family-correct by the CNI daemonset;
+// two builds without a symlink leave the family unconfirmed, so it skips.
 func chooseNetworkPolicyCLI(publishedCLI string, havePublished bool, defaultCLI string, haveDefault, haveV6Named bool) (cliPath string, reason string, ok bool) {
 	switch {
 	case havePublished:
@@ -101,18 +94,16 @@ func chooseNetworkPolicyCLI(publishedCLI string, havePublished bool, defaultCLI 
 	return "", "family unconfirmed (no NPA-published symlink), skipping map dumps", false
 }
 
-// networkPolicyEbpfInfo dumps the network-policy eBPF loaded programs and map
-// contents via aws-eks-na-cli. The family is confirmed first (chooseNetworkPolicyCLI),
-// and the confirmed binary runs BOTH loaded-ebpfdata and dump-maps. We do not
-// rely on any subcommand being family-agnostic: if the family is unconfirmed, no
-// na-cli command is run and only the selection reason is recorded.
+// networkPolicyEbpfInfo dumps the network-policy eBPF programs and map contents via
+// aws-eks-na-cli. The family is confirmed first; if it is unconfirmed, no command is
+// run and only the selection reason is recorded.
 func networkPolicyEbpfInfo(acc *Accessor) error {
 	publishedCLI, havePublished := findPublishedNetworkPolicyCLI(acc)
 	defaultCLI, haveDefault := findNetworkPolicyCLI(acc, naCLIDefault)
 	_, haveV6Named := findNetworkPolicyCLI(acc, naCLIv6Named)
 
-	// chooseNetworkPolicyCLI owns the whole decision, including "not installed",
-	// so the selection line is the single record of what happened.
+	// chooseNetworkPolicyCLI owns the whole decision, so the selection line is the
+	// single record of the outcome.
 	cliPath, reason, ok := chooseNetworkPolicyCLI(publishedCLI, havePublished, defaultCLI, haveDefault, haveV6Named)
 	if err := acc.appendOutput(ebpfDataFile, []byte(fmt.Sprintf("%s %s ***\n", cliSelectionLinePrefix, reason))); err != nil {
 		return fmt.Errorf("failed to append CLI selection to %s: %w", ebpfDataFile, err)
@@ -127,9 +118,8 @@ func networkPolicyEbpfInfo(acc *Accessor) error {
 	}
 	loaded, err := acc.CombinedOutput(cliPath, "ebpf", "loaded-ebpfdata")
 	if err != nil {
-		// Best-effort: record the failure line and return nil, so a denied exec (e.g.
-		// on the Auto Mode managed agent) doesn't fail the whole capture. Same as the
-		// per-map dumps below.
+		// Best-effort: record the failure and return nil so a denied exec doesn't fail
+		// the whole capture, like the per-map dumps below.
 		return acc.appendOutput(ebpfDataFile, []byte(fmt.Sprintf("%s %s ebpf loaded-ebpfdata: %v ***\n", cliExecFailedLinePrefix, cliPath, err)))
 	}
 	if err := acc.appendOutput(ebpfDataFile, loaded); err != nil {
