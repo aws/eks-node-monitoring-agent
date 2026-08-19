@@ -70,7 +70,7 @@ func interfaces(acc *Accessor) error {
 	}
 	var merr error
 	for _, netInterface := range netInterfaces {
-		output, err := acc.Command("ethtool", "-S", netInterface.Name).CombinedOutput()
+		output, err := acc.CombinedOutput("ethtool", "-S", netInterface.Name)
 		// we can still use the output of ethtool if there is an error.
 		if err != nil && len(output) == 0 {
 			merr = errors.Join(merr, err)
