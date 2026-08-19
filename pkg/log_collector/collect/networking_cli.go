@@ -125,7 +125,7 @@ func networkPolicyEbpfInfo(acc *Accessor) error {
 	if err := acc.appendOutput(ebpfDataFile, []byte("*** EBPF loaded data ***\n")); err != nil {
 		return fmt.Errorf("failed to append output to %s: %w", ebpfDataFile, err)
 	}
-	loaded, err := acc.Command(cliPath, "ebpf", "loaded-ebpfdata").CombinedOutput()
+	loaded, err := acc.CombinedOutput(cliPath, "ebpf", "loaded-ebpfdata")
 	if err != nil {
 		// Best-effort: record the failure line and return nil, so a denied exec (e.g.
 		// on the Auto Mode managed agent) doesn't fail the whole capture. Same as the

@@ -1,10 +1,14 @@
 package collect
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/go-logr/logr"
 )
 
 const (
@@ -210,7 +214,14 @@ func TestNetworkPolicyEbpfInfoRecordsExecFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := networkPolicyEbpfInfo(&Accessor{cfg: Config{Root: root, Destination: dest}}); err != nil {
+	// Commands run through the accessor are bound to its context (see NewAccessor),
+	// so a hand-built accessor must supply one or CombinedOutput panics.
+	acc := &Accessor{
+		cfg:    Config{Root: root, Destination: dest, CommandTimeout: 5 * time.Second},
+		ctx:    context.Background(),
+		logger: logr.Discard(),
+	}
+	if err := networkPolicyEbpfInfo(acc); err != nil {
 		t.Fatalf("a failed exec must be best-effort (recorded, not returned); got %v", err)
 	}
 
