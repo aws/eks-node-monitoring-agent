@@ -14,6 +14,7 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 	"github.com/aws/eks-node-monitoring-agent/api/monitor/resource"
 	"github.com/aws/eks-node-monitoring-agent/pkg/observer"
+	"github.com/aws/eks-node-monitoring-agent/pkg/reasons"
 )
 
 var (
@@ -138,7 +139,7 @@ func (m *MonitorManager) exportCondition(ctx context.Context, monitorName string
 	// path, bypassing MinOccurrences gating.
 	if condition.Resolved {
 		m.conditionCountMap[condition.Reason] = 0
-		recovered, err := m.exporter.Resolve(ctx, condition, conditionType)
+		recovered, err := m.exporter.Resolve(ctx, condition, conditionType, resolveComponent(monitorName, condition.Reason))
 		if err != nil {
 			return err
 		}
@@ -157,17 +158,39 @@ func (m *MonitorManager) exportCondition(ctx context.Context, monitorName string
 	}
 	m.conditionCountMap[condition.Reason] = 0
 
-	return m.SendCondition(ctx, condition, conditionType)
+	return m.sendCondition(ctx, condition, conditionType, monitorName)
 }
 
-// SendCondition sends a condition to the exporter based on severity
+// resolveComponent maps an emitted condition to its owning component — the
+// unit of the per-component event budget. The reasons.yaml ledger wins when
+// the emitted reason is registered; otherwise the component is the emitting
+// monitor's name (the common path for parameterized reasons, whose rendered
+// strings never match a registered identifier). Resolution lives here, in
+// the manager, so monitors cannot self-declare their budget identity.
+func resolveComponent(monitorName, reason string) string {
+	if meta, ok := reasons.ByName(reason); ok {
+		return meta.Component()
+	}
+	return monitorName
+}
+
+// SendCondition sends a condition to the exporter based on severity. The
+// component is resolved from the monitor name alone, so prefer the internal
+// path when a reason-specific component may apply.
 func (m *MonitorManager) SendCondition(ctx context.Context, condition monitor.Condition, conditionType corev1.NodeConditionType) error {
+	return m.sendCondition(ctx, condition, conditionType, "")
+}
+
+// sendCondition routes a condition to the exporter based on severity,
+// resolving the owning component for the event-recording paths.
+func (m *MonitorManager) sendCondition(ctx context.Context, condition monitor.Condition, conditionType corev1.NodeConditionType, monitorName string) error {
 	log.FromContext(ctx).Info("sending condition to exporter", "condition", condition, "conditionType", conditionType)
+	component := resolveComponent(monitorName, condition.Reason)
 	switch condition.Severity {
 	case monitor.SeverityInfo:
-		return m.exporter.Info(ctx, condition, conditionType)
+		return m.exporter.Info(ctx, condition, conditionType, component)
 	case monitor.SeverityWarning:
-		return m.exporter.Warning(ctx, condition, conditionType)
+		return m.exporter.Warning(ctx, condition, conditionType, component)
 	case monitor.SeverityFatal:
 		for _, cType := range m.conditionTypeMap {
 			if conditionType == cType {
