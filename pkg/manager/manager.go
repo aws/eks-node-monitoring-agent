@@ -133,6 +133,22 @@ func (m *MonitorManager) exportCondition(ctx context.Context, monitorName string
 	}
 	logger = logger.WithValues("conditionType", conditionType)
 
+	// Resolved conditions clear state instead of reporting it: reset the
+	// occurrence debounce for the reason and route to the exporter's resolve
+	// path, bypassing MinOccurrences gating.
+	if condition.Resolved {
+		m.conditionCountMap[condition.Reason] = 0
+		recovered, err := m.exporter.Resolve(ctx, condition, conditionType)
+		if err != nil {
+			return err
+		}
+		if recovered {
+			conditionTypeGauge.WithLabelValues(string(conditionType)).Set(0)
+		}
+		logger.Info("resolved condition", "recovered", recovered)
+		return nil
+	}
+
 	// Skip requests for conditions that have not met their minimum occurrences
 	if m.conditionCountMap[condition.Reason] < condition.MinOccurrences {
 		logger.Info("condition has not met MinOccurrences", "occurrences", m.conditionCountMap[condition.Reason])

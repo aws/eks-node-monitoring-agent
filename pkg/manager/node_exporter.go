@@ -48,6 +48,8 @@ func NewNodeExporter(
 		recorder:               recorder,
 		managedConditions:      initializeManagedConditions(managedConditionConfigs),
 		managedConditionsDirty: true,
+		conditionConfigs:       managedConditionConfigs,
+		fatalEntries:           make(map[corev1.NodeConditionType][]fatalEntry),
 	}
 }
 
@@ -92,6 +94,20 @@ type nodeExporter struct {
 	managedConditions      map[corev1.NodeConditionType]corev1.NodeCondition
 	managedConditionsDirty bool
 	managedConditionsLock  sync.Mutex
+
+	// conditionConfigs holds the ready-state configuration used to restore a
+	// condition once all of its fatal reasons have been resolved.
+	conditionConfigs map[corev1.NodeConditionType]NodeConditionConfig
+	// fatalEntries tracks the unresolved fatal reasons per condition type in
+	// arrival order, so that resolving one reason does not clear a condition
+	// that is still failing for another.
+	fatalEntries map[corev1.NodeConditionType][]fatalEntry
+}
+
+// fatalEntry is one unresolved fatal reason and its latest message.
+type fatalEntry struct {
+	reason  string
+	message string
 }
 
 // Info records an event for the specified condition.
@@ -108,36 +124,120 @@ func (e *nodeExporter) Warning(ctx context.Context, c monitor.Condition, conditi
 
 // Fatal updates the local state for the specified managed condition.
 // The condition will be reported in the Node.Status.Conditions periodically.
+// Each distinct Reason is tracked until it is resolved via Resolve; messages
+// from all unresolved reasons are aggregated into the condition message.
 func (e *nodeExporter) Fatal(ctx context.Context, monitorCondition monitor.Condition, conditionType corev1.NodeConditionType) error {
 	e.managedConditionsLock.Lock()
 	defer e.managedConditionsLock.Unlock()
+
+	entries := e.fatalEntries[conditionType]
+	updated := false
+	for i := range entries {
+		if entries[i].reason == monitorCondition.Reason {
+			entries[i].message = monitorCondition.Message
+			updated = true
+			break
+		}
+	}
+	if !updated {
+		entries = append(entries, fatalEntry{reason: monitorCondition.Reason, message: monitorCondition.Message})
+	}
+	e.fatalEntries[conditionType] = entries
+
+	e.rebuildFatalCondition(conditionType)
+	return nil
+}
+
+// Resolve clears a previously reported fatal reason for the condition type.
+// When the last reason is cleared, the condition is restored to its healthy
+// ready state. It returns true when the condition is healthy after the
+// resolution. Resolving a reason that was never reported is a no-op.
+func (e *nodeExporter) Resolve(ctx context.Context, monitorCondition monitor.Condition, conditionType corev1.NodeConditionType) (bool, error) {
+	e.managedConditionsLock.Lock()
+	defer e.managedConditionsLock.Unlock()
+
+	entries := e.fatalEntries[conditionType]
+	removed := false
+	for i := range entries {
+		if entries[i].reason == monitorCondition.Reason {
+			entries = append(entries[:i], entries[i+1:]...)
+			removed = true
+			break
+		}
+	}
+	if !removed {
+		return len(entries) == 0, nil
+	}
+	e.fatalEntries[conditionType] = entries
+
+	e.recorder.Event(e.nodeRef, corev1.EventTypeNormal, string(conditionType),
+		fmt.Sprintf("%s: the previously reported issue has been resolved", monitorCondition.Reason))
+
+	if len(entries) > 0 {
+		// Other reasons are still failing; rebuild the condition without the
+		// resolved reason.
+		e.rebuildFatalCondition(conditionType)
+		return false, nil
+	}
+
+	// No fatal reasons remain: restore the ready state.
 	now := metav1.Now()
+	readyCondition := corev1.NodeCondition{
+		Type:               conditionType,
+		Status:             corev1.ConditionTrue,
+		Reason:             "Resolved",
+		Message:            "The previously reported issues have been resolved",
+		LastHeartbeatTime:  now,
+		LastTransitionTime: now,
+	}
+	if config, ok := e.conditionConfigs[conditionType]; ok {
+		readyCondition.Reason = config.ReadyReason
+		readyCondition.Message = config.ReadyMessage
+	}
+	if oldCondition, ok := e.managedConditions[conditionType]; ok && oldCondition.Status == readyCondition.Status {
+		readyCondition.LastTransitionTime = oldCondition.LastTransitionTime
+	}
+	e.managedConditions[conditionType] = readyCondition
+	e.managedConditionsDirty = true
+	return true, nil
+}
+
+// rebuildFatalCondition recomputes the managed condition for the type from
+// the tracked fatal entries. The caller must hold managedConditionsLock and
+// ensure at least one entry exists.
+func (e *nodeExporter) rebuildFatalCondition(conditionType corev1.NodeConditionType) {
+	entries := e.fatalEntries[conditionType]
+	now := metav1.Now()
+
+	// Aggregate distinct messages in arrival order.
+	var messages []string
+	for _, entry := range entries {
+		duplicate := false
+		for _, m := range messages {
+			if m == entry.message {
+				duplicate = true
+				break
+			}
+		}
+		if !duplicate && entry.message != "" {
+			messages = append(messages, entry.message)
+		}
+	}
+
 	newCondition := corev1.NodeCondition{
 		Type:               conditionType,
-		Reason:             monitorCondition.Reason,
-		Message:            monitorCondition.Message,
+		Reason:             entries[len(entries)-1].reason,
+		Message:            strings.Join(messages, "; "),
 		Status:             corev1.ConditionFalse,
 		LastTransitionTime: now,
 		LastHeartbeatTime:  now,
 	}
-	if oldCondition, ok := e.managedConditions[conditionType]; ok {
+	if oldCondition, ok := e.managedConditions[conditionType]; ok && oldCondition.Status == newCondition.Status {
 		// if the status has not changed, use the old transition time
-		if oldCondition.Status == newCondition.Status {
-			newCondition.LastTransitionTime = oldCondition.LastTransitionTime
-
-			// aggregate messages if the status is the same (e.g. both False)
-			// and ensure that we don't duplicate identical messages.
-			if oldCondition.Message != "" && oldCondition.Message != newCondition.Message && !strings.Contains(oldCondition.Message, newCondition.Message) {
-				newCondition.Message = oldCondition.Message + "; " + newCondition.Message
-			} else if strings.Contains(oldCondition.Message, newCondition.Message) {
-				// if the old message already contains the new one, preserve the old one (which might have other aggregated messages)
-				newCondition.Message = oldCondition.Message
-			}
-		}
+		newCondition.LastTransitionTime = oldCondition.LastTransitionTime
 	}
 	e.managedConditions[conditionType] = newCondition
 	e.managedConditionsDirty = true
-	return nil
 }
 
 // Run starts the node exporter's background tasks
