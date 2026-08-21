@@ -87,6 +87,9 @@ var (
 		`traps:\s*(.*?)\[`,
 		`\s(.*?)\[\d+]: segfault at.*`,
 	}, "|"))
+	// int3 is a breakpoint trap that applications raise deliberately, for example via
+	// __builtin_trap() or Chromium's IMMEDIATE_CRASH(), so it does not indicate a node problem
+	intentionalTrap = regexp.MustCompile(`traps:.* trap int3\b`)
 )
 var (
 	appBlocked        = regexp.MustCompile(`task (.*?):\d+ blocked for more than`)
@@ -109,7 +112,7 @@ func (k *KernelMonitor) handleDmesg(line string) error {
 				Message("A kernel bug was detected and reported by the Linux kernel").
 				Build(),
 		)
-	} else if matches := appCrash.FindStringSubmatch(line); matches != nil {
+	} else if matches := appCrash.FindStringSubmatch(line); matches != nil && !intentionalTrap.MatchString(line) {
 		processName := matches[1]
 		return k.manager.Notify(context.Background(),
 			reasons.AppCrash.
