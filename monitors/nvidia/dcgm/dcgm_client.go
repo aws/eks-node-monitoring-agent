@@ -195,6 +195,9 @@ func (d *dcgmHelper) Reconcile(ctx context.Context) (bool, error) {
 			// Fabric Manager status and GPU fabric health for NVSwitch instances.
 			dcgmapi.DCGM_FI_DEV_FABRIC_MANAGER_STATUS,
 			dcgmapi.DCGM_FI_DEV_FABRIC_HEALTH_MASK,
+			// Row remapping (Ampere+): 393 counts uncorrectable remaps, 395 flags remap failure.
+			dcgmapi.DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS,
+			dcgmapi.DCGM_FI_DEV_ROW_REMAP_FAILURE,
 		})
 		if err != nil {
 			return false, err

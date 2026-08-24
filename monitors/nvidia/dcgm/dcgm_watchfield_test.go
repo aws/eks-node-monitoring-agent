@@ -184,6 +184,70 @@ func TestFields(t *testing.T) {
 		}}, conditions)
 	})
 
+	t.Run("RowRemapFailureFault", func(t *testing.T) {
+		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_ROW_REMAP_FAILURE}
+		fieldValue.Status = dcgmapi.DCGM_ST_OK
+		binary.LittleEndian.PutUint64(fieldValue.Value[:], 1)
+		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}}
+		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
+		conditions, err := dcgmSystem.WatchFields(context.TODO())
+		assert.NoError(t, err)
+		assert.ElementsMatch(t, []monitor.Condition{{
+			Reason:   "NvidiaRowRemapFailure",
+			Message:  "GPU row remapping failure: a memory row could not be remapped and the GPU requires replacement",
+			Severity: monitor.SeverityFatal,
+		}}, conditions)
+	})
+
+	t.Run("RowRemapFailureHealthy", func(t *testing.T) {
+		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_ROW_REMAP_FAILURE}
+		fieldValue.Status = dcgmapi.DCGM_ST_OK
+		binary.LittleEndian.PutUint64(fieldValue.Value[:], 0)
+		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}}
+		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
+		conditions, err := dcgmSystem.WatchFields(context.TODO())
+		assert.NoError(t, err)
+		assert.Empty(t, conditions)
+	})
+
+	// Blank/sentinel value = row remapping unsupported (pre-Ampere); not flagged.
+	t.Run("RowRemapFailureBlankValueHealthy", func(t *testing.T) {
+		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_ROW_REMAP_FAILURE}
+		fieldValue.Status = dcgmapi.DCGM_ST_OK
+		binary.LittleEndian.PutUint64(fieldValue.Value[:], uint64(dcgmapi.DCGM_FT_INT64_BLANK))
+		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}}
+		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
+		conditions, err := dcgmSystem.WatchFields(context.TODO())
+		assert.NoError(t, err)
+		assert.Empty(t, conditions)
+	})
+
+	t.Run("UncorrectableRemappedRowsWarning", func(t *testing.T) {
+		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS}
+		fieldValue.Status = dcgmapi.DCGM_ST_OK
+		binary.LittleEndian.PutUint64(fieldValue.Value[:], 3)
+		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}}
+		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
+		conditions, err := dcgmSystem.WatchFields(context.TODO())
+		assert.NoError(t, err)
+		assert.ElementsMatch(t, []monitor.Condition{{
+			Reason:   "NvidiaRowRemap",
+			Message:  "GPU remapped 3 memory row(s) due to uncorrectable memory errors",
+			Severity: monitor.SeverityWarning,
+		}}, conditions)
+	})
+
+	t.Run("UncorrectableRemappedRowsZeroHealthy", func(t *testing.T) {
+		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS}
+		fieldValue.Status = dcgmapi.DCGM_ST_OK
+		binary.LittleEndian.PutUint64(fieldValue.Value[:], 0)
+		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}}
+		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
+		conditions, err := dcgmSystem.WatchFields(context.TODO())
+		assert.NoError(t, err)
+		assert.Empty(t, conditions)
+	})
+
 	t.Run("GetResultForBadStatus", func(t *testing.T) {
 		for _, test := range []struct {
 			fieldValue      dcgmapi.FieldValue_v2

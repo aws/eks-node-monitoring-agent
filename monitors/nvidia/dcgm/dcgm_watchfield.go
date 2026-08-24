@@ -45,6 +45,14 @@ func (s *DCGMSystem) WatchFields(ctx context.Context) ([]monitor.Condition, erro
 			continue
 		}
 
+		// Row remap fields also encode health in the value with an OK status.
+		if c, handled := handleRowRemapField(fieldValue); handled {
+			if c != nil {
+				conditions = append(conditions, *c)
+			}
+			continue
+		}
+
 		// skip if there's no issue with the field or no new data was provided.
 		if fieldValue.Status == dcgmapi.DCGM_ST_OK || fieldValue.Status == dcgmapi.DCGM_ST_NO_DATA {
 			continue
@@ -118,6 +126,37 @@ func handleFabricField(fv dcgmapi.FieldValue_v2) (*monitor.Condition, bool) {
 		c := reasons.NvidiaFabricError.
 			Builder().
 			Message(fmt.Sprintf("GPU fabric health mask 0x%x: %s", mask, strings.Join(faults, ", "))).
+			Build()
+		return &c, true
+	default:
+		return nil, false
+	}
+}
+
+// handleRowRemapField handles the row remapping fields. Returns (nil, true)
+// when the field is recognized but healthy (zero count, or blank/sentinel on
+// GPUs without row remapping), (*condition, true) when unhealthy, and
+// (nil, false) for other fields.
+func handleRowRemapField(fv dcgmapi.FieldValue_v2) (*monitor.Condition, bool) {
+	switch fv.FieldID {
+	case dcgmapi.DCGM_FI_DEV_UNCORRECTABLE_REMAPPED_ROWS:
+		v := fv.Int64()
+		if dcgmapi.IsInt64Blank(v) || v <= 0 {
+			return nil, true
+		}
+		c := reasons.NvidiaRowRemap.
+			Builder().
+			Message(fmt.Sprintf("GPU remapped %d memory row(s) due to uncorrectable memory errors", v)).
+			Build()
+		return &c, true
+	case dcgmapi.DCGM_FI_DEV_ROW_REMAP_FAILURE:
+		v := fv.Int64()
+		if dcgmapi.IsInt64Blank(v) || v == 0 {
+			return nil, true
+		}
+		c := reasons.NvidiaRowRemapFailure.
+			Builder().
+			Message("GPU row remapping failure: a memory row could not be remapped and the GPU requires replacement").
 			Build()
 		return &c, true
 	default:
