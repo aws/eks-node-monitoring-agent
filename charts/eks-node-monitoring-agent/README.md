@@ -56,6 +56,7 @@ The following table lists the configurable parameters for this chart and their d
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | dcgmAgent.affinity | object | see [`values.yaml`](./values.yaml) | Map of dcgm pod affinities |
+| dcgmAgent.hostNetwork | bool | `false` | Run the dcgm-server pod on the host network so nv-hostengine binds node port 5555 directly. Required on clusters whose CNI does not implement hostPort. |
 | dcgmAgent.image.account | string | `"602401143452"` | ECR repository account number for the dcgm-exporter. Only used when a tag is set. |
 | dcgmAgent.image.containerRegistry | string | `""` | Full container registry URL override (e.g., 602401143452.dkr.ecr.us-west-2.amazonaws.com). When set, this takes precedence over account/endpoint/region/domain fields. Only used when a tag is set. |
 | dcgmAgent.image.domain | string | `"amazonaws.com"` | ECR repository domain for the dcgm-exporter. Only used when a tag is set. |
