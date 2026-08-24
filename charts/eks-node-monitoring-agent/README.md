@@ -70,6 +70,7 @@ The following table lists the configurable parameters for this chart and their d
 | dcgmAgent.priorityClassName | string | `"system-node-critical"` | PriorityClass for the dcgm exporter. |
 | dcgmAgent.resizePolicy | list | `[]` | Container resize policy for in-place pod vertical scaling (requires Kubernetes 1.33+) |
 | dcgmAgent.resources | object | `{}` | Container resources for the dcgm deployment |
+| dcgmAgent.runtimeClassName | string | `""` | RuntimeClass for the dcgm-server pod (e.g. "nvidia"). Required when the NVIDIA container runtime is not the containerd default. Empty uses the node's default runtime. |
 | dcgmAgent.tolerations | list | `[]` | Deployment tolerations for the dcgm |
 | extraObjects | list | see [`values.yaml`](./values.yaml), so template expressions (e.g. {{ .Release.Namespace }}) inside the manifests are evaluated. Example:   extraObjects:     - apiVersion: monitoring.coreos.com/v1       kind: PodMonitor       metadata:         name: eks-node-monitoring-agent         namespace: {{ .Release.Namespace }}       spec:         selector:           matchLabels:             app.kubernetes.io/name: eks-node-monitoring-agent         podMetricsEndpoints:           - port: metrics |
 | fullnameOverride | string | `"eks-node-monitoring-agent"` | A fullname override for the chart |

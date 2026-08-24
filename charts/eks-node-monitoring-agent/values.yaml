@@ -162,6 +162,8 @@ dcgmAgent:
   nodeSelector: {}
   # -- PriorityClass for the dcgm exporter.
   priorityClassName: system-node-critical
+  # -- RuntimeClass for the dcgm-server pod (e.g. "nvidia"). Required when the NVIDIA container runtime is not the containerd default. Empty uses the node's default runtime.
+  runtimeClassName: ""
   # -- Pod annotations applied to the dcgm exporter
   podAnnotations: {}  
 

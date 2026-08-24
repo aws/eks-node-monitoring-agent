@@ -129,6 +129,11 @@
                     "description": "Name of an existing PriorityClass assigned to the dcgm-exporter pod.",
                     "default": "system-node-critical"
                 },
+                "runtimeClassName": {
+                    "type": "string",
+                    "description": "RuntimeClass assigned to the dcgm-server pod. Required when the NVIDIA container runtime is not the containerd default.",
+                    "default": ""
+                },
                 "resources": {
                     "$ref": "#/definitions/Resources"
                 },
