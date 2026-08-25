@@ -22,10 +22,9 @@ const (
 	// experiencing disk pressure (low disk space or high I/O).
 	DiskPressure corev1.NodeConditionType = "DiskPressure"
 
-	// InstanceStoreIssue indicates a problem with the node's instance store
-	// (ephemeral NVMe) setup. Unlike the Ready-style conditions, it is healthy
-	// when False.
-	InstanceStoreIssue corev1.NodeConditionType = "InstanceStoreIssue"
+	// InstanceStoreReady indicates whether the node's instance store
+	// (ephemeral NVMe) mounts are set up correctly.
+	InstanceStoreReady corev1.NodeConditionType = "InstanceStoreReady"
 
 	// KernelReady indicates whether the kernel is functioning correctly
 	// without critical errors, panics, or resource exhaustion.

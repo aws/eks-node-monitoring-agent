@@ -288,10 +288,9 @@ func run() error {
 			}
 		}
 		if monitorConfig.IsMonitorEnabled("instance-store") {
-			conditionConfigs[conditions.InstanceStoreIssue] = manager.NodeConditionConfig{
-				ReadyReason:   "InstanceStoreIsHealthy",
-				ReadyMessage:  "Instance store mounts are present",
-				HealthyStatus: corev1.ConditionFalse,
+			conditionConfigs[conditions.InstanceStoreReady] = manager.NodeConditionConfig{
+				ReadyReason:  "InstanceStoreIsReady",
+				ReadyMessage: "Monitoring for the InstanceStore system is active",
 			}
 		}
 		if monitorConfig.IsMonitorEnabled("storage-monitor") {
@@ -350,7 +349,7 @@ func run() error {
 			var conditionType corev1.NodeConditionType
 			switch mon.Name() {
 			case "instance-store":
-				conditionType = conditions.InstanceStoreIssue
+				conditionType = conditions.InstanceStoreReady
 			case "kernel":
 				conditionType = conditions.KernelReady
 			case "storage":
