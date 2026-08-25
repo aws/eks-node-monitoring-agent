@@ -32,6 +32,24 @@ var _ Exporter = (*nodeExporter)(nil)
 type NodeConditionConfig struct {
 	ReadyReason  string
 	ReadyMessage string
+	// HealthyStatus is the condition status reported while no problem has been
+	// detected. Defaults to ConditionTrue; set ConditionFalse for problem-style
+	// conditions (e.g. InstanceStoreIssue) that are healthy when False.
+	HealthyStatus corev1.ConditionStatus
+}
+
+func (c NodeConditionConfig) healthyStatus() corev1.ConditionStatus {
+	if c.HealthyStatus == "" {
+		return corev1.ConditionTrue
+	}
+	return c.HealthyStatus
+}
+
+func (c NodeConditionConfig) unhealthyStatus() corev1.ConditionStatus {
+	if c.healthyStatus() == corev1.ConditionTrue {
+		return corev1.ConditionFalse
+	}
+	return corev1.ConditionTrue
 }
 
 // NewNodeExporter creates a new node exporter that updates Kubernetes node conditions
@@ -42,12 +60,13 @@ func NewNodeExporter(
 	managedConditionConfigs map[corev1.NodeConditionType]NodeConditionConfig,
 ) *nodeExporter {
 	return &nodeExporter{
-		nodeRef:                makeNodeReference(node),
-		nodeKey:                client.ObjectKeyFromObject(node),
-		kubeClient:             kubeClient,
-		recorder:               recorder,
-		managedConditions:      initializeManagedConditions(managedConditionConfigs),
-		managedConditionsDirty: true,
+		nodeRef:                 makeNodeReference(node),
+		nodeKey:                 client.ObjectKeyFromObject(node),
+		kubeClient:              kubeClient,
+		recorder:                recorder,
+		managedConditionConfigs: managedConditionConfigs,
+		managedConditions:       initializeManagedConditions(managedConditionConfigs),
+		managedConditionsDirty:  true,
 	}
 }
 
@@ -72,7 +91,7 @@ func initializeManagedConditions(conditionConfigs map[corev1.NodeConditionType]N
 	for conditionType, conditionConfig := range conditionConfigs {
 		managedConditions[conditionType] = corev1.NodeCondition{
 			Type:               conditionType,
-			Status:             corev1.ConditionTrue,
+			Status:             conditionConfig.healthyStatus(),
 			Reason:             conditionConfig.ReadyReason,
 			Message:            conditionConfig.ReadyMessage,
 			LastHeartbeatTime:  now,
@@ -89,9 +108,10 @@ type nodeExporter struct {
 	nodeRef    *corev1.ObjectReference
 	nodeKey    client.ObjectKey
 
-	managedConditions      map[corev1.NodeConditionType]corev1.NodeCondition
-	managedConditionsDirty bool
-	managedConditionsLock  sync.Mutex
+	managedConditionConfigs map[corev1.NodeConditionType]NodeConditionConfig
+	managedConditions       map[corev1.NodeConditionType]corev1.NodeCondition
+	managedConditionsDirty  bool
+	managedConditionsLock   sync.Mutex
 }
 
 // Info records an event for the specified condition.
@@ -116,7 +136,7 @@ func (e *nodeExporter) Fatal(ctx context.Context, monitorCondition monitor.Condi
 		Type:               conditionType,
 		Reason:             monitorCondition.Reason,
 		Message:            monitorCondition.Message,
-		Status:             corev1.ConditionFalse,
+		Status:             e.managedConditionConfigs[conditionType].unhealthyStatus(),
 		LastTransitionTime: now,
 		LastHeartbeatTime:  now,
 	}

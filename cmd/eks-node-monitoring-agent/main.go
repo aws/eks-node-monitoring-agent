@@ -40,6 +40,7 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/pkg/monitor/registry"
 
 	// Import monitor packages to trigger auto-registration via init()
+	_ "github.com/aws/eks-node-monitoring-agent/monitors/instancestore"
 	_ "github.com/aws/eks-node-monitoring-agent/monitors/kernel"
 	_ "github.com/aws/eks-node-monitoring-agent/monitors/networking"
 	_ "github.com/aws/eks-node-monitoring-agent/monitors/neuron"
@@ -286,6 +287,13 @@ func run() error {
 				ReadyMessage: "Monitoring for the Kernel system is active",
 			}
 		}
+		if monitorConfig.IsMonitorEnabled("instance-store") {
+			conditionConfigs[conditions.InstanceStoreIssue] = manager.NodeConditionConfig{
+				ReadyReason:   "InstanceStoreIsHealthy",
+				ReadyMessage:  "Instance store mounts are present",
+				HealthyStatus: corev1.ConditionFalse,
+			}
+		}
 		if monitorConfig.IsMonitorEnabled("storage-monitor") {
 			conditionConfigs[conditions.StorageReady] = manager.NodeConditionConfig{
 				ReadyReason:  "DiskIsReady",
@@ -341,6 +349,8 @@ func run() error {
 			monCtx := log.IntoContext(ctx, logger.WithValues("monitor", mon.Name()))
 			var conditionType corev1.NodeConditionType
 			switch mon.Name() {
+			case "instance-store":
+				conditionType = conditions.InstanceStoreIssue
 			case "kernel":
 				conditionType = conditions.KernelReady
 			case "storage":
