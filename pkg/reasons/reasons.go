@@ -76,6 +76,14 @@ var (
         template:        "NvidiaPowerError",
         defaultSeverity: "Warning",
     }
+    NvidiaRowRemap = ReasonMeta{
+        template:        "NvidiaRowRemap",
+        defaultSeverity: "Warning",
+    }
+    NvidiaRowRemapFailure = ReasonMeta{
+        template:        "NvidiaRowRemapFailure",
+        defaultSeverity: "Fatal",
+    }
     NvidiaThermalError = ReasonMeta{
         template:        "NvidiaThermalError",
         defaultSeverity: "Warning",

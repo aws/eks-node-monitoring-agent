@@ -93,6 +93,14 @@ If auto repair is enabled, the repair actions that are listed start 10 minutes a
 |Event
 |Power utilization of GPUs breached the allowed thresholds.
 
+|NvidiaRowRemap
+|Event
+|The GPU remapped memory rows due to uncorrectable memory errors. An early signal of degrading GPU memory.
+
+|NvidiaRowRemapFailure
+|Condition
+|The GPU failed to remap a memory row and can no longer mask bad memory cells. The GPU requires replacement.
+
 |NvidiaThermalError
 |Event
 |Thermal status of GPUs breached the allowed thresholds.

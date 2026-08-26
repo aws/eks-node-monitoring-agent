@@ -346,6 +346,18 @@ AcceleratedHardwareReady:
     DefaultSeverity: 'Warning'
     Description: >-
       Power utilization of GPUs breached the allowed thresholds.
+  NvidiaRowRemap:
+    Template: 'NvidiaRowRemap'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      The GPU remapped memory rows due to uncorrectable memory errors. An
+      early signal of degrading GPU memory.
+  NvidiaRowRemapFailure:
+    Template: 'NvidiaRowRemapFailure'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      The GPU failed to remap a memory row and can no longer mask bad memory
+      cells. The GPU requires replacement.
   NvidiaThermalError:
     Template: 'NvidiaThermalError'
     DefaultSeverity: 'Warning'
