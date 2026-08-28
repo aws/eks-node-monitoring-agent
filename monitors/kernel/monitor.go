@@ -83,15 +83,16 @@ var (
 	)
 	appCrash = regexp.MustCompile(strings.Join([]string{
 		// each top level group is expected to have one sub group capture for the
-		// process name, use appCrashProcessName to read whichever one matched
-		`traps:\s*(.*?)\[`,
+		// process name, use appCrashProcessName to read whichever one matched.
+		// the fault names are a bounded allowlist from arch/x86/kernel/traps.c. int3
+		// is left out because it is a breakpoint applications raise deliberately (for
+		// example Chromium's IMMEDIATE_CRASH()), not a node problem. divide error is
+		// printed with a "trap " prefix, the rest are not.
+		`traps:\s*(.*?)\[\d+] (?:trap )?(?:divide error|general protection fault|stack segment|segment not present|invalid TSS|alignment check|bounds)`,
 		// anchored on the bracketed pid so the capture cannot grow left into the
 		// dmesg timestamp prefix
 		`\s([^\s\[]+)\[\d+]: segfault at.*`,
 	}, "|"))
-	// int3 is a breakpoint trap that applications raise deliberately, for example via
-	// __builtin_trap() or Chromium's IMMEDIATE_CRASH(), so it does not indicate a node problem
-	intentionalTrap = regexp.MustCompile(`traps:.* trap int3\b`)
 )
 var (
 	appBlocked        = regexp.MustCompile(`task (.*?):\d+ blocked for more than`)
@@ -114,7 +115,7 @@ func (k *KernelMonitor) handleDmesg(line string) error {
 				Message("A kernel bug was detected and reported by the Linux kernel").
 				Build(),
 		)
-	} else if matches := appCrash.FindStringSubmatch(line); matches != nil && !intentionalTrap.MatchString(line) {
+	} else if matches := appCrash.FindStringSubmatch(line); matches != nil {
 		processName := appCrashProcessName(matches)
 		return k.manager.Notify(context.Background(),
 			reasons.AppCrash.
