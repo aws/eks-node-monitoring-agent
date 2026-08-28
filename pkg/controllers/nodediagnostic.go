@@ -49,6 +49,24 @@ type nodeDiagnosticController struct {
 	// captureFunc is the function called to execute the packet capture. It defaults to
 	// captureAndUploadPackets but can be overridden in tests to avoid running tcpdump.
 	captureFunc func(ctx context.Context, nd *v1alpha1.NodeDiagnostic, captureID string) ([]error, error)
+
+	// collectFunc is the function called to collect logs. It defaults to
+	// collectLogs but can be overridden in tests to avoid reading host state.
+	collectFunc func(ctx context.Context, categories []v1alpha1.LogCategory) (io.Reader, int, error)
+
+	// logCaptureTimeout overrides LogCaptureTimeout. Zero means the default; it
+	// is only set in tests, which cannot wait out the real bound.
+	logCaptureTimeout time.Duration
+
+	// captureRunning reports whether a previous log collection has not returned
+	// yet. A collector blocked on unresponsive host I/O never returns, so
+	// without this every later NodeDiagnostic would start a fresh collection and
+	// leak both a goroutine and the temp directory that collection is writing
+	// into, for the life of the node.
+	captureRunning atomic.Bool
+	// captureStartedAt is the unix nano timestamp of the outstanding collection,
+	// and is only meaningful while captureRunning is true.
+	captureStartedAt atomic.Int64
 }
 
 func NewNodeDiagnosticController(kubeClient client.Client, nodeName string, runtimeContext *config.RuntimeContext) *nodeDiagnosticController {
@@ -58,6 +76,7 @@ func NewNodeDiagnosticController(kubeClient client.Client, nodeName string, runt
 		runtimeContext: runtimeContext,
 	}
 	c.captureFunc = c.captureAndUploadPackets
+	c.collectFunc = c.collectLogs
 	return c
 }
 
@@ -159,13 +178,13 @@ func (c *nodeDiagnosticController) handleLogCapture(ctx context.Context, nodeDia
 	}
 
 	log.Info("beginning log collection")
-	archiveReader, issueCount, err := c.collectLogs(ctx, nodeDiagnostic.Spec.Categories)
+	archiveReader, issueCount, err := c.collectLogsBounded(ctx, nodeDiagnostic.Spec.Categories)
 	if err != nil {
 		log.Error(err, "failed to collect logs")
 		captureStatus.State = v1alpha1.CaptureState{
 			Completed: &v1alpha1.CaptureStateCompleted{
 				Reason:     v1alpha1.CaptureStateFailure,
-				Message:    fmt.Sprint("fatal error during log collection process", err),
+				Message:    fmt.Sprintf("fatal error during log collection process: %s", err),
 				StartedAt:  captureStatus.State.Running.StartedAt,
 				FinishedAt: metav1.Now(),
 			},
@@ -553,6 +572,93 @@ func (c *nodeDiagnosticController) captureAndUploadPackets(ctx context.Context, 
 	return uploadErrors, nil
 }
 
+// LogCaptureTimeout bounds a whole LogCapture. Individual commands are bounded
+// by collect.DefaultCommandTimeout, so this is the backstop for a collector that
+// blocks outside of a subprocess, such as reading a file on an unresponsive
+// mount. Without it a blocked collector leaves CaptureState in Running forever,
+// which is indistinguishable from a slow capture and, with
+// MaxConcurrentReconciles of 1, also stops every later NodeDiagnostic.
+const LogCaptureTimeout = 20 * time.Minute
+
+// collectLogsBounded runs the log collection under LogCaptureTimeout.
+//
+// On timeout the collection goroutine is abandoned rather than waited on, for
+// the same reason the command level bound abandons its child: a collector stuck
+// on unresponsive host I/O cannot be interrupted, and waiting for it is what
+// leaves the capture stuck in Running. The partial output of an abandoned
+// collection is deliberately not archived — it writes into the temp directory
+// that collectLogs removes on return, and archiving a directory with a live
+// writer in it would race the archiver against a growing file.
+//
+// Abandoning is only safe because of captureRunning. An abandoned collection
+// still holds its goroutine and its temp directory: collectLogs removes that
+// directory with a deferred call which does not run until the blocked read
+// returns, and on a wedged mount it never does. While a collection is
+// outstanding this reports the block instead of starting another one, so a
+// permanently wedged collector costs one goroutine and one temp directory
+// rather than a fresh pair for every NodeDiagnostic.
+func (c *nodeDiagnosticController) collectLogsBounded(ctx context.Context, categories []v1alpha1.LogCategory) (io.Reader, int, error) {
+	timeout := c.logCaptureTimeout
+	if timeout <= 0 {
+		timeout = LogCaptureTimeout
+	}
+
+	if !c.captureRunning.CompareAndSwap(false, true) {
+		// zero means the winning caller has claimed the slot but has not stored its
+		// start time yet, so there is no duration to report. Reporting one anyway
+		// would measure from the epoch.
+		if startedAt := c.captureStartedAt.Load(); startedAt == 0 {
+			return nil, 0, fmt.Errorf(
+				"log collection from a previous NodeDiagnostic has not returned and is still blocked on host I/O; " +
+					"not starting another until it does")
+		} else {
+			blocked := time.Since(time.Unix(0, startedAt)).Truncate(time.Second)
+			return nil, 0, fmt.Errorf(
+				"log collection from a previous NodeDiagnostic has not returned after %s and is still blocked on host I/O; "+
+					"not starting another until it does", blocked)
+		}
+	}
+	// stored by the caller that claimed the slot, so the timestamp belongs to the
+	// outstanding collection. Storing it before the claim would let every refused
+	// caller overwrite it with the time of its own attempt, which reads back as
+	// zero elapsed; the refusal path above handles the not-yet-stored case instead.
+	c.captureStartedAt.Store(time.Now().UnixNano())
+
+	// not named "collect": that would shadow the log collector package.
+	collectFn := c.collectFunc
+	if collectFn == nil {
+		collectFn = c.collectLogs
+	}
+
+	collectCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	type result struct {
+		archive    io.Reader
+		issueCount int
+		err        error
+	}
+	// buffered so an abandoned collection can still publish and exit.
+	done := make(chan result, 1)
+	go func() {
+		archive, issueCount, err := collectFn(collectCtx, categories)
+		// released before publishing, so that a caller which receives the result
+		// always observes the collection as free again.
+		c.captureRunning.Store(false)
+		done <- result{archive, issueCount, err}
+	}()
+
+	select {
+	case r := <-done:
+		return r.archive, r.issueCount, r.err
+	case <-collectCtx.Done():
+		if err := ctx.Err(); err != nil {
+			return nil, 0, fmt.Errorf("log collection stopped: %w", err)
+		}
+		return nil, 0, fmt.Errorf("log collection timed out after %s, a collector is blocked on host I/O", timeout)
+	}
+}
+
 // collectLogs is a small abstraction over the log collector that helps keep the
 // controller code brief.
 //
@@ -577,7 +683,7 @@ func (c *nodeDiagnosticController) collectLogs(ctx context.Context, categories [
 		),
 	}
 
-	acc, err := collect.NewAccessor(cfg)
+	acc, err := collect.NewAccessor(ctx, cfg)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to create accessor: %s", err)
 	}

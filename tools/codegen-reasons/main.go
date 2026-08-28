@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"flag"
 	"fmt"
+	"go/format"
 	"os"
 	"text/template"
 
@@ -50,7 +51,14 @@ func main() {
 		panic(err)
 	}
 
-	err = os.WriteFile(*outPath, buf.Bytes(), 0644)
+	// The template is not written in gofmt style; format here so the
+	// committed artifact cannot drift from the generator's output.
+	formatted, err := format.Source(buf.Bytes())
+	if err != nil {
+		panic(fmt.Errorf("codegen-reasons produced invalid Go: %w", err))
+	}
+
+	err = os.WriteFile(*outPath, formatted, 0644)
 	if err != nil {
 		panic(err)
 	}

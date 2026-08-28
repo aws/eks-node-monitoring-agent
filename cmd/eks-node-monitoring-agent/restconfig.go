@@ -48,15 +48,12 @@ func (rcp *podRestConfigProvider) Provide() (*rest.Config, error) {
 		return nil, fmt.Errorf("could not locate host kubeconfig in expected paths")
 	}
 
-	// the CA the cluster is configured with is the source of truth. it may be
-	// embedded in the kubeconfig (certificate-authority-data) or referenced as a
-	// host file path (certificate-authority); fall back to the well-known host
-	// location only when the kubeconfig specifies neither.
-	overrides := &clientcmd.ConfigOverrides{}
-	if caCertPath, err := rcp.resolveCACertPath(kubeconfigPath); err != nil {
+	// the kubeconfig references its TLS material by path relative to the host,
+	// but the agent reads the host filesystem through a mount, so build
+	// overrides that resolve those paths against it.
+	overrides, err := rcp.hostPathOverrides(kubeconfigPath)
+	if err != nil {
 		return nil, err
-	} else if caCertPath != "" {
-		overrides.ClusterInfo = clientcmdapi.Cluster{CertificateAuthority: caCertPath}
 	}
 
 	// attempt to pick up kubelet's cluster config from the node.
@@ -93,14 +90,50 @@ func rewriteExecProvider(restConfig *rest.Config, m chrootMapper) error {
 	return err
 }
 
-// resolveCACertPath determines the CA certificate the host kubeconfig expects
-// for the cluster of its current context.
-func (rcp *podRestConfigProvider) resolveCACertPath(kubeconfigPath string) (string, error) {
+// hostPathOverrides builds clientcmd overrides that resolve the file paths the
+// host kubeconfig references (CA certificate, client certificate, client key,
+// token file) against the host filesystem mount. Credentials embedded in the
+// kubeconfig are self-contained and left untouched.
+func (rcp *podRestConfigProvider) hostPathOverrides(kubeconfigPath string) (*clientcmd.ConfigOverrides, error) {
+	hostRoot := config.HostRoot()
+
 	kubeconfig, err := clientcmd.LoadFromFile(kubeconfigPath)
 	if err != nil {
-		return "", fmt.Errorf("failed to load kubeconfig %q: %w", kubeconfigPath, err)
+		return nil, fmt.Errorf("failed to load kubeconfig %q: %w", kubeconfigPath, err)
 	}
-	return pathlib.ResolveClusterCACert(config.HostRoot(), pathlib.ClusterForCurrentContext(kubeconfig))
+
+	overrides := &clientcmd.ConfigOverrides{}
+
+	// the CA the cluster is configured with is the source of truth. it may be
+	// embedded in the kubeconfig (certificate-authority-data) or referenced as a
+	// host file path (certificate-authority); fall back to the well-known host
+	// location only when the kubeconfig specifies neither.
+	caCertPath, err := pathlib.ResolveClusterCACert(hostRoot, pathlib.ClusterForCurrentContext(kubeconfig))
+	if err != nil {
+		return nil, err
+	}
+	if caCertPath != "" {
+		overrides.ClusterInfo = clientcmdapi.Cluster{CertificateAuthority: caCertPath}
+	}
+
+	// kubeconfigs that authenticate with a client certificate (e.g. on
+	// kops-provisioned nodes) reference the certificate and key by host path too,
+	// as does a token read from a file (tokenFile).
+	if authInfo := pathlib.AuthInfoForCurrentContext(kubeconfig); authInfo != nil {
+		if len(authInfo.ClientCertificateData) == 0 {
+			overrides.AuthInfo.ClientCertificate = pathlib.HostPath(hostRoot, authInfo.ClientCertificate)
+		}
+		if len(authInfo.ClientKeyData) == 0 {
+			overrides.AuthInfo.ClientKey = pathlib.HostPath(hostRoot, authInfo.ClientKey)
+		}
+		// an inline token takes precedence over tokenFile, so only the latter
+		// needs a path.
+		if len(authInfo.Token) == 0 {
+			overrides.AuthInfo.TokenFile = pathlib.HostPath(hostRoot, authInfo.TokenFile)
+		}
+	}
+
+	return overrides, nil
 }
 
 type chrootMapper struct{}
