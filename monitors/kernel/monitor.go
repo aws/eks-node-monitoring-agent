@@ -83,9 +83,11 @@ var (
 	)
 	appCrash = regexp.MustCompile(strings.Join([]string{
 		// each top level group is expected to have one sub group capture for the
-		// process name
+		// process name, use appCrashProcessName to read whichever one matched
 		`traps:\s*(.*?)\[`,
-		`\s(.*?)\[\d+]: segfault at.*`,
+		// anchored on the bracketed pid so the capture cannot grow left into the
+		// dmesg timestamp prefix
+		`\s([^\s\[]+)\[\d+]: segfault at.*`,
 	}, "|"))
 )
 var (
@@ -110,7 +112,7 @@ func (k *KernelMonitor) handleDmesg(line string) error {
 				Build(),
 		)
 	} else if matches := appCrash.FindStringSubmatch(line); matches != nil {
-		processName := matches[1]
+		processName := appCrashProcessName(matches)
 		return k.manager.Notify(context.Background(),
 			reasons.AppCrash.
 				Builder().
@@ -135,6 +137,17 @@ func (k *KernelMonitor) handleDmesg(line string) error {
 	}
 
 	return nil
+}
+
+// appCrash alternates between patterns that each carry their own capture group, so only the
+// group belonging to the alternation that matched is set and the rest are empty.
+func appCrashProcessName(matches []string) string {
+	for _, processName := range matches[1:] {
+		if processName != "" {
+			return processName
+		}
+	}
+	return ""
 }
 
 // ~~~~ kubelet logs ~~~~
