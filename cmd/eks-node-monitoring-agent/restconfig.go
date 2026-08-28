@@ -2,13 +2,14 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
+	"net/http"
+	"strings"
 
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
+	"github.com/aws/eks-node-monitoring-agent/pkg/auth"
 	"github.com/aws/eks-node-monitoring-agent/pkg/config"
 	"github.com/aws/eks-node-monitoring-agent/pkg/pathlib"
 )
@@ -33,14 +34,10 @@ func (rcp *autoRestConfigProvider) Provide() (*rest.Config, error) {
 }
 
 func NewPodRestConfigProvider() *podRestConfigProvider {
-	return &podRestConfigProvider{
-		execMapper: chrootMapper{},
-	}
+	return &podRestConfigProvider{}
 }
 
-type podRestConfigProvider struct {
-	execMapper chrootMapper
-}
+type podRestConfigProvider struct{}
 
 func (rcp *podRestConfigProvider) Provide() (*rest.Config, error) {
 	kubeconfigPath := pathlib.ResolveKubeconfig(config.HostRoot())
@@ -65,29 +62,80 @@ func (rcp *podRestConfigProvider) Provide() (*rest.Config, error) {
 		return nil, err
 	}
 
-	if err := rewriteExecProvider(restConfig, rcp.execMapper); err != nil {
+	if err := useInProcessTokenAuth(restConfig); err != nil {
 		return nil, err
 	}
 
 	return restConfig, nil
 }
 
-// rewriteExecProvider transforms the exec provider arguments, because they need
-// to call host binaries in order to get a token from the iam authenticator.
-// NOTE: reminder that these calls also utilize hostNetworking in order to
-// reach IMDS to get host credentials.
-// kubeconfigs that authenticate without an exec credential plugin (e.g. a
-// client certificate) have no ExecProvider, so only rewrite it when present.
-func rewriteExecProvider(restConfig *rest.Config, m chrootMapper) error {
+// useInProcessTokenAuth replaces the kubeconfig's exec credential plugin with
+// in-process token generation.
+//
+// The plugin (`aws eks get-token` or `aws-iam-authenticator token`) only exists
+// on the host, so the agent used to invoke it by chrooting onto the host root.
+// That cost a process launch — and the aws CLI's ~50MB resident set — every time
+// client-go refreshed the credential, roughly every 15 minutes, which was enough
+// to push the container past its cgroup memory limit and get it OOM killed.
+// Generating the token in-process with the same library removes the launch
+// entirely; see pkg/auth for how the token is minted and cached.
+//
+// NOTE: the token is a presigned STS request, so this still depends on the pod
+// reaching IMDS to pick up the node's instance profile — which is why the agent
+// runs with hostNetwork, as it did for the chrooted plugin.
+func useInProcessTokenAuth(restConfig *rest.Config) error {
+	// kubeconfigs that authenticate with a client certificate or a token file
+	// (e.g. on kops-provisioned nodes) carry no credential plugin, and client-go
+	// reads that material directly. Nothing to replace.
 	if restConfig.ExecProvider == nil {
 		return nil
 	}
-	var err error
-	restConfig.ExecProvider.Command, restConfig.ExecProvider.Args, err = m.Map(
-		restConfig.ExecProvider.Command,
-		restConfig.ExecProvider.Args...,
-	)
-	return err
+
+	clusterName, err := clusterNameFromExecProvider(restConfig.ExecProvider)
+	if err != nil {
+		return err
+	}
+
+	generator, err := auth.NewEKSTokenGenerator(clusterName)
+	if err != nil {
+		return fmt.Errorf("failed to create EKS token generator: %w", err)
+	}
+
+	// clearing the ExecProvider is what stops client-go from launching the
+	// plugin; the transport supplies the Authorization header in its place.
+	restConfig.ExecProvider = nil
+	restConfig.Wrap(func(rt http.RoundTripper) http.RoundTripper {
+		return &auth.EKSTokenTransport{Base: rt, Generator: generator}
+	})
+
+	return nil
+}
+
+// clusterNameFromExecProvider reads the cluster name out of the credential
+// plugin's arguments. The kubeconfig is the authoritative source here — it is
+// where the plugin itself read the name from — but the flag it uses depends on
+// which plugin the kubeconfig was written for: `aws eks get-token` takes
+// --cluster-name, while `aws-iam-authenticator token` takes --cluster-id (-i).
+// Either may spell its value as a separate argument or joined with '='.
+func clusterNameFromExecProvider(execConfig *clientcmdapi.ExecConfig) (string, error) {
+	for i, arg := range execConfig.Args {
+		flag, value, joined := strings.Cut(arg, "=")
+		switch flag {
+		case "--cluster-name", "--cluster-id", "-i":
+		default:
+			continue
+		}
+		if !joined {
+			if i+1 >= len(execConfig.Args) {
+				continue
+			}
+			value = execConfig.Args[i+1]
+		}
+		if value = strings.TrimSpace(value); value != "" {
+			return value, nil
+		}
+	}
+	return "", fmt.Errorf("could not determine the cluster name from exec credential plugin args %q", execConfig.Args)
 }
 
 // hostPathOverrides builds clientcmd overrides that resolve the file paths the
@@ -134,19 +182,4 @@ func (rcp *podRestConfigProvider) hostPathOverrides(kubeconfigPath string) (*cli
 	}
 
 	return overrides, nil
-}
-
-type chrootMapper struct{}
-
-func (c *chrootMapper) Map(command string, args ...string) (string, []string, error) {
-	// shift the original command and arguments and call a go wrapper for chroot
-	// because its not available on the system.
-	newArgs := append([]string{config.HostRoot(), command}, args...)
-	executable, err := os.Executable()
-	if err != nil {
-		return "", nil, fmt.Errorf("failed to get executable: %w", err)
-	}
-	// use the chroot wrapper we've built.
-	chroot := filepath.Join(filepath.Dir(executable), "chroot")
-	return chroot, newArgs, nil
 }
