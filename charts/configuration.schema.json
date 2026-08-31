@@ -129,6 +129,11 @@
                     "description": "Name of an existing PriorityClass assigned to the dcgm-exporter pod.",
                     "default": "system-node-critical"
                 },
+                "hostNetwork": {
+                    "type": "boolean",
+                    "description": "Run the dcgm-server pod on the host network so nv-hostengine binds node port 5555 directly. Required on clusters whose CNI does not implement hostPort.",
+                    "default": false
+                },
                 "resources": {
                     "$ref": "#/definitions/Resources"
                 },

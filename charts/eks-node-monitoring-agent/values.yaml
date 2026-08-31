@@ -162,6 +162,8 @@ dcgmAgent:
   nodeSelector: {}
   # -- PriorityClass for the dcgm exporter.
   priorityClassName: system-node-critical
+  # -- Run the dcgm-server pod on the host network so nv-hostengine binds node port 5555 directly. Required on clusters whose CNI does not implement hostPort.
+  hostNetwork: false
   # -- Pod annotations applied to the dcgm exporter
   podAnnotations: {}  
 
