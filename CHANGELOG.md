@@ -5,6 +5,13 @@ All notable changes to the EKS Node Monitoring Agent will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### What's Changed
+
+#### Features
+- Add an opt-in co-located `dcgm-exporter` GPU metrics endpoint on the `dcgm-server` DaemonSet (`dcgmAgent.metrics.enabled`, default off). `nv-hostengine` stays PID 1 so an engine crash still restarts the container; the exporter runs as a best-effort background process on port 9400.
+
 ## [v1.7.0] - 2026-08-04
 
 ### What's Changed

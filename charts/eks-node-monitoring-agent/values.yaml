@@ -122,6 +122,16 @@ dcgmAgent:
     account: "602401143452"
     # -- Container pull policy for the dcgm-server DaemonSet
     pullPolicy: IfNotPresent
+  # Opt-in GPU metrics endpoint served by a dcgm-exporter co-located with the
+  # bundled nv-hostengine. When enabled, the dcgm-server container runs
+  # dcgm-exporter as a best-effort background process while nv-hostengine stays
+  # PID 1, so an engine crash still restarts the container. Requires the agent
+  # image, which ships the dcgm-exporter binary.
+  metrics:
+    # -- Enable the co-located dcgm-exporter Prometheus metrics endpoint on the dcgm-server DaemonSet.
+    enabled: false
+    # -- Port the co-located dcgm-exporter listens on for Prometheus metrics (exposed as the container port named "metrics").
+    port: 9400
   # -- Map of dcgm pod affinities
   # @default -- see [`values.yaml`](./values.yaml)
   affinity:

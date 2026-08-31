@@ -1,3 +1,4 @@
+{{- $metrics := .Values.dcgmAgent.metrics | default dict }}
 kind: DaemonSet
 apiVersion: apps/v1
 metadata:
@@ -44,8 +45,23 @@ spec:
         - name: {{ .Chart.Name }}-dcgm
           image: {{ template "dcgm-server.image" . }}
           imagePullPolicy: {{ .Values.dcgmAgent.image.pullPolicy }}
+          {{- if $metrics.enabled }}
+          {{- /*
+          Metrics opt-in: start dcgm-exporter as a best-effort background
+          process that self-restarts until the host engine is reachable, then
+          exec nv-hostengine so it remains PID 1. Keeping the engine as PID 1 is
+          the health invariant: an engine crash must still exit the container so
+          it restarts and GPU-node readiness (which gates on the engine) is
+          protected. The exporter is deliberately never allowed to keep the
+          container alive on its own.
+          */}}
+          command: ["/usr/bin/sh", "-c"]
+          args:
+            - "( while true; do /usr/bin/dcgm-exporter -r localhost:5555 -a :{{ $metrics.port | default 9400 }} -k || true; sleep 5; done ) & exec /usr/bin/nv-hostengine -n -b ALL"
+          {{- else }}
           command: ["/usr/bin/nv-hostengine"]
           args: ["-n", "-b", "ALL"]
+          {{- end }}
           {{- /*
           NVIDIA_* are required for the NVIDIA container runtime to expose the
           GPUs and inject the host driver libraries (libnvidia-ml.so) that
@@ -72,5 +88,24 @@ spec:
           ports:
           - containerPort: 5555
             hostPort: 5555
+          {{- if $metrics.enabled }}
+          - containerPort: {{ $metrics.port | default 9400 }}
+            name: metrics
+            protocol: TCP
+          {{- end }}
+          {{- if $metrics.enabled }}
+          volumeMounts:
+            # dcgm-exporter -k reads the kubelet pod-resources socket to map
+            # GPU metrics to the pods consuming them.
+            - name: pod-resources
+              mountPath: /var/lib/kubelet/pod-resources
+              readOnly: true
+          {{- end }}
           securityContext:
             privileged: true
+      {{- if $metrics.enabled }}
+      volumes:
+        - name: pod-resources
+          hostPath:
+            path: /var/lib/kubelet/pod-resources
+      {{- end }}

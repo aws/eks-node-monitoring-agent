@@ -49,6 +49,37 @@ If you need to pin the DaemonSet back to a standalone DCGM image, set
 `dcgm-exporter` images carry the CVEs of their base OS and of the exporter
 binary, so treat this as a temporary break-glass measure.
 
+### Co-located GPU metrics (opt-in)
+
+The bundled agent image also ships the `dcgm-exporter` binary, so the
+`dcgm-server` engine can serve GPU Prometheus metrics itself and you can retire a
+separate `dcgm-exporter` deployment. The DCGM profiling module (DCP,
+`DCGM_FI_PROF_*`) is exclusive per GPU, so only one engine per node can serve
+profiling metrics — running the exporter against this engine keeps a single
+engine on the node.
+
+This is off by default. Enable it with:
+
+```yaml
+dcgmAgent:
+  metrics:
+    enabled: true
+    port: 9400
+```
+
+When enabled, the `dcgm-server` container runs a co-located `dcgm-exporter`
+(`-r localhost:5555 -a :9400 -k`) as a best-effort background process while
+`nv-hostengine` stays PID 1. Keeping the engine as PID 1 preserves the health
+invariant: an engine crash still restarts the container, which GPU-node
+readiness depends on; the exporter is never allowed to keep the container alive
+on its own. Metrics are exposed on the container port named `metrics` — scrape
+them with a `PodMonitor` (see the `extraObjects` example in `values.yaml`). The
+container mounts `/var/lib/kubelet/pod-resources` read-only so `-k` can
+attribute GPU metrics to the pods consuming each GPU.
+
+This has no effect when `dcgmAgent.image` is pinned to a standalone image that
+does not carry the `dcgm-exporter` binary.
+
 ## Configuration
 
 The following table lists the configurable parameters for this chart and their default values.
