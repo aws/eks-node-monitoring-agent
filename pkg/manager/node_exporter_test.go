@@ -342,3 +342,194 @@ func TestNodeExporter_LastTransitionTimeFlapping(t *testing.T) {
 		t.Errorf("Message was incorrectly updated with duplicates or cleared. expected: MessageA; MessageB, got: %s", latestMessage)
 	}
 }
+
+// A condition reported with a TTL should return to its ready state once the
+// failure stops being re-observed, rather than latching until node replacement.
+func TestNodeExporter_ExpiredConditionCleared(t *testing.T) {
+	ctx := context.TODO()
+	fakeClient := fake.NewFakeClient()
+	nodeName := "test-node"
+	initialNode := corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: nodeName}}
+	if err := fakeClient.Create(ctx, &initialNode); err != nil {
+		t.Fatalf("failed to create initial node: %v", err)
+	}
+
+	conditionType := corev1.NodeConditionType("NetworkingReady")
+	var recorder fakeEventRecorder
+	nodeExporter := manager.NewNodeExporter(
+		&initialNode,
+		fakeClient,
+		&recorder,
+		map[corev1.NodeConditionType]manager.NodeConditionConfig{
+			conditionType: {
+				ReadyReason:  "NetworkingIsReady",
+				ReadyMessage: "Monitoring for the Networking system is active",
+			},
+		},
+	)
+
+	reportChan := make(chan time.Time)
+	go nodeExporter.RunWithTickers(ctx, make(chan time.Time), reportChan)
+
+	// a very short TTL so the condition lapses within the test
+	fatal := monitor.Condition{
+		Reason:   "IPAMDNotReady",
+		Message:  "IPAM-D has failed to connect to API Server",
+		Severity: monitor.SeverityFatal,
+		TTL:      50 * time.Millisecond,
+	}
+	if err := nodeExporter.Fatal(ctx, fatal, conditionType); err != nil {
+		t.Fatal(err)
+	}
+
+	reportChan <- time.Now()
+	nodeKey := client.ObjectKeyFromObject(&initialNode)
+	unhealthy := corev1.NodeCondition{
+		Type:    conditionType,
+		Reason:  fatal.Reason,
+		Message: fatal.Message,
+		Status:  corev1.ConditionFalse,
+	}
+	if err := waitForCondition(ctx, fakeClient, nodeKey, unhealthy); err != nil {
+		t.Fatalf("condition was never reported as unhealthy: %v", err)
+	}
+
+	// once the TTL lapses, the next report tick should restore the ready state
+	time.Sleep(100 * time.Millisecond)
+	reportChan <- time.Now()
+
+	ready := corev1.NodeCondition{
+		Type:    conditionType,
+		Reason:  "NetworkingIsReady",
+		Message: "Monitoring for the Networking system is active",
+		Status:  corev1.ConditionTrue,
+	}
+	if err := waitForCondition(ctx, fakeClient, nodeKey, ready); err != nil {
+		t.Fatalf("expired condition was not cleared: %v", err)
+	}
+}
+
+// A condition reported without a TTL must keep latching, since it represents an
+// issue that only external repair can resolve.
+func TestNodeExporter_ConditionWithoutTTLNeverExpires(t *testing.T) {
+	ctx := context.TODO()
+	fakeClient := fake.NewFakeClient()
+	initialNode := corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "test-node"}}
+	if err := fakeClient.Create(ctx, &initialNode); err != nil {
+		t.Fatalf("failed to create initial node: %v", err)
+	}
+
+	conditionType := corev1.NodeConditionType("NetworkingReady")
+	var recorder fakeEventRecorder
+	nodeExporter := manager.NewNodeExporter(
+		&initialNode,
+		fakeClient,
+		&recorder,
+		map[corev1.NodeConditionType]manager.NodeConditionConfig{
+			conditionType: {ReadyReason: "NetworkingIsReady", ReadyMessage: "ok"},
+		},
+	)
+
+	reportChan := make(chan time.Time)
+	go nodeExporter.RunWithTickers(ctx, make(chan time.Time), reportChan)
+
+	fatal := monitor.Condition{
+		Reason:   "InterfaceNotUp",
+		Message:  "an interface is down",
+		Severity: monitor.SeverityFatal,
+	}
+	if err := nodeExporter.Fatal(ctx, fatal, conditionType); err != nil {
+		t.Fatal(err)
+	}
+
+	nodeKey := client.ObjectKeyFromObject(&initialNode)
+	unhealthy := corev1.NodeCondition{
+		Type:    conditionType,
+		Reason:  fatal.Reason,
+		Message: fatal.Message,
+		Status:  corev1.ConditionFalse,
+	}
+	reportChan <- time.Now()
+	if err := waitForCondition(ctx, fakeClient, nodeKey, unhealthy); err != nil {
+		t.Fatalf("condition was never reported as unhealthy: %v", err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	reportChan <- time.Now()
+	time.Sleep(100 * time.Millisecond)
+
+	var node corev1.Node
+	if err := fakeClient.Get(ctx, nodeKey, &node); err != nil {
+		t.Fatal(err)
+	}
+	if !nodeHasCondition(node, unhealthy) {
+		t.Fatalf("condition without a TTL was cleared: %+v", node.Status.Conditions)
+	}
+}
+
+// A condition held down by several reasons must stay down until all of them lapse,
+// otherwise a still-failing reason would be silently dropped.
+func TestNodeExporter_ConditionHeldByUnexpiredReason(t *testing.T) {
+	ctx := context.TODO()
+	fakeClient := fake.NewFakeClient()
+	initialNode := corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "test-node"}}
+	if err := fakeClient.Create(ctx, &initialNode); err != nil {
+		t.Fatalf("failed to create initial node: %v", err)
+	}
+
+	conditionType := corev1.NodeConditionType("NetworkingReady")
+	var recorder fakeEventRecorder
+	nodeExporter := manager.NewNodeExporter(
+		&initialNode,
+		fakeClient,
+		&recorder,
+		map[corev1.NodeConditionType]manager.NodeConditionConfig{
+			conditionType: {ReadyReason: "NetworkingIsReady", ReadyMessage: "ok"},
+		},
+	)
+
+	reportChan := make(chan time.Time)
+	go nodeExporter.RunWithTickers(ctx, make(chan time.Time), reportChan)
+
+	// one reason lapses almost immediately, the other is good for the whole test
+	if err := nodeExporter.Fatal(ctx, monitor.Condition{
+		Reason:   "IPAMDNotReady",
+		Message:  "transient",
+		Severity: monitor.SeverityFatal,
+		TTL:      50 * time.Millisecond,
+	}, conditionType); err != nil {
+		t.Fatal(err)
+	}
+	if err := nodeExporter.Fatal(ctx, monitor.Condition{
+		Reason:   "IPAMDNoIPs",
+		Message:  "persistent",
+		Severity: monitor.SeverityFatal,
+		TTL:      time.Hour,
+	}, conditionType); err != nil {
+		t.Fatal(err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	reportChan <- time.Now()
+	time.Sleep(100 * time.Millisecond)
+
+	var node corev1.Node
+	if err := fakeClient.Get(ctx, client.ObjectKeyFromObject(&initialNode), &node); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range node.Status.Conditions {
+		if c.Type == conditionType && c.Status != corev1.ConditionFalse {
+			t.Fatalf("condition cleared while a reason was still un-expired: %+v", c)
+		}
+	}
+}
+
+func waitForCondition(ctx context.Context, c client.Client, key client.ObjectKey, expected corev1.NodeCondition) error {
+	return wait.PollUntilContextTimeout(ctx, 10*time.Millisecond, 5*time.Second, true, func(ctx context.Context) (bool, error) {
+		var node corev1.Node
+		if err := c.Get(ctx, key, &node); err != nil {
+			return false, err
+		}
+		return nodeHasCondition(node, expected), nil
+	})
+}
