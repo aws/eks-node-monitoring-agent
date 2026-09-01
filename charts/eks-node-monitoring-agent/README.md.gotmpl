@@ -34,8 +34,9 @@ helm uninstall eks-node-monitoring-agent --namespace kube-system
 
 On NVIDIA GPU nodes the agent collects GPU health from DCGM. It connects as a
 DCGM client in standalone mode, so an `nv-hostengine` process must be reachable
-on the node (`localhost:5555` by default). The chart provides one via the
-`dcgm-server` DaemonSet.
+on the node. The chart provides one via the `dcgm-server` DaemonSet
+(`dcgmAgent.enabled`, default `true`), which the node agent talks to on
+`localhost:5555` by default.
 
 `nv-hostengine`, `dcgmi` and the DCGM modules ship inside the
 `eks-node-monitoring-agent` image, so `dcgm-server` runs the same image as the
@@ -48,6 +49,43 @@ If you need to pin the DaemonSet back to a standalone DCGM image, set
 `dcgmAgent.image.override` for a full image reference. Note that the
 `dcgm-exporter` images carry the CVEs of their base OS and of the exporter
 binary, so treat this as a temporary break-glass measure.
+
+### Using an existing DCGM hostengine
+
+[NVIDIA documents standalone mode](https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/getting-started.html#standalone-mode) as its preferred mode when multiple clients interact with DCGM.
+Clusters that already run `nv-hostengine` on each GPU node — for example, GPU
+Operator with standalone DCGM enabled — should configure `nodeAgent.dcgmAddress`
+to reuse it rather than deploy the bundled instance.
+Set `dcgmAgent.enabled` to `false` to stop the chart from deploying its own
+`dcgm-server` DaemonSet, then point `nodeAgent.dcgmAddress` at the existing
+hostengine. Set `nodeAgent.dnsPolicy` to `ClusterFirstWithHostNet` when that
+address is a Kubernetes Service hostname, since the node agent otherwise runs
+with the host's DNS resolution:
+
+```yaml
+dcgmAgent:
+  enabled: false
+nodeAgent:
+  dcgmAddress: nvidia-dcgm.gpu-operator.svc:5555
+  dnsPolicy: ClusterFirstWithHostNet
+```
+
+To turn GPU health monitoring off entirely, disable the bundled server and the
+nvidia monitor together. `dcgmAgent.enabled: false` on its own stops the
+`dcgm-server` DaemonSet but leaves the nvidia monitor registered, so with no
+reachable hostengine the agent reports `AcceleratedHardwareReady=False` with
+reason `DCGMError` shortly after startup, which can make the node eligible for
+repair. Set `nodeAgent.monitors.nvidia.enabled` to `false` to unregister the
+monitor so the agent stays quiet on GPU nodes:
+
+```yaml
+dcgmAgent:
+  enabled: false
+nodeAgent:
+  monitors:
+    nvidia:
+      enabled: false
+```
 
 ## Configuration
 
