@@ -247,6 +247,14 @@
                     "items": {
                       "type": "string"
                     }
+                },
+                "disabledReasons": {
+                    "type": "array",
+                    "description": "List of reason names (e.g. \"IPAMDNotReady\") whose detected conditions should be suppressed. Any condition with a matching reason is dropped before it is exported to the node status, events or metrics. See the node health issues documentation for the complete list of reason names.",
+                    "default": [],
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -260,6 +268,14 @@
                     "type": "boolean",
                     "description": "Whether this monitor is enabled",
                     "default": true
+                },
+                "disabledReasons": {
+                    "type": "array",
+                    "description": "List of reason names (e.g. \"ZramHighUsage\") whose detected conditions should be suppressed. Any condition with a matching reason is dropped before it is exported to the node status, events or metrics. See the node health issues documentation for the complete list of reason names.",
+                    "default": [],
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
