@@ -334,7 +334,7 @@ func (w *errAfterWriter) Write(p []byte) (int, error) {
 }
 
 // chunkRecorder remembers the size of every Write it receives, so a test can
-// assert on how the bytes were SPLIT and not only on the total that arrived.
+// assert on how the bytes were split.
 type chunkRecorder struct {
 	buf   bytes.Buffer
 	sizes []int
@@ -356,62 +356,60 @@ func (c *chunkRecorder) maxSize() int {
 }
 
 // The load-bearing claim of the fix is that no single write occupies the serial
-// line for long. 9517 bytes is a realistic section at the sectionBytes cap, so
-// this exercises the production case: every write must still be chunked to at
-// most consoleWriteChunk, and all bytes must arrive intact. Run this against an
-// unwrapped writer and it fails with maxSize == 9517 — that is the proof the
-// harness measures the right thing.
-func TestPacedWriterBoundsEveryChunkAtSectionSize(t *testing.T) {
-	const sectionSize = 9517
+// line for long: every write to the underlying console is bounded by
+// consoleWriteChunk and all bytes arrive intact and in order.
+func TestPacedWriterBoundsEveryChunk(t *testing.T) {
+	// A realistic large section must be split into ceil(size/chunk) bounded
+	// writes. Against an unwrapped writer this fails with maxSize == sectionSize,
+	// which proves the harness measures the right thing.
+	t.Run("LargeSection", func(t *testing.T) {
+		const sectionSize = 9517
 
-	rec := &chunkRecorder{}
-	pw := newPacedWriter(rec, consoleBytesPerSecond, consoleWriteChunk)
+		rec := &chunkRecorder{}
+		pw := newPacedWriter(rec, consoleBytesPerSecond, consoleWriteChunk)
 
-	// Distinguishable bytes so a chunk written twice, skipped, or reordered is
-	// visible. An all-identical payload would compare equal despite such a bug.
-	payload := make([]byte, sectionSize)
-	for i := range payload {
-		payload[i] = byte('A' + i%26)
-	}
+		// Distinguishable bytes so a chunk written twice, skipped, or reordered
+		// is visible.
+		payload := make([]byte, sectionSize)
+		for i := range payload {
+			payload[i] = byte('A' + i%26)
+		}
 
-	n, err := pw.Write(payload)
+		n, err := pw.Write(payload)
 
-	require.NoError(t, err)
-	assert.Equal(t, sectionSize, n)
-	assert.Equal(t, payload, rec.buf.Bytes(), "bytes must arrive intact and in order")
-	assert.LessOrEqual(t, rec.maxSize(), consoleWriteChunk,
-		"one oversized write is one long contiguous span on the serial line")
-	assert.Len(t, rec.sizes, (sectionSize+consoleWriteChunk-1)/consoleWriteChunk,
-		"must split into ceil(size/chunk) writes")
+		require.NoError(t, err)
+		assert.Equal(t, sectionSize, n)
+		assert.Equal(t, payload, rec.buf.Bytes(), "bytes must arrive intact and in order")
+		assert.LessOrEqual(t, rec.maxSize(), consoleWriteChunk,
+			"one oversized write is one long contiguous span on the serial line")
+		assert.Len(t, rec.sizes, (sectionSize+consoleWriteChunk-1)/consoleWriteChunk,
+			"must split into ceil(size/chunk) writes")
+	})
+
+	// Most real sections are under the chunk size; those pass through as one
+	// write and are not delayed (the initial bucket is full).
+	t.Run("SubChunkWrite", func(t *testing.T) {
+		rec := &chunkRecorder{}
+		pw := newPacedWriter(rec, consoleBytesPerSecond, consoleWriteChunk)
+
+		payload := []byte("short section")
+		start := time.Now()
+		n, err := pw.Write(payload)
+		elapsed := time.Since(start)
+
+		require.NoError(t, err)
+		assert.Equal(t, len(payload), n)
+		assert.Equal(t, payload, rec.buf.Bytes())
+		assert.Len(t, rec.sizes, 1, "a write below the chunk size must not be split")
+		assert.Less(t, elapsed, 100*time.Millisecond, "the initial bucket is full, so this must not block")
+	})
 }
 
-// burst MUST equal the chunk size. Smaller and WaitN can never be satisfied and
-// every write fails; larger and the bucket starts with enough allowance to
-// release several chunks back-to-back with no gap between them, recreating the
-// long contiguous span the fix removes. This invariant is the one thing the
-// throughput/total-bytes tests cannot see.
+// burst MUST equal the chunk size: a larger burst lets several chunks fire
+// back-to-back with no gap, recreating the long contiguous write the fix removes.
 func TestPacedWriterBurstEqualsChunk(t *testing.T) {
 	pw := newPacedWriter(&bytes.Buffer{}, consoleBytesPerSecond, consoleWriteChunk)
 	assert.Equal(t, consoleWriteChunk, pw.limiter.Burst())
-}
-
-// Most sections on a real node are well under the chunk size (43-2017 bytes
-// measured). Those must pass through as ONE write, and the full initial bucket
-// means they are not delayed.
-func TestPacedWriterPassesSubChunkWriteThrough(t *testing.T) {
-	rec := &chunkRecorder{}
-	pw := newPacedWriter(rec, consoleBytesPerSecond, consoleWriteChunk)
-
-	payload := []byte("short section")
-	start := time.Now()
-	n, err := pw.Write(payload)
-	elapsed := time.Since(start)
-
-	require.NoError(t, err)
-	assert.Equal(t, len(payload), n)
-	assert.Equal(t, payload, rec.buf.Bytes())
-	assert.Len(t, rec.sizes, 1, "a write below the chunk size must not be split")
-	assert.Less(t, elapsed, 100*time.Millisecond, "the initial bucket is full, so this must not block")
 }
 
 // pacedWriter must throttle throughput: pushing bytesPerSecond worth of data
@@ -450,9 +448,8 @@ func TestPacedWriterPropagatesWriteError(t *testing.T) {
 	assert.Equal(t, 2*1024, n, "must report exactly the bytes the first chunk wrote")
 }
 
-// Both console call sites construct through NewDiagnosticLogger, so the wrap has
-// to live there. Without this, removing that one wrap line breaks the fix
-// silently while every pacedWriter test above stays green.
+// Guards the wiring: if the wrap in NewDiagnosticLogger is removed the fix is
+// silently disabled while every pacedWriter test above still passes.
 func TestNewDiagnosticLoggerWrapsWriterInPacedWriter(t *testing.T) {
 	l := NewDiagnosticLogger(&bytes.Buffer{}, Settings{})
 	_, ok := l.writer.(*pacedWriter)
