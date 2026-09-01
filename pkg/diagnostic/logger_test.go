@@ -4,8 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,6 +35,245 @@ func Test_ContextStopsLogger(t *testing.T) {
 	if buffer.Len() == 0 {
 		t.Errorf("should have written diagnostic to logger")
 	}
+}
+
+// Regression test for issue #221: the client is reused across checks, so the
+// agent does not open a new connection and repeat the TLS handshake every cycle.
+// Reuse is only possible if the response body is released, so this covers the
+// missing Close as well.
+func TestAPIServerEndpointReusesConnection(t *testing.T) {
+	var newConnections atomic.Int32
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/livez", r.URL.Path)
+		assert.Equal(t, "verbose", r.URL.RawQuery)
+		fmt.Fprint(w, "livez check passed")
+	}))
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			newConnections.Add(1)
+		}
+	}
+	server.StartTLS()
+	defer server.Close()
+
+	for i := 0; i < 3; i++ {
+		body := testAPIServerEndpoint(server.URL)
+		require.Equal(t, "livez check passed", string(body), "call %d", i+1)
+	}
+
+	assert.Equal(t, int32(1), newConnections.Load(),
+		"the checks should share one connection; a client per call opens one each")
+}
+
+func TestAPIServerEndpointUnreachable(t *testing.T) {
+	// port 1 is not listening, so this exercises the path where there is no
+	// response and therefore no body to close.
+	body := testAPIServerEndpoint("https://127.0.0.1:1")
+	assert.Contains(t, string(body), "failed to make request endpoint")
+}
+
+// newTestLogger builds a logger over an explicit producer set, bypassing the
+// host collectors so that blocking behaviour can be exercised directly.
+func newTestLogger(w io.Writer, timeout time.Duration, producers ...*producer) diagnosticLogger {
+	return diagnosticLogger{
+		settings:     Settings{LogInterval: time.Hour, CollectorTimeout: timeout},
+		writer:       w,
+		producers:    producers,
+		sectionBytes: 4096,
+	}
+}
+
+// blockingProducer never returns, standing in for a collector stuck on
+// unresponsive host I/O (a 'df' against a wedged NFS mount, for example).
+func blockingProducer(name string, entered chan<- struct{}) *producer {
+	return &producer{name: name, fn: func(context.Context) []byte {
+		if entered != nil {
+			entered <- struct{}{}
+		}
+		<-make(chan struct{})
+		return nil
+	}}
+}
+
+// Regression test for issue #219: a collector that never returns must cost its
+// own section only. Before the fix it stopped the cycle, so every later section
+// went missing for the remaining life of the node.
+func TestBlockedCollectorDoesNotStopCycle(t *testing.T) {
+	var buffer bytes.Buffer
+	logger := newTestLogger(&buffer, 50*time.Millisecond,
+		blockingProducer("blocked", nil),
+		&producer{name: "after", fn: func(context.Context) []byte { return []byte("after-ran") }},
+	)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		logger.RunOnce(context.Background())
+	}()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("RunOnce did not return, the blocked collector stopped the cycle")
+	}
+
+	out := buffer.String()
+	assert.Contains(t, out, "|blocked\ncollector \"blocked\" timed out after 50ms",
+		"the blocked section must report the timeout as its body")
+	assert.Contains(t, out, "|after\nafter-ran", "sections after a blocked collector must still be emitted")
+}
+
+// A collector still stuck from a previous cycle must not be started again: the
+// wedged process cannot be killed, so respawning it accumulates one stuck
+// process and goroutine per cycle for the life of the node.
+func TestBlockedCollectorIsNotRestarted(t *testing.T) {
+	var buffer bytes.Buffer
+	entered := make(chan struct{}, 10)
+	logger := newTestLogger(&buffer, 50*time.Millisecond, blockingProducer("blocked", entered))
+
+	logger.RunOnce(context.Background())
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("collector was never started")
+	}
+
+	// the second cycle must skip the outstanding collector rather than wait for
+	// the timeout again.
+	buffer.Reset()
+	start := time.Now()
+	logger.RunOnce(context.Background())
+
+	assert.Empty(t, entered, "outstanding collector must not be started again")
+	assert.Less(t, time.Since(start), 50*time.Millisecond, "skipping must not wait for the timeout")
+	assert.Contains(t, buffer.String(), "has not returned after", "the section must report the collector as outstanding")
+}
+
+// The skip message reports how long the outstanding run has actually been
+// blocked. The timestamp is stored only by the caller that claimed the slot; if a
+// refused caller could overwrite it, every skip would measure the gap between its
+// own two statements and report 0s, losing the only information the message
+// carries.
+func TestSkipMessageReportsRealBlockDuration(t *testing.T) {
+	var buffer bytes.Buffer
+	entered := make(chan struct{}, 10)
+	logger := newTestLogger(&buffer, 20*time.Millisecond, blockingProducer("blocked", entered))
+
+	logger.RunOnce(context.Background())
+	select {
+	case <-entered:
+	case <-time.After(10 * time.Second):
+		t.Fatal("collector was never started")
+	}
+
+	// long enough that a correct implementation must round to a whole second.
+	time.Sleep(1100 * time.Millisecond)
+
+	buffer.Reset()
+	logger.RunOnce(context.Background())
+
+	out := buffer.String()
+	require.Contains(t, out, "has not returned after")
+	assert.NotContains(t, out, "after 0s",
+		"the duration must be measured from the outstanding run, not from this attempt")
+	assert.Regexp(t, `has not returned after [1-9][0-9]*s`, out,
+		"a collector blocked for over a second must report at least 1s")
+}
+
+// A skip that lands before the claiming caller has stored its start time reports
+// the skip without a duration, rather than measuring from the zero value.
+func TestSkipBeforeStartedAtIsStoredOmitsDuration(t *testing.T) {
+	p := &producer{name: "blocked", fn: func(context.Context) []byte { return nil }}
+	// the state a caller sees in the window between another caller's successful
+	// claim and its store of the start time.
+	p.running.Store(true)
+
+	var buffer bytes.Buffer
+	logger := newTestLogger(&buffer, time.Second, p)
+	logger.RunOnce(context.Background())
+
+	out := buffer.String()
+	assert.Contains(t, out, "has not returned and is skipped until it does")
+	assert.NotContains(t, out, "after", "no duration can be reported before one is known")
+}
+
+// A collector that returns normally is re-run every cycle, i.e. the single
+// flight guard releases on completion.
+func TestHealthyCollectorRunsEveryCycle(t *testing.T) {
+	var buffer bytes.Buffer
+	var runs atomic.Int32
+	logger := newTestLogger(&buffer, time.Minute,
+		&producer{name: "healthy", fn: func(context.Context) []byte {
+			runs.Add(1)
+			return []byte("ok")
+		}},
+	)
+
+	logger.RunOnce(context.Background())
+	logger.RunOnce(context.Background())
+
+	assert.Equal(t, int32(2), runs.Load())
+	assert.Equal(t, 2, strings.Count(buffer.String(), "|healthy\nok"))
+}
+
+// The collector context is cancelled at the deadline so that a killable child
+// process is terminated rather than left running.
+func TestCollectorContextIsCancelledAtDeadline(t *testing.T) {
+	var buffer bytes.Buffer
+	cancelled := make(chan error, 1)
+	logger := newTestLogger(&buffer, 50*time.Millisecond,
+		&producer{name: "watcher", fn: func(ctx context.Context) []byte {
+			<-ctx.Done()
+			cancelled <- ctx.Err()
+			return nil
+		}},
+	)
+
+	logger.RunOnce(context.Background())
+
+	select {
+	case err := <-cancelled:
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+	case <-time.After(10 * time.Second):
+		t.Fatal("collector context was never cancelled")
+	}
+}
+
+// Shutdown is reported as shutdown rather than as a collector timeout.
+func TestShutdownDuringCollection(t *testing.T) {
+	var buffer bytes.Buffer
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	logger := newTestLogger(&buffer, time.Minute, blockingProducer("blocked", nil))
+	logger.RunOnce(ctx)
+
+	assert.Contains(t, buffer.String(), "did not finish before shutdown")
+}
+
+// RunOnce emits one cycle and returns, which is what makes it usable for the
+// final flush on exit; Start would block on its ticker forever.
+func TestRunOnceEmitsSingleCycle(t *testing.T) {
+	var buffer bytes.Buffer
+	logger := newTestLogger(&buffer, time.Minute,
+		&producer{name: "one", fn: func(context.Context) []byte { return []byte("body") }},
+	)
+
+	logger.RunOnce(context.Background())
+
+	assert.Equal(t, 1, strings.Count(buffer.String(), sectionMarker))
+}
+
+func TestNewDiagnosticLoggerDefaults(t *testing.T) {
+	logger := NewDiagnosticLogger(io.Discard, Settings{})
+	assert.Equal(t, defaultCollectorTimeout, logger.settings.CollectorTimeout)
+	assert.Equal(t, 5*time.Minute, logger.settings.LogInterval)
+	assert.NotEmpty(t, logger.producers, "producers must be built up front so they can track outstanding runs")
+	assert.Positive(t, logger.sectionBytes)
+
+	t.Run("RespectsExplicitTimeout", func(t *testing.T) {
+		logger := NewDiagnosticLogger(io.Discard, Settings{CollectorTimeout: time.Second})
+		assert.Equal(t, time.Second, logger.settings.CollectorTimeout)
+	})
 }
 
 func TestUtils(t *testing.T) {
@@ -68,4 +314,144 @@ func TestReadFileTail(t *testing.T) {
 		got := readFileTail(filepath.Join(dir, "does-not-exist.log"), 1024)
 		assert.Contains(t, string(got), "failed to read")
 	})
+}
+
+// errAfterWriter writes normally until it has accepted limit bytes, then fails.
+// Used to check that pacedWriter surfaces an underlying write error and reports
+// how much it managed to write.
+type errAfterWriter struct {
+	buf     bytes.Buffer
+	limit   int
+	written int
+}
+
+func (w *errAfterWriter) Write(p []byte) (int, error) {
+	if w.written >= w.limit {
+		return 0, errors.New("write failed")
+	}
+	w.written += len(p)
+	return w.buf.Write(p)
+}
+
+// chunkRecorder remembers the size of every Write it receives, so a test can
+// assert on how the bytes were split.
+type chunkRecorder struct {
+	buf   bytes.Buffer
+	sizes []int
+}
+
+func (c *chunkRecorder) Write(p []byte) (int, error) {
+	c.sizes = append(c.sizes, len(p))
+	return c.buf.Write(p)
+}
+
+func (c *chunkRecorder) maxSize() int {
+	m := 0
+	for _, s := range c.sizes {
+		if s > m {
+			m = s
+		}
+	}
+	return m
+}
+
+// The load-bearing claim of the fix is that no single write occupies the serial
+// line for long: every write to the underlying console is bounded by
+// consoleWriteChunk and all bytes arrive intact and in order.
+func TestPacedWriterBoundsEveryChunk(t *testing.T) {
+	// A realistic large section must be split into ceil(size/chunk) bounded
+	// writes. Against an unwrapped writer this fails with maxSize == sectionSize,
+	// which proves the harness measures the right thing.
+	t.Run("LargeSection", func(t *testing.T) {
+		const sectionSize = 9517
+
+		rec := &chunkRecorder{}
+		pw := newPacedWriter(rec, consoleBytesPerSecond, consoleWriteChunk)
+
+		// Distinguishable bytes so a chunk written twice, skipped, or reordered
+		// is visible.
+		payload := make([]byte, sectionSize)
+		for i := range payload {
+			payload[i] = byte('A' + i%26)
+		}
+
+		n, err := pw.Write(payload)
+
+		require.NoError(t, err)
+		assert.Equal(t, sectionSize, n)
+		assert.Equal(t, payload, rec.buf.Bytes(), "bytes must arrive intact and in order")
+		assert.LessOrEqual(t, rec.maxSize(), consoleWriteChunk,
+			"one oversized write is one long contiguous span on the serial line")
+		assert.Len(t, rec.sizes, (sectionSize+consoleWriteChunk-1)/consoleWriteChunk,
+			"must split into ceil(size/chunk) writes")
+	})
+
+	// Most real sections are under the chunk size; those pass through as one
+	// write and are not delayed (the initial bucket is full).
+	t.Run("SubChunkWrite", func(t *testing.T) {
+		rec := &chunkRecorder{}
+		pw := newPacedWriter(rec, consoleBytesPerSecond, consoleWriteChunk)
+
+		payload := []byte("short section")
+		start := time.Now()
+		n, err := pw.Write(payload)
+		elapsed := time.Since(start)
+
+		require.NoError(t, err)
+		assert.Equal(t, len(payload), n)
+		assert.Equal(t, payload, rec.buf.Bytes())
+		assert.Len(t, rec.sizes, 1, "a write below the chunk size must not be split")
+		assert.Less(t, elapsed, 100*time.Millisecond, "the initial bucket is full, so this must not block")
+	})
+}
+
+// burst MUST equal the chunk size: a larger burst lets several chunks fire
+// back-to-back with no gap, recreating the long contiguous write the fix removes.
+func TestPacedWriterBurstEqualsChunk(t *testing.T) {
+	pw := newPacedWriter(&bytes.Buffer{}, consoleBytesPerSecond, consoleWriteChunk)
+	assert.Equal(t, consoleWriteChunk, pw.limiter.Burst())
+}
+
+// pacedWriter must throttle throughput: pushing bytesPerSecond worth of data
+// should take on the order of a second, not complete instantly.
+func TestPacedWriterThrottlesThroughput(t *testing.T) {
+	var dst bytes.Buffer
+	const rate = 8 * 1024 // 8 KB/s
+	pw := newPacedWriter(&dst, rate, 1*1024)
+
+	// Write ~2x the per-second rate; at 8 KB/s that must take ~1s (with the
+	// initial burst allowance, a little less). Assert a conservative floor so
+	// the test is not flaky.
+	payload := bytes.Repeat([]byte("y"), 2*rate)
+	start := time.Now()
+	n, err := pw.Write(payload)
+	elapsed := time.Since(start)
+
+	require.NoError(t, err)
+	assert.Equal(t, len(payload), n)
+	assert.GreaterOrEqual(t, elapsed, 800*time.Millisecond,
+		"writing ~2s of data at the configured rate must be throttled, not instant")
+}
+
+// When the underlying writer fails mid-stream, pacedWriter must return the
+// error and the count of bytes written before the failure.
+func TestPacedWriterPropagatesWriteError(t *testing.T) {
+	// Accept the first chunk, fail on the next.
+	dst := &errAfterWriter{limit: 2 * 1024}
+	pw := newPacedWriter(dst, 10*1024*1024, 2*1024)
+
+	payload := bytes.Repeat([]byte("z"), 5*1024)
+	n, err := pw.Write(payload)
+
+	require.Error(t, err)
+	assert.EqualError(t, err, "write failed", "the underlying error must surface unwrapped")
+	assert.Equal(t, 2*1024, n, "must report exactly the bytes the first chunk wrote")
+}
+
+// Guards the wiring: if the wrap in NewDiagnosticLogger is removed the fix is
+// silently disabled while every pacedWriter test above still passes.
+func TestNewDiagnosticLoggerWrapsWriterInPacedWriter(t *testing.T) {
+	l := NewDiagnosticLogger(&bytes.Buffer{}, Settings{})
+	_, ok := l.writer.(*pacedWriter)
+	assert.True(t, ok, "NewDiagnosticLogger must wrap its writer for pacing")
 }

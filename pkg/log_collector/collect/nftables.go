@@ -41,7 +41,7 @@ type nftable struct {
 }
 
 func (n NFTables) listTables(acc *Accessor) ([]nftable, error) {
-	output, err := acc.Command("nft", "list", "tables").CombinedOutput()
+	output, err := acc.CombinedOutput("nft", "list", "tables")
 	if err != nil {
 		return nil, fmt.Errorf("error running 'nft list tables': %w", err)
 	}
@@ -68,13 +68,12 @@ func (n NFTables) listTables(acc *Accessor) ([]nftable, error) {
 
 func (n NFTables) isNftAvailable(acc *Accessor) bool {
 	// Try to run 'nft --version' to check if binary exists and is functional
-	cmd := acc.Command("nft", "--version")
-	err := cmd.Run()
+	_, err := acc.CombinedOutput("nft", "--version")
 	return err == nil
 }
 
 func (n NFTables) collectRules(acc *Accessor, cmd []string, filename string) error {
-	output, err := acc.Command(cmd[0], cmd[1:]...).CombinedOutput()
+	output, err := acc.CombinedOutput(cmd...)
 	if err != nil {
 		return fmt.Errorf("error running %q, %w", cmd, err)
 	}

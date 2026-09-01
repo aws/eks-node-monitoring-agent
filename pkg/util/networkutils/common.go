@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 )
 
@@ -19,20 +18,21 @@ type NetworkctlOutput struct {
 	Interfaces []NetworkInterface `json:"Interfaces"`
 }
 
+// Commander runs a command with an enforced execution bound and returns its
+// combined output. A non-nil env replaces the child environment.
+//
+// The bound is the implementation's responsibility: networkctl talks to
+// systemd-networkd over dbus and can block indefinitely rather than fail, which
+// would otherwise stall the caller for the life of the process.
 type Commander interface {
-	Command(string, ...string) *exec.Cmd
+	CombinedOutputEnv(env []string, args ...string) ([]byte, error)
 }
 
 // GetNetworkInterfaces runs networkctl and returns parsed network interfaces
-// The exec parameter can be any type that implements Command method (osext.Exec or Accessor)
-func GetNetworkInterfaces(exec Commander) ([]NetworkInterface, error) {
-	var output []byte
-	var err error
-
+func GetNetworkInterfaces(cmder Commander) ([]NetworkInterface, error) {
 	// Temporarily unset DBUS_SYSTEM_BUS_ADDRESS to avoid issues with networkctl
-	originalDBusAddr := os.Getenv("DBUS_SYSTEM_BUS_ADDRESS")
-	envWithoutDbus := os.Environ()
-	if originalDBusAddr != "" {
+	var envWithoutDbus []string
+	if os.Getenv("DBUS_SYSTEM_BUS_ADDRESS") != "" {
 		envWithoutDbus = make([]string, 0, len(os.Environ()))
 		for _, e := range os.Environ() {
 			if !strings.HasPrefix(e, "DBUS_SYSTEM_BUS_ADDRESS=") {
@@ -41,16 +41,7 @@ func GetNetworkInterfaces(exec Commander) ([]NetworkInterface, error) {
 		}
 	}
 
-	// Create command using the provided Commander interface
-	cmd := exec.Command("networkctl", "--json=short")
-
-	// Set environment if DBUS_SYSTEM_BUS_ADDRESS is present
-	if originalDBusAddr != "" {
-		cmd.Env = envWithoutDbus
-	}
-
-	output, err = cmd.CombinedOutput()
-
+	output, err := cmder.CombinedOutputEnv(envWithoutDbus, "networkctl", "--json=short")
 	if err != nil {
 		return nil, fmt.Errorf("networkctl command failed: %w", err)
 	}

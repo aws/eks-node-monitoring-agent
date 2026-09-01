@@ -15,10 +15,18 @@ func ExtractClusterName(kubeContext string) (*string, error) {
 	if err != nil {
 		return nil, err
 	}
-	clusterArn, err := arn.Parse(config.Contexts[config.CurrentContext].Cluster)
-	if err != nil {
-		return nil, err
+	clusterField := config.Contexts[config.CurrentContext].Cluster
+	// Support to handle:
+	// kubeconfigs produced by `aws eks update-kubeconfig` which uses the 
+	// cluster's full ARN as the context's cluster field AND,
+	// kubeconfigs which use the plain cluster name directly.
+	if arn.IsARN(clusterField) {
+		clusterArn, err := arn.Parse(clusterField)
+		if err != nil {
+			return nil, err
+		}
+		clusterName := strings.Split(clusterArn.Resource, "/")[1]
+		return &clusterName, nil
 	}
-	clusterName := strings.Split(clusterArn.Resource, "/")[1]
-	return &clusterName, nil
+	return &clusterField, nil
 }
