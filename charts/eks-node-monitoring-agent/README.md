@@ -70,8 +70,22 @@ nodeAgent:
   dnsPolicy: ClusterFirstWithHostNet
 ```
 
-Setting `dcgmAgent.enabled` to `false` without a `nodeAgent.dcgmAddress` disables
-DCGM monitoring entirely; the agent still runs but reports no GPU health data.
+To turn GPU health monitoring off entirely, disable the bundled server and the
+nvidia monitor together. `dcgmAgent.enabled: false` on its own stops the
+`dcgm-server` DaemonSet but leaves the nvidia monitor registered, so with no
+reachable hostengine the agent reports `AcceleratedHardwareReady=False` with
+reason `DCGMError` shortly after startup, which can make the node eligible for
+repair. Set `nodeAgent.monitors.nvidia.enabled` to `false` to unregister the
+monitor so the agent stays quiet on GPU nodes:
+
+```yaml
+dcgmAgent:
+  enabled: false
+nodeAgent:
+  monitors:
+    nvidia:
+      enabled: false
+```
 
 ## Configuration
 
