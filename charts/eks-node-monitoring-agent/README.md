@@ -49,6 +49,37 @@ If you need to pin the DaemonSet back to a standalone DCGM image, set
 `dcgm-exporter` images carry the CVEs of their base OS and of the exporter
 binary, so treat this as a temporary break-glass measure.
 
+### Co-located GPU metrics (opt-in)
+
+The bundled agent image also ships the `dcgm-exporter` binary, so the
+`dcgm-server` engine can serve GPU Prometheus metrics itself and you can retire a
+separate `dcgm-exporter` deployment. The DCGM profiling module (DCP,
+`DCGM_FI_PROF_*`) is exclusive per GPU, so only one engine per node can serve
+profiling metrics — running the exporter against this engine keeps a single
+engine on the node.
+
+This is off by default. Enable it with:
+
+```yaml
+dcgmAgent:
+  metrics:
+    enabled: true
+    port: 9400
+```
+
+When enabled, the `dcgm-server` container runs a co-located `dcgm-exporter`
+(`-r localhost:5555 -a :9400 -k`) as a best-effort background process while
+`nv-hostengine` stays PID 1. Keeping the engine as PID 1 preserves the health
+invariant: an engine crash still restarts the container, which GPU-node
+readiness depends on; the exporter is never allowed to keep the container alive
+on its own. Metrics are exposed on the container port named `metrics` — scrape
+them with a `PodMonitor` (see the `extraObjects` example in `values.yaml`). The
+container mounts `/var/lib/kubelet/pod-resources` read-only so `-k` can
+attribute GPU metrics to the pods consuming each GPU.
+
+This has no effect when `dcgmAgent.image` is pinned to a standalone image that
+does not carry the `dcgm-exporter` binary.
+
 ## Configuration
 
 The following table lists the configurable parameters for this chart and their default values.
@@ -64,6 +95,8 @@ The following table lists the configurable parameters for this chart and their d
 | dcgmAgent.image.pullPolicy | string | `"IfNotPresent"` | Container pull policy for the dcgm-server DaemonSet |
 | dcgmAgent.image.region | string | `"us-west-2"` | ECR repository region for the dcgm-exporter. Only used when a tag is set. |
 | dcgmAgent.image.tag | string | `""` | Image tag that pins the dcgm-server DaemonSet back to a standalone eks/observability/dcgm-exporter image. Empty by default, so the DaemonSet runs the nv-hostengine bundled in the eks-node-monitoring-agent image. See the "DCGM host engine" section of the chart README before setting this. |
+| dcgmAgent.metrics.enabled | bool | `false` | Enable the co-located dcgm-exporter Prometheus metrics endpoint on the dcgm-server DaemonSet. |
+| dcgmAgent.metrics.port | int | `9400` | Port the co-located dcgm-exporter listens on for Prometheus metrics (exposed as the container port named "metrics"). |
 | dcgmAgent.nodeSelector | object | `{}` | Node labels required for the dcgm exporter to be scheduled on a node. |
 | dcgmAgent.podAnnotations | object | `{}` | Pod annotations applied to the dcgm exporter |
 | dcgmAgent.podLabels | object | `{}` | Pod labels applied to the dcgm exporter |
