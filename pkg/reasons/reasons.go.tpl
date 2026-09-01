@@ -14,3 +14,14 @@ var (
 {{- end -}}
 {{- end -}}
 )
+
+// byName maps reason identifiers, as declared in reasons.yaml, to their
+// metadata. It backs the ByName lookup used to validate configuration that
+// references reasons by name.
+var byName = map[string]ReasonMeta{
+{{- range $condition, $reasons := . }}
+{{- range $reasonName, $reason := $reasons }}
+    "{{$reasonName}}": {{$reasonName}},
+{{- end -}}
+{{- end }}
+}
