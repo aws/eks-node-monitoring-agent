@@ -83,8 +83,12 @@ var (
 	)
 	appCrash = regexp.MustCompile(strings.Join([]string{
 		// each top level group is expected to have one sub group capture for the
-		// process name, use appCrashProcessName to read whichever one matched
-		`traps:\s*(.*?)\[`,
+		// process name, use appCrashProcessName to read whichever one matched.
+		// the fault names are a bounded allowlist from arch/x86/kernel/traps.c. int3
+		// is left out because it is a breakpoint applications raise deliberately (for
+		// example Chromium's IMMEDIATE_CRASH()), not a node problem. divide error is
+		// printed with a "trap " prefix, the rest are not.
+		`traps:\s*(.*?)\[\d+] (?:trap )?(?:divide error|general protection fault|stack segment|segment not present|invalid TSS|alignment check|bounds)`,
 		// anchored on the bracketed pid so the capture cannot grow left into the
 		// dmesg timestamp prefix
 		`\s([^\s\[]+)\[\d+]: segfault at.*`,
