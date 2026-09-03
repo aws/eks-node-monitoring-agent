@@ -435,3 +435,83 @@ func TestLoadMonitorConfig_StrictUnmarshalRejectsUnknownFields(t *testing.T) {
 	assert.Nil(t, cfg)
 	assert.Contains(t, err.Error(), "parsing monitor config")
 }
+
+func TestLoadMonitorConfig_DisabledReasons(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`monitors:
+  networking:
+    disabledReasons:
+      - IPAMDNotReady
+  kernel-monitor:
+    disabledReasons:
+      - ZramHighUsage
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, found, err := config.LoadMonitorConfig(cfgPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.True(t, found)
+
+	// Reasons disabled across monitors are aggregated.
+	elements := cfg.GetDisabledReasons()
+	assert.ElementsMatch(t, []string{"IPAMDNotReady", "ZramHighUsage"}, elements)
+}
+
+func TestGetDisabledReasons(t *testing.T) {
+	t.Run("NilConfig", func(t *testing.T) {
+		var cfg *config.MonitorConfig
+		assert.Nil(t, cfg.GetDisabledReasons())
+	})
+	t.Run("EmptyMap", func(t *testing.T) {
+		cfg := &config.MonitorConfig{}
+		assert.Nil(t, cfg.GetDisabledReasons())
+	})
+	t.Run("NoDisabledReasons", func(t *testing.T) {
+		cfg := &config.MonitorConfig{
+			Monitors: map[string]config.MonitorSettings{
+				"networking": {Enabled: boolPtr(false)},
+			},
+		}
+		assert.Nil(t, cfg.GetDisabledReasons())
+	})
+}
+
+func TestLoadMonitorConfig_DisabledReasonsRenderedTemplateAccepted(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	// Parameterized reasons are referenced in their rendered form. Reason
+	// names are not validated against a catalog, so any non-empty entry is
+	// accepted.
+	content := []byte(`monitors:
+  nvidia:
+    disabledReasons:
+      - NvidiaXID79Error
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Equal(t, []string{"NvidiaXID79Error"}, cfg.GetDisabledReasons())
+}
+
+func TestLoadMonitorConfig_DisabledReasonsWithWhitespaceRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`monitors:
+  networking:
+    disabledReasons:
+      - " IPAMDNotReady"
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "leading/trailing whitespace")
+}
