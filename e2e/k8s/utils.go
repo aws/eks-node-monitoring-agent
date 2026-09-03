@@ -17,7 +17,7 @@ func ExtractClusterName(kubeContext string) (*string, error) {
 	}
 	clusterField := config.Contexts[config.CurrentContext].Cluster
 	// Support to handle:
-	// kubeconfigs produced by `aws eks update-kubeconfig` which uses the 
+	// kubeconfigs produced by `aws eks update-kubeconfig` which uses the
 	// cluster's full ARN as the context's cluster field AND,
 	// kubeconfigs which use the plain cluster name directly.
 	if arn.IsARN(clusterField) {

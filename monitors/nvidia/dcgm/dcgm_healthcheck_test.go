@@ -56,4 +56,61 @@ func TestHealthCheck(t *testing.T) {
 			Severity: monitor.SeverityFatal,
 		})
 	})
+
+	// DCGM_FR_NVLINK_ERROR_CRITICAL (71) from the lifetime-absolute counter path
+	// must be downgraded to Warning on pre-Blackwell GPUs. The counter never
+	// resets without a GPU reset, so a non-zero value is not an active-fault
+	// signal. The message prefix is stable because DCGM_VERSION is pinned.
+	t.Run("NVLinkLifetimeCounterDowngradedToWarning", func(t *testing.T) {
+		for _, msg := range []string{
+			"Detected 1 datalink layer CRC error counter NvLink errors on GPU 7's NVLink (should be 0)",
+			"Detected 1 datalink layer recovery error counter NvLink errors on GPU 0's NVLink (should be 0)",
+			"Detected 1 datalink layer replay error counter NvLink errors on GPU 3's NVLink (should be 0)",
+		} {
+			mockDcgm := &fake.FakeDcgm{
+				HealthResponse: dcgmapi.HealthResponse{
+					Incidents: []dcgmapi.Incident{
+						{
+							System: dcgmapi.DCGM_HEALTH_WATCH_NVLINK,
+							Health: dcgmapi.DCGM_HEALTH_RESULT_FAIL,
+							Error: dcgmapi.DiagErrorDetail{
+								Code:    dcgmapi.DCGM_FR_NVLINK_ERROR_CRITICAL,
+								Message: msg,
+							},
+						},
+					},
+				},
+			}
+			dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
+			conditions, err := dcgmSystem.HealthCheck(context.TODO())
+			assert.NoError(t, err)
+			assert.Len(t, conditions, 1, "expected one condition for message: %s", msg)
+			assert.Equal(t, monitor.SeverityWarning, conditions[0].Severity,
+				"lifetime counter code 71 must be Warning, not Fatal (message: %s)", msg)
+		}
+	})
+
+	// Code 71 from a different message (active-fault path) must stay Fatal.
+	t.Run("NVLinkActiveFaultRemainsFatal", func(t *testing.T) {
+		mockDcgm := &fake.FakeDcgm{
+			HealthResponse: dcgmapi.HealthResponse{
+				Incidents: []dcgmapi.Incident{
+					{
+						System: dcgmapi.DCGM_HEALTH_WATCH_NVLINK,
+						Health: dcgmapi.DCGM_HEALTH_RESULT_FAIL,
+						Error: dcgmapi.DiagErrorDetail{
+							Code:    dcgmapi.DCGM_FR_NVLINK_ERROR_CRITICAL,
+							Message: "NVLink failure detected on link 3",
+						},
+					},
+				},
+			},
+		}
+		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
+		conditions, err := dcgmSystem.HealthCheck(context.TODO())
+		assert.NoError(t, err)
+		assert.Len(t, conditions, 1)
+		assert.Equal(t, monitor.SeverityFatal, conditions[0].Severity,
+			"code 71 without a lifetime-counter message must remain Fatal")
+	})
 }
