@@ -177,20 +177,3 @@ updateStrategy:
   rollingUpdate:
     maxUnavailable: "10%"
 
-# -- Additional Kubernetes manifests to deploy alongside this chart.
-# Each entry is rendered through `tpl`, so template expressions
-# (e.g. {{ .Release.Namespace }}) inside the manifests are evaluated.
-# Example:
-#   extraObjects:
-#     - apiVersion: monitoring.coreos.com/v1
-#       kind: PodMonitor
-#       metadata:
-#         name: eks-node-monitoring-agent
-#         namespace: {{ .Release.Namespace }}
-#       spec:
-#         selector:
-#           matchLabels:
-#             app.kubernetes.io/name: eks-node-monitoring-agent
-#         podMetricsEndpoints:
-#           - port: metrics
-extraObjects: []
