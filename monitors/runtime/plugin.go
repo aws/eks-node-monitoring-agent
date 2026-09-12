@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
+	"github.com/aws/eks-node-monitoring-agent/pkg/conditions"
 	"github.com/aws/eks-node-monitoring-agent/pkg/monitor/framework"
 	"github.com/aws/eks-node-monitoring-agent/pkg/monitor/registry"
 	corev1 "k8s.io/api/core/v1"
@@ -14,5 +15,8 @@ import (
 func NewPlugin(node *corev1.Node, kubeClient client.Client) registry.MonitorPlugin {
 	return framework.NewPlugin("runtime", []monitor.Monitor{
 		NewRuntimeMonitor(node, kubeClient),
+	}).WithNodeCondition(conditions.ContainerRuntimeReady, conditions.NodeConditionConfig{
+		ReadyReason:  "ContainerRuntimeIsReady",
+		ReadyMessage: "Monitoring for the ContainerRuntime system is active",
 	})
 }

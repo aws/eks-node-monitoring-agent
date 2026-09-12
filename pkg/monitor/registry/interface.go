@@ -2,6 +2,8 @@ package registry
 
 import (
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
+	"github.com/aws/eks-node-monitoring-agent/pkg/conditions"
+	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 )
 
@@ -17,6 +19,22 @@ type MonitorPlugin interface {
 type CRDProvider interface {
 	// CRDs returns CRDs that this plugin requires
 	CRDs() []*apiextensionsv1.CustomResourceDefinition
+}
+
+// NodeConditionProvider optionally declares the node condition a plugin owns.
+// Implementing it lets the agent wire the condition without hardcoding
+// plugin names in main.
+type NodeConditionProvider interface {
+	// NodeCondition returns the condition type and its ready-state config.
+	// ok is false when the plugin owns no node condition.
+	NodeCondition() (condType corev1.NodeConditionType, config conditions.NodeConditionConfig, ok bool)
+}
+
+// HardwareRequirer optionally declares that a plugin only runs on specific
+// accelerated hardware (see config.RuntimeContext.AcceleratedHardware).
+type HardwareRequirer interface {
+	// RequiredHardware returns the required hardware, "" means no requirement.
+	RequiredHardware() string
 }
 
 // Registry manages monitor plugin registration

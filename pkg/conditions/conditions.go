@@ -42,3 +42,9 @@ const (
 	// functioning correctly (disks, filesystems, I/O).
 	StorageReady corev1.NodeConditionType = "StorageReady"
 )
+
+// NodeConditionConfig holds the ready state configuration for a node condition
+type NodeConditionConfig struct {
+	ReadyReason  string
+	ReadyMessage string
+}

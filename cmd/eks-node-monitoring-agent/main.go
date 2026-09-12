@@ -219,7 +219,8 @@ func run() error {
 		}
 
 		// Load monitor configuration from ConfigMap mount
-		monitorConfig, configFound, err := config.LoadMonitorConfig(config.DefaultConfigPath)
+		allPlugins := registry.GlobalRegistry().List()
+		monitorConfig, configFound, err := config.LoadMonitorConfig(config.DefaultConfigPath, pluginNames(allPlugins))
 		if err != nil {
 			logger.Error(err, "failed to load monitor configuration")
 			return err
@@ -228,8 +229,14 @@ func run() error {
 			logger.Info("monitor config file not found, all monitors will be enabled by default", "path", config.DefaultConfigPath)
 		}
 
+		// hardwareMatches reports whether a plugin can run on this node's hardware
+		hardwareMatches := func(plugin registry.MonitorPlugin) bool {
+			req, ok := plugin.(registry.HardwareRequirer)
+			return !ok || req.RequiredHardware() == "" || runtimeContext.AcceleratedHardware() == req.RequiredHardware()
+		}
+
 		// Filter plugins by configuration and log effective state
-		allPlugins := registry.GlobalRegistry().List()
+		var enabledPlugins []registry.MonitorPlugin
 		var enabledMonitors []monitor.Monitor
 		var disabledNames []string
 
@@ -240,6 +247,7 @@ func run() error {
 				disabledNames = append(disabledNames, plugin.Name())
 				continue
 			}
+			enabledPlugins = append(enabledPlugins, plugin)
 			enabledMonitors = append(enabledMonitors, plugin.Monitors()...)
 		}
 
@@ -284,50 +292,23 @@ func run() error {
 			}
 		}
 
-		// Build condition configs for node exporter, only for enabled monitors.
+		// Build condition configs for node exporter from enabled plugins.
 		// NodeExporter unconditionally sets all provided conditions to ConditionTrue,
-		// so we must exclude conditions for disabled monitors to avoid falsely
-		// reporting health for subsystems that are not being monitored.
+		// so we must exclude conditions for disabled or hardware-incompatible
+		// plugins to avoid falsely reporting health for subsystems that are not
+		// being monitored.
 		conditionConfigs := make(map[corev1.NodeConditionType]manager.NodeConditionConfig)
-		if monitorConfig.IsMonitorEnabled("kernel-monitor") {
-			conditionConfigs[conditions.KernelReady] = manager.NodeConditionConfig{
-				ReadyReason:  "KernelIsReady",
-				ReadyMessage: "Monitoring for the Kernel system is active",
+		for _, plugin := range enabledPlugins {
+			if !hardwareMatches(plugin) {
+				continue
 			}
-		}
-		if monitorConfig.IsMonitorEnabled("storage-monitor") {
-			conditionConfigs[conditions.StorageReady] = manager.NodeConditionConfig{
-				ReadyReason:  "DiskIsReady",
-				ReadyMessage: "Monitoring for the Disk system is active",
+			provider, ok := plugin.(registry.NodeConditionProvider)
+			if !ok {
+				continue
 			}
-		}
-		if monitorConfig.IsMonitorEnabled("runtime") {
-			conditionConfigs[conditions.ContainerRuntimeReady] = manager.NodeConditionConfig{
-				ReadyReason:  "ContainerRuntimeIsReady",
-				ReadyMessage: "Monitoring for the ContainerRuntime system is active",
-			}
-		}
-		if monitorConfig.IsMonitorEnabled("networking") {
-			conditionConfigs[conditions.NetworkingReady] = manager.NodeConditionConfig{
-				ReadyReason:  "NetworkingIsReady",
-				ReadyMessage: "Monitoring for the Networking system is active",
-			}
-		}
-
-		switch runtimeContext.AcceleratedHardware() {
-		case config.AcceleratedHardwareNvidia:
-			if monitorConfig.IsMonitorEnabled("nvidia") {
-				conditionConfigs[conditions.AcceleratedHardwareReady] = manager.NodeConditionConfig{
-					ReadyReason:  "NvidiaGPUIsReady",
-					ReadyMessage: "Monitoring for the Nvidia GPU system is active",
-				}
-			}
-		case config.AcceleratedHardwareNeuron:
-			if monitorConfig.IsMonitorEnabled("neuron") {
-				conditionConfigs[conditions.AcceleratedHardwareReady] = manager.NodeConditionConfig{
-					ReadyReason:  "NeuronAcceleratedHardwareIsReady",
-					ReadyMessage: "Monitoring for the Neuron AcceleratedHardware system is active",
-				}
+			condType, cfg, ok := provider.NodeCondition()
+			if ok {
+				conditionConfigs[condType] = cfg
 			}
 		}
 
@@ -345,39 +326,27 @@ func run() error {
 		logger.Info("initializing monitoring manager")
 		monitorMgr := manager.NewMonitorManager(hostname, nodeExporter)
 
-		// Register all monitors with the manager
-		for _, mon := range enabledMonitors {
-			monCtx := log.IntoContext(ctx, logger.WithValues("monitor", mon.Name()))
-			var conditionType corev1.NodeConditionType
-			switch mon.Name() {
-			case "kernel":
-				conditionType = conditions.KernelReady
-			case "storage":
-				conditionType = conditions.StorageReady
-			case "container-runtime":
-				conditionType = conditions.ContainerRuntimeReady
-			case "networking":
-				conditionType = conditions.NetworkingReady
-			case "nvidia":
-				if runtimeContext.AcceleratedHardware() != config.AcceleratedHardwareNvidia {
-					logger.Info("skipping monitor registration: no nvidia hardware detected", "monitor", mon.Name())
-					continue
-				}
-				conditionType = conditions.AcceleratedHardwareReady
-			case "neuron":
-				if runtimeContext.AcceleratedHardware() != config.AcceleratedHardwareNeuron {
-					logger.Info("skipping monitor registration: no neuron hardware detected", "monitor", mon.Name())
-					continue
-				}
-				conditionType = conditions.AcceleratedHardwareReady
-			default:
-				conditionType = conditions.KernelReady // Default fallback
+		// Register all monitors with the manager, using the node condition
+		// declared by their plugin
+		for _, plugin := range enabledPlugins {
+			if !hardwareMatches(plugin) {
+				logger.Info("skipping monitor registration: required hardware not detected", "plugin", plugin.Name())
+				continue
 			}
-			if err := monitorMgr.Register(monCtx, mon, conditionType); err != nil {
-				logger.Error(err, "failed to register monitor", "name", mon.Name())
-				return err
+			conditionType := conditions.KernelReady // Default fallback
+			if provider, ok := plugin.(registry.NodeConditionProvider); ok {
+				if ct, _, ok := provider.NodeCondition(); ok {
+					conditionType = ct
+				}
 			}
-			logger.Info("registered monitor with manager", "name", mon.Name(), "conditionType", conditionType)
+			for _, mon := range plugin.Monitors() {
+				monCtx := log.IntoContext(ctx, logger.WithValues("monitor", mon.Name()))
+				if err := monitorMgr.Register(monCtx, mon, conditionType); err != nil {
+					logger.Error(err, "failed to register monitor", "name", mon.Name())
+					return err
+				}
+				logger.Info("registered monitor with manager", "name", mon.Name(), "conditionType", conditionType)
+			}
 		}
 
 		close(registered)
@@ -407,6 +376,14 @@ func run() error {
 
 	logger.Info("starting controller manager")
 	return mgr.Start(ctx)
+}
+
+func pluginNames(plugins []registry.MonitorPlugin) []string {
+	names := make([]string, 0, len(plugins))
+	for _, plugin := range plugins {
+		names = append(names, plugin.Name())
+	}
+	return names
 }
 
 // registeredCheck reports ready only once registered is closed, so a node still

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
+	"github.com/aws/eks-node-monitoring-agent/pkg/conditions"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -29,10 +30,7 @@ const (
 var _ Exporter = (*nodeExporter)(nil)
 
 // NodeConditionConfig holds the ready state configuration for a node condition
-type NodeConditionConfig struct {
-	ReadyReason  string
-	ReadyMessage string
-}
+type NodeConditionConfig = conditions.NodeConditionConfig
 
 // NewNodeExporter creates a new node exporter that updates Kubernetes node conditions
 func NewNodeExporter(
