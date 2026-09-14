@@ -57,6 +57,19 @@ func TestIPTablesRuleParser(t *testing.T) {
 		}
 	})
 
+	t.Run("ExpectedRejectRuleNitroSandbox", func(t *testing.T) {
+		// EKS Pod Isolation per-guest conntrack cap; matcher keys on the
+		// owner comment, so a non-default --connlimit-above still matches.
+		for _, ruleRaw := range []string{
+			`-A PREROUTING -i eni3d6599daeeb -m conntrack --ctstate NEW -m connlimit --connlimit-above 4096 --connlimit-mask 0 --connlimit-saddr -m comment --comment "nitro-sandbox:4e02efc93153d3509013814c5946abd4c01a2603ea05377d1aea0596c571c239" -j DROP`,
+			`-A PREROUTING -i enid00dfeed001 -m conntrack --ctstate NEW -m connlimit --connlimit-above 512 --connlimit-mask 0 --connlimit-saddr -m comment --comment "nitro-sandbox:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" -j DROP`,
+		} {
+			rule, err := iptables.ParseIPTablesRule(ruleRaw)
+			assert.NoError(t, err)
+			assert.Truef(t, rule.IsExpectedRejectRule(nil), ruleRaw)
+		}
+	})
+
 	t.Run("ExpectedRejectRuleKubeProxyIPVS", func(t *testing.T) {
 		// kube-proxy (IPVS mode) manages KUBE-IPVS-FILTER and KUBE-IPVS-OUT-FILTER,
 		// and manages KUBE-SOURCE-RANGES-FIREWALL whenever any Service sets
@@ -102,6 +115,9 @@ func TestIPTablesRuleParser(t *testing.T) {
 	t.Run("NotExpectedRejectRule", func(t *testing.T) {
 		for _, ruleRaw := range []string{
 			`-A NOT-KUBE -m conntrack --ctstate INVALID`,
+			// "nitro-sandbox" without the ":" owner tag must still be reported.
+			`-A nitro-sandbox-something -j DROP`,
+			`-A INPUT -m comment --comment "block nitro-sandbox traffic" -j DROP`,
 		} {
 			rule, err := iptables.ParseIPTablesRule(ruleRaw)
 			assert.NoError(t, err)
