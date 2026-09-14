@@ -18,6 +18,7 @@ const DefaultConfigPath = "/etc/nma/config.yaml"
 type MonitorSettings struct {
 	Enabled                      *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	AllowedIPTablesChains        []string `yaml:"allowedIPTablesChains,omitempty" json:"allowedIPTablesChains,omitempty"`
+	DCGMPowerThresholdWatts      *uint32  `yaml:"dcgmPowerThresholdWatts,omitempty" json:"dcgmPowerThresholdWatts,omitempty"`
 	ExcludedInterfaceNameRegexps []string `yaml:"excludedInterfaceNameRegexps,omitempty" json:"excludedInterfaceNameRegexps,omitempty"`
 }
 
@@ -60,6 +61,19 @@ func (mc *MonitorConfig) GetAllowedIPTablesChains() []string {
 		return nil
 	}
 	return settings.AllowedIPTablesChains
+}
+
+// GetNvidiaDCGMPowerThresholdWatts returns the configured DCGM power policy
+// threshold for the NVIDIA monitor.
+func (mc *MonitorConfig) GetNvidiaDCGMPowerThresholdWatts() *uint32 {
+	if mc == nil || mc.Monitors == nil {
+		return nil
+	}
+	settings, exists := mc.Monitors["nvidia"]
+	if !exists {
+		return nil
+	}
+	return settings.DCGMPowerThresholdWatts
 }
 
 // DefaultExcludedInterfaceNameRegexps are the interface-name exclusion regexps
@@ -126,6 +140,14 @@ func (mc *MonitorConfig) Validate() error {
 		return fmt.Errorf("unknown monitor plugin name(s): %s", strings.Join(unknown, ", "))
 	}
 	for name, settings := range mc.Monitors {
+		if settings.DCGMPowerThresholdWatts != nil {
+			if name != "nvidia" {
+				return fmt.Errorf("dcgmPowerThresholdWatts is only supported by the nvidia monitor, not %q", name)
+			}
+			if *settings.DCGMPowerThresholdWatts == 0 {
+				return fmt.Errorf("dcgmPowerThresholdWatts must be greater than zero")
+			}
+		}
 		if len(settings.AllowedIPTablesChains) > 0 {
 			if name != "networking" {
 				return fmt.Errorf("allowedIPTablesChains is only supported by the networking monitor, not %q", name)

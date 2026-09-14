@@ -10,6 +10,7 @@ import (
 
 	dcgmapi "github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 	"github.com/aws/eks-node-monitoring-agent/api/monitor/resource"
@@ -69,6 +70,19 @@ func newMockManager() *mockManager {
 	return &mockManager{
 		results: make(chan monitor.Condition, 5),
 	}
+}
+
+func TestSetDCGMPowerThresholdWatts(t *testing.T) {
+	nvidiaMonitor, mockDcgm := newMonitorWithDcgm()
+	configurable, ok := nvidiaMonitor.(interface {
+		SetDCGMPowerThresholdWatts(uint32)
+	})
+	require.True(t, ok)
+
+	configurable.SetDCGMPowerThresholdWatts(1000)
+
+	require.NotNil(t, mockDcgm.PowerThreshold)
+	assert.Equal(t, uint32(1000), *mockDcgm.PowerThreshold)
 }
 
 // awaitCondition waits for a condition from the mock manager with a timeout.

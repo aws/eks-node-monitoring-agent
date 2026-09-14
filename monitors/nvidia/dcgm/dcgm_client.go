@@ -7,6 +7,7 @@ package dcgm
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -17,6 +18,10 @@ import (
 )
 
 type DCGM interface {
+	// SetPowerPolicyThresholdWatts configures the power usage threshold that
+	// triggers DCGM policy violations.
+	SetPowerPolicyThresholdWatts(uint32)
+
 	// Reconcile mends the connection to the DCGM host and initializes any of
 	// the required components for live-detection of issues, including policy
 	// violations and health check systems.
@@ -58,6 +63,10 @@ type DCGMConfig struct {
 
 	// Features is a list of options to control which DCGM features to initialize.
 	Features []Feature
+
+	// PowerPolicyThresholdWatts configures the DCGM power policy threshold
+	// when policy violation monitoring is enabled.
+	PowerPolicyThresholdWatts *uint32
 }
 
 type Feature string
@@ -105,6 +114,10 @@ func (d *dcgmHelper) PolicyViolationChannel() <-chan dcgmapi.PolicyViolation {
 	return d.policyViolationChan
 }
 
+func (d *dcgmHelper) SetPowerPolicyThresholdWatts(watts uint32) {
+	d.config.PowerPolicyThresholdWatts = &watts
+}
+
 func (d *dcgmHelper) RunDiag(diagType dcgmapi.DiagType) (dcgmapi.DiagResults, error) {
 	if !slices.Contains(d.config.Features, FeatureActiveDiagnostics) {
 		return dcgmapi.DiagResults{}, nil
@@ -146,16 +159,8 @@ func (d *dcgmHelper) Reconcile(ctx context.Context) (bool, error) {
 		// whenever there's a violation. These policies cover most of the important
 		// GPU error detection cases.
 		policyCtx, cancelPolicyViolationChannel := context.WithCancel(ctx)
-		policyChan, err := dcgmapi.ListenForPolicyViolations(policyCtx,
-			dcgmapi.DbePolicy,     // Fires if there's a double bit error
-			dcgmapi.XidPolicy,     // Fires on XID errors. This should overlap with other policy violations
-			dcgmapi.NvlinkPolicy,  // Fires if NVLink errors detected by DCGM
-			dcgmapi.MaxRtPgPolicy, // Fires if the number of page retirements has hit the limit RT page faults
-			dcgmapi.PowerPolicy,   // Fires on violations for power limits
-			dcgmapi.ThermalPolicy, // Fires on abnormal thermal status of GPUs
-			dcgmapi.PCIePolicy,    // Fires on pcie replays for transmission errors
-		)
-		// SAFETY: actual cleanup of the goroutine in dcgmapi.ListenForPolicyViolations
+		policyChan, err := d.listenForPolicyViolations(policyCtx)
+		// SAFETY: actual cleanup of the goroutine in go-dcgm's policy listener
 		// only happens when the context is finished, even if the host engine
 		// crashes. the policy registrations all utilize the same channel (its a go
 		// static), so not cleaning up the routine could result in events being
@@ -211,6 +216,93 @@ func (d *dcgmHelper) Reconcile(ctx context.Context) (bool, error) {
 	}
 
 	return true, nil
+}
+
+var monitoredPolicyConditions = []dcgmapi.PolicyCondition{
+	dcgmapi.DbePolicy,     // Fires if there's a double bit error
+	dcgmapi.XidPolicy,     // Fires on XID errors. This should overlap with other policy violations
+	dcgmapi.NvlinkPolicy,  // Fires if NVLink errors detected by DCGM
+	dcgmapi.MaxRtPgPolicy, // Fires if the number of page retirements has hit the limit RT page faults
+	dcgmapi.PowerPolicy,   // Fires on violations for power limits
+	dcgmapi.ThermalPolicy, // Fires on abnormal thermal status of GPUs
+	dcgmapi.PCIePolicy,    // Fires on pcie replays for transmission errors
+}
+
+func (d *dcgmHelper) listenForPolicyViolations(ctx context.Context) (<-chan dcgmapi.PolicyViolation, error) {
+	powerThresholdWatts := d.config.PowerPolicyThresholdWatts
+	if powerThresholdWatts == nil {
+		return dcgmapi.ListenForPolicyViolations(ctx, monitoredPolicyConditions...)
+	}
+
+	status, err := dcgmapi.GetPolicyForGroup(dcgmapi.GroupAllGPUs())
+	if err != nil {
+		if !policyReadNeedsDefaultSetup(err) {
+			return nil, fmt.Errorf("failed to read DCGM policies: %w", err)
+		}
+		status = &dcgmapi.PolicyStatus{Conditions: make(map[dcgmapi.PolicyCondition]interface{})}
+	}
+
+	configs, err := policyConfigs(status, *powerThresholdWatts)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := dcgmapi.SetPolicyForGroup(dcgmapi.GroupAllGPUs(), configs...); err != nil {
+		return nil, fmt.Errorf("failed to configure DCGM policies: %w", err)
+	}
+	return dcgmapi.WatchPolicyViolationsForGroup(ctx, dcgmapi.GroupAllGPUs(), monitoredPolicyConditions...)
+}
+
+func policyReadNeedsDefaultSetup(err error) bool {
+	var dcgmErr *dcgmapi.Error
+	if !errors.As(err, &dcgmErr) {
+		return false
+	}
+	return dcgmErr.Code == dcgmapi.DCGM_ST_INSUFFICIENT_SIZE ||
+		dcgmErr.Code == dcgmapi.DCGM_ST_NOT_CONFIGURED
+}
+
+func policyConfigs(status *dcgmapi.PolicyStatus, powerThresholdWatts uint32) ([]dcgmapi.PolicyConfig, error) {
+	if status == nil {
+		return nil, fmt.Errorf("DCGM returned an empty policy status")
+	}
+	// SetPolicyForGroup replaces the complete group policy, so preserve its
+	// settings using the reconstruction strategy from go-dcgm's policyConfigsForListen:
+	// https://github.com/NVIDIA/go-dcgm/blob/v1.4601.1/pkg/dcgm/policy.go#L544-L581
+	configs := make([]dcgmapi.PolicyConfig, 0, len(monitoredPolicyConditions))
+	for _, condition := range monitoredPolicyConditions {
+		config := dcgmapi.PolicyConfig{Condition: condition}
+		switch condition {
+		case dcgmapi.MaxRtPgPolicy:
+			value := uint32(dcgmapi.DefaultMaxRetiredPages)
+			if current, exists := status.Conditions[condition]; exists {
+				var ok bool
+				value, ok = current.(uint32)
+				if !ok {
+					return nil, fmt.Errorf("DCGM policy %q has an invalid retired pages threshold", condition)
+				}
+			}
+			config.MaxRetiredPages = &value
+		case dcgmapi.PowerPolicy:
+			config.MaxPower = &powerThresholdWatts
+		case dcgmapi.ThermalPolicy:
+			value := uint32(dcgmapi.DefaultMaxTemperature)
+			if current, exists := status.Conditions[condition]; exists {
+				var ok bool
+				value, ok = current.(uint32)
+				if !ok {
+					return nil, fmt.Errorf("DCGM policy %q has an invalid temperature threshold", condition)
+				}
+			}
+			config.MaxTemperature = &value
+		}
+		configs = append(configs, config)
+	}
+	action := status.Action
+	validation := status.Validation
+	configs[0].Action = &action
+	configs[0].Validation = &validation
+	return configs, nil
 }
 
 func (d *dcgmHelper) HealthCheck() (dcgmapi.HealthResponse, error) {
