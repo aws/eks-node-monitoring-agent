@@ -260,6 +260,18 @@ func run() error {
 			}
 		}
 
+		if threshold := monitorConfig.GetNvidiaDCGMPowerThresholdWatts(); threshold != nil {
+			for _, mon := range enabledMonitors {
+				type dcgmPowerThresholdConfigurable interface {
+					SetDCGMPowerThresholdWatts(uint32)
+				}
+				if c, ok := mon.(dcgmPowerThresholdConfigurable); ok {
+					c.SetDCGMPowerThresholdWatts(*threshold)
+					logger.Info("configured DCGM power policy threshold", "monitor", mon.Name(), "watts", *threshold)
+				}
+			}
+		}
+
 		if exprs := monitorConfig.GetExcludedInterfaceNameRegexps(); len(exprs) > 0 {
 			for _, mon := range enabledMonitors {
 				type interfaceExcludable interface {
