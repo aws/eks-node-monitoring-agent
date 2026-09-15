@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -68,7 +69,20 @@ func (s *DCGMSystem) DeviceCount(ctx context.Context) ([]monitor.Condition, erro
 	return conditions, nil
 }
 
+// nvidiaDevDir resolves the directory containing nvidia device files.
+// Priority: explicit override > GPU Operator default > standard /dev.
+func nvidiaDevDir() string {
+	if root := config.NvidiaDriverRoot(); root != "" {
+		return config.ToHostPath(filepath.Join(root, "dev"))
+	}
+	gpuOpDir := config.ToHostPath(filepath.Join(config.DefaultGPUOperatorDriverRoot, "dev"))
+	if info, err := os.Stat(gpuOpDir); err == nil && info.IsDir() {
+		return gpuOpDir
+	}
+	return config.ToHostPath("/dev")
+}
+
 func GetNvidiaFSDeviceCount() (uint, error) {
-	paths, err := filepath.Glob(config.ToHostPath("/dev/nvidia[0-9]*"))
+	paths, err := filepath.Glob(filepath.Join(nvidiaDevDir(), "nvidia[0-9]*"))
 	return uint(len(paths)), err
 }

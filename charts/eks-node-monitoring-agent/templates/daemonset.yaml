@@ -63,6 +63,10 @@ spec:
             {{- end }}
             - name: HOST_ROOT
               value: /host
+            {{- with .Values.nodeAgent.nvidiaDriverRoot }}
+            - name: NVIDIA_DRIVER_ROOT
+              value: {{ . | quote }}
+            {{- end }}
             - name: MY_NODE_NAME
               valueFrom:
                 fieldRef:
