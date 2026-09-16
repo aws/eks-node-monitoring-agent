@@ -108,6 +108,7 @@ var KnownPluginNames = []string{
 	"nvidia",
 	"neuron",
 	"runtime",
+	"instance-store",
 }
 
 // Validate checks that all keys in Monitors are known plugin names.
