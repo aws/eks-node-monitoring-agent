@@ -34,16 +34,32 @@ RUN dnf install -y dnf-plugins-core && \
     dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/rhel9/$(uname -m | sed -e 's/aarch64/sbsa/')/cuda-rhel9.repo && \
     dnf install -y \
         datacenter-gpu-manager-4-core-1:${DCGM_VERSION} \
-        datacenter-gpu-manager-4-proprietary-1:${DCGM_VERSION} && \
+        datacenter-gpu-manager-4-proprietary-1:${DCGM_VERSION} \
+        datacenter-gpu-manager-exporter && \
     dnf clean all
 
 # Stage the runtime payload into a single tree. `cp -a` preserves the
 # libfoo.so.4 -> libfoo.so.4.x.y symlinks; copying the globs directly would
 # dereference them and store every library twice.
-RUN mkdir -p /staging/usr/lib64 /staging/usr/bin /staging/usr/libexec && \
+# dcgm-exporter and its default counter CSVs ship too: they are only executed
+# when the chart's opt-in metrics endpoint is enabled, but the binary must be
+# present in the image for that flag to work.
+RUN mkdir -p /staging/usr/lib64 /staging/usr/bin /staging/usr/libexec /staging/etc/dcgm-exporter && \
     cp -a /usr/lib64/libdcgm.so* /usr/lib64/libdcgmmodule*.so* /staging/usr/lib64/ && \
-    cp -a /usr/bin/nv-hostengine /usr/bin/dcgmi /staging/usr/bin/ && \
-    cp -a /usr/libexec/datacenter-gpu-manager-4 /staging/usr/libexec/
+    cp -a /usr/bin/nv-hostengine /usr/bin/dcgmi /usr/bin/dcgm-exporter /staging/usr/bin/ && \
+    cp -a /usr/libexec/datacenter-gpu-manager-4 /staging/usr/libexec/ && \
+    cp -a /etc/dcgm-exporter/. /staging/etc/dcgm-exporter/
+
+# =============================================================================
+# Stage 2b: BusyBox — a single static shell for the opt-in metrics launcher
+# =============================================================================
+# The distroless runtime base ships no shell. The opt-in DCGM metrics command
+# (chart: dcgmAgent.metrics.enabled) needs one to run dcgm-exporter in the
+# background while nv-hostengine stays PID 1. The uclibc BusyBox image is a
+# single fully static binary, so it adds a shell without pulling glibc/bash and
+# their libraries into the image.
+ARG BUSYBOX_VERSION=1.37.0
+FROM public.ecr.aws/docker/library/busybox:${BUSYBOX_VERSION}-uclibc AS busybox
 
 # =============================================================================
 # Stage 3: Go builder to compile the application
@@ -106,6 +122,12 @@ COPY --from=systemd-builder /usr/lib64/libcap.so* /usr/lib64/
 # the host engine and its modules ship here instead of in a separate image.
 # Kept above the binary copies below so agent code changes do not invalidate it.
 COPY --from=dcgm-builder /staging/ /
+
+# Static BusyBox providing /usr/bin/sh and /usr/bin/sleep for the opt-in DCGM
+# metrics launcher only. Nothing runs it unless dcgmAgent.metrics.enabled is set.
+COPY --from=busybox /bin/busybox /usr/bin/busybox
+RUN ["/usr/bin/busybox", "ln", "-s", "/usr/bin/busybox", "/usr/bin/sh"]
+RUN ["/usr/bin/busybox", "ln", "-s", "/usr/bin/busybox", "/usr/bin/sleep"]
 
 # Copy the built binaries
 COPY --from=go-builder /workspace/bin/eks-node-monitoring-agent /opt/bin/eks-node-monitoring-agent
