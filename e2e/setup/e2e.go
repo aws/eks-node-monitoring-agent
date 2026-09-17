@@ -168,7 +168,7 @@ func TestWrapper(t *testing.T, Testenv env.Environment) {
 	t.Run("AcceleratedMonitors", func(t *testing.T) {
 		Testenv.TestInParallel(t,
 			monitors.NvidiaMonitor(awsCfg),
-			monitors.NeuronMonitor(),
+			monitors.NeuronMonitor(awsCfg),
 		)
 	})
 
