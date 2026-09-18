@@ -76,6 +76,19 @@ nodeAgent:
         - "^ib[0-9]+$"
 ```
 
+The NVIDIA monitor supports `dcgmPowerThresholdWatts` to configure the DCGM power policy warning threshold for GPUs whose normal board power exceeds the library default.
+This setting controls when DCGM reports a power excursion and does not cap GPU power, so choose a threshold appropriate for every GPU on the node.
+When omitted, the existing behavior is unchanged: an existing policy is preserved or go-dcgm supplies its default threshold.
+Omitting the setting does not reset a threshold previously stored in the running hostengine.
+For example:
+
+```yaml
+nodeAgent:
+  monitors:
+    nvidia:
+      dcgmPowerThresholdWatts: 1000
+```
+
 ### Config File Format
 
 The agent reads a YAML config file mounted at `/etc/nma/config.yaml`. Omitted monitors default to enabled.

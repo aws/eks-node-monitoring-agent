@@ -15,6 +15,10 @@ func boolPtr(b bool) *bool {
 	return &b
 }
 
+func uint32Ptr(value uint32) *uint32 {
+	return &value
+}
+
 func TestLoadMonitorConfig_NonExistentFile(t *testing.T) {
 	cfg, found, err := config.LoadMonitorConfig("/tmp/does-not-exist-nma-test.yaml")
 	require.NoError(t, err)
@@ -177,6 +181,77 @@ func TestGetAllowedIPTablesChains(t *testing.T) {
 		}
 		assert.Equal(t, []string{"filter/MY-CUSTOM-CHAIN", "filter/CUSTOM-CHAIN"}, cfg.GetAllowedIPTablesChains())
 	})
+}
+
+func TestGetNvidiaDCGMPowerThresholdWatts(t *testing.T) {
+	t.Run("NilConfig", func(t *testing.T) {
+		var cfg *config.MonitorConfig
+		assert.Nil(t, cfg.GetNvidiaDCGMPowerThresholdWatts())
+	})
+	t.Run("NoNvidiaEntry", func(t *testing.T) {
+		cfg := &config.MonitorConfig{}
+		assert.Nil(t, cfg.GetNvidiaDCGMPowerThresholdWatts())
+	})
+	t.Run("Configured", func(t *testing.T) {
+		cfg := &config.MonitorConfig{
+			Monitors: map[string]config.MonitorSettings{
+				"nvidia": {DCGMPowerThresholdWatts: uint32Ptr(1000)},
+			},
+		}
+		require.NotNil(t, cfg.GetNvidiaDCGMPowerThresholdWatts())
+		assert.Equal(t, uint32(1000), *cfg.GetNvidiaDCGMPowerThresholdWatts())
+	})
+}
+
+func TestLoadMonitorConfig_NvidiaDCGMPowerThresholdWatts(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`monitors:
+  nvidia:
+    enabled: true
+    dcgmPowerThresholdWatts: 1000
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, found, err := config.LoadMonitorConfig(cfgPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.True(t, found)
+	require.NotNil(t, cfg.GetNvidiaDCGMPowerThresholdWatts())
+	assert.Equal(t, uint32(1000), *cfg.GetNvidiaDCGMPowerThresholdWatts())
+}
+
+func TestLoadMonitorConfig_ZeroNvidiaDCGMPowerThresholdWattsRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`monitors:
+  nvidia:
+    dcgmPowerThresholdWatts: 0
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "dcgmPowerThresholdWatts must be greater than zero")
+}
+
+func TestLoadMonitorConfig_NvidiaDCGMPowerThresholdWattsOnOtherMonitorRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`monitors:
+  runtime:
+    dcgmPowerThresholdWatts: 1000
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "dcgmPowerThresholdWatts is only supported by the nvidia monitor")
 }
 
 func TestLoadMonitorConfig_AllowedIPTablesChains(t *testing.T) {
