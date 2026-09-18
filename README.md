@@ -76,6 +76,20 @@ nodeAgent:
         - "^ib[0-9]+$"
 ```
 
+### Disabling individual reasons
+
+Every monitor supports `disabledReasons` to suppress specific findings without turning off the monitor as a whole. Any condition with a matching reason is dropped before it is exported to the node status, events or metrics. Reason names can be found in `docs/node-health-issues.adoc`; parameterized reasons are specified in their rendered form (e.g. `NvidiaXID79Error`). Entries are not validated against a fixed catalog, so a name that does not match an emitted reason has no effect.
+
+For example, to suppress `IPAMDNotReady` findings:
+
+```yaml
+nodeAgent:
+  monitors:
+    networking:
+      disabledReasons:
+        - "IPAMDNotReady"
+```
+
 ### Config File Format
 
 The agent reads a YAML config file mounted at `/etc/nma/config.yaml`. Omitted monitors default to enabled.
@@ -102,6 +116,11 @@ When a monitor is disabled:
 
 - Its health checks are not executed.
 - The corresponding `NodeCondition` (e.g., `NetworkingReady`) is not set on the node, avoiding false-positive healthy status for unmonitored subsystems.
+
+When a reason is disabled via `disabledReasons`:
+
+- The monitor keeps running and its other checks remain active.
+- Conditions with the disabled reason are never exported, so they do not affect the node status or trigger auto-repair actions.
 
 ## Building
 

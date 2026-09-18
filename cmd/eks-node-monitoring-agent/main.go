@@ -345,6 +345,12 @@ func run() error {
 		logger.Info("initializing monitoring manager")
 		monitorMgr := manager.NewMonitorManager(hostname, nodeExporter)
 
+		// Drop conditions for individual reasons disabled by configuration.
+		if disabledReasons := monitorConfig.GetDisabledReasons(); len(disabledReasons) > 0 {
+			monitorMgr.SetDisabledReasons(disabledReasons)
+			logger.Info("reasons disabled by configuration", "reasons", disabledReasons)
+		}
+
 		// Register all monitors with the manager
 		for _, mon := range enabledMonitors {
 			monCtx := log.IntoContext(ctx, logger.WithValues("monitor", mon.Name()))

@@ -144,3 +144,61 @@ func TestManager_CreateObserver(t *testing.T) {
 	assert.NoError(t, err)
 	assert.NoError(t, mMgr.Start(ctx))
 }
+
+func TestManager_DisabledReason(t *testing.T) {
+	t.Run("DisabledReasonSkipped", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.TODO(), 50*time.Millisecond)
+		defer cancel()
+
+		mockMon := &mockMonitor{
+			registerFunc: func(ctx context.Context, mgr monitor.Manager) error {
+				go mgr.Notify(ctx, monitor.Condition{
+					Reason:   "ExampleReason",
+					Severity: monitor.SeverityFatal,
+				})
+				return nil
+			},
+		}
+		mMgr, mockExp := NewManagerWithExporterFuncs()
+		mMgr.SetDisabledReasons([]string{"ExampleReason"})
+		if err := mMgr.Register(ctx, mockMon, "MockPassed"); err != nil {
+			t.Fatal(err)
+		}
+		go mMgr.Start(ctx)
+
+		select {
+		case n := <-mockExp.notifyChan:
+			t.Fatalf("expected no events for disabled reason but got %+v", n)
+		case <-ctx.Done():
+			// expected: the condition was dropped because its reason is disabled.
+		}
+	})
+
+	t.Run("OtherReasonStillExported", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.TODO(), time.Millisecond)
+		defer cancel()
+
+		mockMon := &mockMonitor{
+			registerFunc: func(ctx context.Context, mgr monitor.Manager) error {
+				go mgr.Notify(ctx, monitor.Condition{
+					Reason:   "AnotherReason",
+					Severity: monitor.SeverityFatal,
+				})
+				return nil
+			},
+		}
+		mMgr, mockExp := NewManagerWithExporterFuncs()
+		mMgr.SetDisabledReasons([]string{"ExampleReason"})
+		if err := mMgr.Register(ctx, mockMon, "MockPassed"); err != nil {
+			t.Fatal(err)
+		}
+		go mMgr.Start(ctx)
+
+		select {
+		case <-mockExp.notifyChan:
+			// expected: only ExampleReason is disabled.
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		}
+	})
+}

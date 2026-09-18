@@ -43,6 +43,9 @@ type MonitorManager struct {
 	observers         map[string]observer.Observer
 	notifyChan        chan notification
 	exporter          Exporter
+	// disabledReasons is the set of reason names (e.g. "IPAMDNotReady") whose
+	// conditions should be dropped before being exported.
+	disabledReasons map[string]struct{}
 }
 
 type notification struct {
@@ -61,6 +64,16 @@ func NewMonitorManager(nodeName string, exporter Exporter) *MonitorManager {
 		notifyChan:        make(chan notification, 100),
 		exporter:          exporter,
 	}
+}
+
+// SetDisabledReasons configures the set of reason names whose conditions are
+// dropped before being exported. Must be called before Start.
+func (m *MonitorManager) SetDisabledReasons(reasons []string) {
+	set := make(map[string]struct{}, len(reasons))
+	for _, r := range reasons {
+		set[r] = struct{}{}
+	}
+	m.disabledReasons = set
 }
 
 // Register registers a monitor with the manager
@@ -123,6 +136,12 @@ func (m *MonitorManager) runLoop(ctx context.Context) error {
 
 func (m *MonitorManager) exportCondition(ctx context.Context, monitorName string, condition monitor.Condition) error {
 	logger := log.FromContext(ctx).WithValues("source", monitorName, "condition", condition)
+
+	// Drop conditions whose reason has been disabled by configuration.
+	if _, ok := m.disabledReasons[condition.Reason]; ok {
+		logger.Info("skipping condition with reason disabled by configuration")
+		return nil
+	}
 
 	// track condition metrics
 	conditionCount.WithLabelValues(string(condition.Severity), condition.Reason).Add(1)

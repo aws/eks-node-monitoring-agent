@@ -19,6 +19,10 @@ type MonitorSettings struct {
 	Enabled                      *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	AllowedIPTablesChains        []string `yaml:"allowedIPTablesChains,omitempty" json:"allowedIPTablesChains,omitempty"`
 	ExcludedInterfaceNameRegexps []string `yaml:"excludedInterfaceNameRegexps,omitempty" json:"excludedInterfaceNameRegexps,omitempty"`
+	// DisabledReasons lists reason names (e.g. "IPAMDNotReady") whose
+	// conditions should be suppressed. Parameterized reasons are specified in
+	// their rendered form (e.g. "NvidiaXID79Error").
+	DisabledReasons []string `yaml:"disabledReasons,omitempty" json:"disabledReasons,omitempty"`
 }
 
 // IsEnabled returns true if the monitor is enabled.
@@ -100,6 +104,20 @@ func (mc *MonitorConfig) GetExcludedInterfaceNameRegexps() []string {
 	return settings.ExcludedInterfaceNameRegexps
 }
 
+// GetDisabledReasons returns the aggregated list of reasons disabled across
+// all monitors. Reason names are globally unique across monitors, so an entry
+// applies wherever that reason is emitted.
+func (mc *MonitorConfig) GetDisabledReasons() []string {
+	if mc == nil || mc.Monitors == nil {
+		return nil
+	}
+	var disabled []string
+	for _, settings := range mc.Monitors {
+		disabled = append(disabled, settings.DisabledReasons...)
+	}
+	return disabled
+}
+
 // KnownPluginNames is the set of valid plugin names for validation.
 var KnownPluginNames = []string{
 	"kernel-monitor",
@@ -151,6 +169,11 @@ func (mc *MonitorConfig) Validate() error {
 				if _, err := regexp.Compile(expr); err != nil {
 					return fmt.Errorf("excludedInterfaceNameRegexps entry %q is not a valid regular expression: %w", expr, err)
 				}
+			}
+		}
+		for _, reason := range settings.DisabledReasons {
+			if reason == "" || strings.TrimSpace(reason) != reason {
+				return fmt.Errorf("disabledReasons entry must not be empty or have leading/trailing whitespace")
 			}
 		}
 	}
