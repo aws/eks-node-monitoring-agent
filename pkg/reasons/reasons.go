@@ -9,86 +9,107 @@ var (
 	DCGMDiagnosticFailure = ReasonMeta{
 		template:        "DCGMDiagnosticFailure",
 		defaultSeverity: "Fatal",
+		component:       "nvidia",
 	}
 	DCGMError = ReasonMeta{
 		template:        "DCGMError",
 		defaultSeverity: "Fatal",
+		component:       "nvidia",
 	}
 	DCGMFieldError = ReasonMeta{
 		template:        "DCGMFieldError%d",
 		defaultSeverity: "Warning",
+		component:       "nvidia",
 	}
 	DCGMHealthCode = ReasonMeta{
 		template:        "DCGMHealthCode%d",
 		defaultSeverity: "Warning",
+		component:       "nvidia",
 	}
 	DCGMHealthCodeFatal = ReasonMeta{
 		template:        "DCGMHealthCode%d",
 		defaultSeverity: "Fatal",
+		component:       "nvidia",
 	}
 	FabricManagerNotRunning = ReasonMeta{
 		template:        "FabricManagerNotRunning",
 		defaultSeverity: "Fatal",
+		component:       "nvidia",
 	}
 	NeuronDMAError = ReasonMeta{
 		template:        "NeuronDMAError",
 		defaultSeverity: "Fatal",
+		component:       "neuron",
 	}
 	NeuronHBMUncorrectableError = ReasonMeta{
 		template:        "NeuronHBMUncorrectableError",
 		defaultSeverity: "Fatal",
+		component:       "neuron",
 	}
 	NeuronNCUncorrectableError = ReasonMeta{
 		template:        "NeuronNCUncorrectableError",
 		defaultSeverity: "Fatal",
+		component:       "neuron",
 	}
 	NeuronSRAMUncorrectableError = ReasonMeta{
 		template:        "NeuronSRAMUncorrectableError",
 		defaultSeverity: "Fatal",
+		component:       "neuron",
 	}
 	NvidiaDeviceCountMismatch = ReasonMeta{
 		template:        "NvidiaDeviceCountMismatch",
 		defaultSeverity: "Fatal",
+		component:       "nvidia",
 	}
 	NvidiaDoubleBitError = ReasonMeta{
 		template:        "NvidiaDoubleBitError",
 		defaultSeverity: "Fatal",
+		component:       "nvidia",
 	}
 	NvidiaFabricError = ReasonMeta{
 		template:        "NvidiaFabricError",
 		defaultSeverity: "Fatal",
+		component:       "nvidia",
 	}
 	NvidiaNCCLError = ReasonMeta{
 		template:        "NvidiaNCCLError",
 		defaultSeverity: "Warning",
+		component:       "nvidia",
 	}
 	NvidiaNVLinkError = ReasonMeta{
 		template:        "NvidiaNVLinkError",
 		defaultSeverity: "Fatal",
+		component:       "nvidia",
 	}
 	NvidiaPCIeError = ReasonMeta{
 		template:        "NvidiaPCIeError",
 		defaultSeverity: "Warning",
+		component:       "nvidia",
 	}
 	NvidiaPageRetirement = ReasonMeta{
 		template:        "NvidiaPageRetirement",
 		defaultSeverity: "Warning",
+		component:       "nvidia",
 	}
 	NvidiaPowerError = ReasonMeta{
 		template:        "NvidiaPowerError",
 		defaultSeverity: "Warning",
+		component:       "nvidia",
 	}
 	NvidiaThermalError = ReasonMeta{
 		template:        "NvidiaThermalError",
 		defaultSeverity: "Warning",
+		component:       "nvidia",
 	}
 	NvidiaXIDError = ReasonMeta{
 		template:        "NvidiaXID%dError",
 		defaultSeverity: "Fatal",
+		component:       "nvidia",
 	}
 	NvidiaXIDWarning = ReasonMeta{
 		template:        "NvidiaXID%dWarning",
 		defaultSeverity: "Warning",
+		component:       "nvidia",
 	}
 
 	// reasons for the ContainerRuntimeReady condition.
@@ -96,34 +117,42 @@ var (
 	ContainerRuntimeFailed = ReasonMeta{
 		template:        "ContainerRuntimeFailed",
 		defaultSeverity: "Warning",
+		component:       "container-runtime",
 	}
 	DeprecatedContainerdConfiguration = ReasonMeta{
 		template:        "DeprecatedContainerdConfiguration",
 		defaultSeverity: "Warning",
+		component:       "container-runtime",
 	}
 	KubeletFailed = ReasonMeta{
 		template:        "KubeletFailed",
 		defaultSeverity: "Warning",
+		component:       "container-runtime",
 	}
 	LivenessProbeFailures = ReasonMeta{
 		template:        "LivenessProbeFailures",
 		defaultSeverity: "Warning",
+		component:       "container-runtime",
 	}
 	PodStuckTerminating = ReasonMeta{
 		template:        "PodStuckTerminating",
 		defaultSeverity: "Fatal",
+		component:       "container-runtime",
 	}
 	ReadinessProbeFailures = ReasonMeta{
 		template:        "ReadinessProbeFailures",
 		defaultSeverity: "Warning",
+		component:       "container-runtime",
 	}
 	RepeatedRestart = ReasonMeta{
 		template:        "%sRepeatedRestart",
 		defaultSeverity: "Warning",
+		component:       "container-runtime",
 	}
 	ServiceFailedToStart = ReasonMeta{
 		template:        "ServiceFailedToStart",
 		defaultSeverity: "Warning",
+		component:       "container-runtime",
 	}
 
 	// reasons for the KernelReady condition.
@@ -131,50 +160,62 @@ var (
 	AppBlocked = ReasonMeta{
 		template:        "AppBlocked",
 		defaultSeverity: "Warning",
+		component:       "kernel",
 	}
 	AppCrash = ReasonMeta{
 		template:        "AppCrash",
 		defaultSeverity: "Warning",
+		component:       "kernel",
 	}
 	ApproachingKernelPidMax = ReasonMeta{
 		template:        "ApproachingKernelPidMax",
 		defaultSeverity: "Warning",
+		component:       "kernel",
 	}
 	ApproachingMaxOpenFiles = ReasonMeta{
 		template:        "ApproachingMaxOpenFiles",
 		defaultSeverity: "Warning",
+		component:       "kernel",
 	}
 	ClockUnsynchronized = ReasonMeta{
 		template:        "ClockUnsynchronized",
 		defaultSeverity: "Warning",
+		component:       "kernel",
 	}
 	ConntrackExceededKernel = ReasonMeta{
 		template:        "ConntrackExceededKernel",
 		defaultSeverity: "Warning",
+		component:       "kernel",
 	}
 	ExcessiveZombieProcesses = ReasonMeta{
 		template:        "ExcessiveZombieProcesses",
 		defaultSeverity: "Warning",
+		component:       "kernel",
 	}
 	ForkFailedOutOfPIDs = ReasonMeta{
 		template:        "ForkFailedOutOfPIDs",
 		defaultSeverity: "Fatal",
+		component:       "kernel",
 	}
 	KernelBug = ReasonMeta{
 		template:        "KernelBug",
 		defaultSeverity: "Warning",
+		component:       "kernel",
 	}
 	LargeEnvironment = ReasonMeta{
 		template:        "LargeEnvironment",
 		defaultSeverity: "Warning",
+		component:       "kernel",
 	}
 	RapidCron = ReasonMeta{
 		template:        "RapidCron",
 		defaultSeverity: "Warning",
+		component:       "kernel",
 	}
 	SoftLockup = ReasonMeta{
 		template:        "SoftLockup",
 		defaultSeverity: "Warning",
+		component:       "kernel",
 	}
 
 	// reasons for the NetworkingReady condition.
@@ -182,102 +223,127 @@ var (
 	BandwidthInExceeded = ReasonMeta{
 		template:        "BandwidthInExceeded",
 		defaultSeverity: "Warning",
+		component:       "networking",
 	}
 	BandwidthOutExceeded = ReasonMeta{
 		template:        "BandwidthOutExceeded",
 		defaultSeverity: "Warning",
+		component:       "networking",
 	}
 	ConntrackExceeded = ReasonMeta{
 		template:        "ConntrackExceeded",
 		defaultSeverity: "Warning",
+		component:       "networking",
 	}
 	EFAErrorMetric = ReasonMeta{
 		template:        "EFAErrorMetric",
 		defaultSeverity: "Warning",
+		component:       "networking",
 	}
 	IPAMDInconsistentState = ReasonMeta{
 		template:        "IPAMDInconsistentState",
 		defaultSeverity: "Warning",
+		component:       "ipamd",
 	}
 	IPAMDNoIPs = ReasonMeta{
 		template:        "IPAMDNoIPs",
 		defaultSeverity: "Warning",
+		component:       "ipamd",
 	}
 	IPAMDNotReady = ReasonMeta{
 		template:        "IPAMDNotReady",
 		defaultSeverity: "Fatal",
+		component:       "ipamd",
 	}
 	IPAMDNotRunning = ReasonMeta{
 		template:        "IPAMDNotRunning",
 		defaultSeverity: "Fatal",
+		component:       "ipamd",
 	}
 	IPAMDRepeatedlyRestart = ReasonMeta{
 		template:        "IPAMDRepeatedlyRestart",
 		defaultSeverity: "Warning",
+		component:       "ipamd",
 	}
 	InterfaceNotRunning = ReasonMeta{
 		template:        "InterfaceNotRunning",
 		defaultSeverity: "Fatal",
+		component:       "networking",
 	}
 	InterfaceNotUp = ReasonMeta{
 		template:        "InterfaceNotUp",
 		defaultSeverity: "Fatal",
+		component:       "networking",
 	}
 	KubeProxyNotReady = ReasonMeta{
 		template:        "KubeProxyNotReady",
 		defaultSeverity: "Warning",
+		component:       "networking",
 	}
 	LinkLocalExceeded = ReasonMeta{
 		template:        "LinkLocalExceeded",
 		defaultSeverity: "Warning",
+		component:       "networking",
 	}
 	MACAddressPolicyMisconfigured = ReasonMeta{
 		template:        "MACAddressPolicyMisconfigured",
 		defaultSeverity: "Warning",
+		component:       "networking",
 	}
 	MissingDefaultRoutes = ReasonMeta{
 		template:        "MissingDefaultRoutes",
 		defaultSeverity: "Warning",
+		component:       "networking",
 	}
 	MissingIPRoutes = ReasonMeta{
 		template:        "MissingIPRoutes",
 		defaultSeverity: "Warning",
+		component:       "networking",
 	}
 	MissingIPRules = ReasonMeta{
 		template:        "MissingIPRules",
 		defaultSeverity: "Warning",
+		component:       "networking",
 	}
 	MissingLoopbackInterface = ReasonMeta{
 		template:        "MissingLoopbackInterface",
 		defaultSeverity: "Fatal",
+		component:       "networking",
 	}
 	NPABPFRecoveryError = ReasonMeta{
 		template:        "NPABPFRecoveryError",
 		defaultSeverity: "Warning",
+		component:       "npa",
 	}
 	NPANotRunning = ReasonMeta{
 		template:        "NPANotRunning",
 		defaultSeverity: "Fatal",
+		component:       "npa",
 	}
 	NPARepeatedlyRestart = ReasonMeta{
 		template:        "NPARepeatedlyRestart",
 		defaultSeverity: "Warning",
+		component:       "npa",
 	}
 	NetworkSysctl = ReasonMeta{
 		template:        "NetworkSysctl",
 		defaultSeverity: "Warning",
+		component:       "networking",
 	}
 	PPSExceeded = ReasonMeta{
 		template:        "PPSExceeded",
 		defaultSeverity: "Warning",
+		component:       "networking",
 	}
 	PortConflict = ReasonMeta{
 		template:        "PortConflict",
 		defaultSeverity: "Warning",
+		component:       "networking",
 	}
 	UnexpectedRejectRule = ReasonMeta{
 		template:        "UnexpectedRejectRule",
 		defaultSeverity: "Warning",
+		component:       "networking",
 	}
 
 	// reasons for the StorageReady condition.
@@ -285,38 +351,47 @@ var (
 	BlockDeviceIOError = ReasonMeta{
 		template:        "BlockDeviceIOError",
 		defaultSeverity: "Warning",
+		component:       "storage",
 	}
 	EBSInstanceIOPSExceeded = ReasonMeta{
 		template:        "EBSInstanceIOPSExceeded",
 		defaultSeverity: "Warning",
+		component:       "storage",
 	}
 	EBSInstanceThroughputExceeded = ReasonMeta{
 		template:        "EBSInstanceThroughputExceeded",
 		defaultSeverity: "Warning",
+		component:       "storage",
 	}
 	EBSVolumeIOPSExceeded = ReasonMeta{
 		template:        "EBSVolumeIOPSExceeded",
 		defaultSeverity: "Warning",
+		component:       "storage",
 	}
 	EBSVolumeThroughputExceeded = ReasonMeta{
 		template:        "EBSVolumeThroughputExceeded",
 		defaultSeverity: "Warning",
+		component:       "storage",
 	}
 	EtcHostsMountFailed = ReasonMeta{
 		template:        "EtcHostsMountFailed",
 		defaultSeverity: "Warning",
+		component:       "storage",
 	}
 	IODelays = ReasonMeta{
 		template:        "IODelays",
 		defaultSeverity: "Warning",
+		component:       "storage",
 	}
 	KubeletDiskUsageSlow = ReasonMeta{
 		template:        "KubeletDiskUsageSlow",
 		defaultSeverity: "Warning",
+		component:       "storage",
 	}
 	XFSSmallAverageClusterSize = ReasonMeta{
 		template:        "XFSSmallAverageClusterSize",
 		defaultSeverity: "Warning",
+		component:       "storage",
 	}
 )
 
@@ -400,3 +475,23 @@ var byName = map[string]ReasonMeta{
 	"KubeletDiskUsageSlow":              KubeletDiskUsageSlow,
 	"XFSSmallAverageClusterSize":        XFSSmallAverageClusterSize,
 }
+
+// components is the distinct set of event-budget components declared in
+// reasons.yaml. Together with the platform-reserved slots it is bounded by
+// the capacity ledger in tools/codegen-reasons.
+var components = map[string]struct{}{
+	"container-runtime": {},
+	"ipamd":             {},
+	"kernel":            {},
+	"networking":        {},
+	"neuron":            {},
+	"npa":               {},
+	"nvidia":            {},
+	"storage":           {},
+}
+
+// MaxComponents is N, the declared platform capacity for event-budget
+// components, mirrored from the capacity ledger in tools/codegen-reasons.
+// The node-global event ceiling is derived as N times the per-component
+// quota and must never be tuned independently.
+const MaxComponents = 10

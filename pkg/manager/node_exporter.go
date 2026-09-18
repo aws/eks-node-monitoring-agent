@@ -46,6 +46,7 @@ func NewNodeExporter(
 		nodeKey:                client.ObjectKeyFromObject(node),
 		kubeClient:             kubeClient,
 		recorder:               recorder,
+		limiter:                newEventLimiter(),
 		managedConditions:      initializeManagedConditions(managedConditionConfigs),
 		managedConditionsDirty: true,
 		conditionConfigs:       managedConditionConfigs,
@@ -88,6 +89,7 @@ func initializeManagedConditions(conditionConfigs map[corev1.NodeConditionType]N
 type nodeExporter struct {
 	kubeClient client.Client
 	recorder   record.EventRecorder
+	limiter    *eventLimiter
 	nodeRef    *corev1.ObjectReference
 	nodeKey    client.ObjectKey
 
@@ -110,16 +112,34 @@ type fatalEntry struct {
 	message string
 }
 
-// Info records an event for the specified condition.
-func (e *nodeExporter) Info(ctx context.Context, c monitor.Condition, conditionType corev1.NodeConditionType) error {
-	e.recorder.Event(e.nodeRef, corev1.EventTypeNormal, string(conditionType), fmt.Sprintf("%s: %s", c.Reason, c.Message))
+// componentAnnotation carries the owning component on every event NMA
+// records. It exists for consumer filtering and for the custom aggregation
+// key; it is deliberately not the budget-enforcement key (see eventLimiter).
+const componentAnnotation = "eks.amazonaws.com/component"
+
+// Info records an event for the specified condition, subject to the
+// component's event budget. The event reason and message shape are
+// load-bearing (asserted by the E2E suite and filtered on by consumers) and
+// must not change; the component travels as an annotation.
+func (e *nodeExporter) Info(ctx context.Context, c monitor.Condition, conditionType corev1.NodeConditionType, component string) error {
+	e.recordEvent(component, corev1.EventTypeNormal, string(conditionType), fmt.Sprintf("%s: %s", c.Reason, c.Message))
 	return nil
 }
 
-// Warning records an event for the specified condition.
-func (e *nodeExporter) Warning(ctx context.Context, c monitor.Condition, conditionType corev1.NodeConditionType) error {
-	e.recorder.Event(e.nodeRef, corev1.EventTypeWarning, string(conditionType), fmt.Sprintf("%s: %s", c.Reason, c.Message))
+// Warning records an event for the specified condition, subject to the
+// component's event budget.
+func (e *nodeExporter) Warning(ctx context.Context, c monitor.Condition, conditionType corev1.NodeConditionType, component string) error {
+	e.recordEvent(component, corev1.EventTypeWarning, string(conditionType), fmt.Sprintf("%s: %s", c.Reason, c.Message))
 	return nil
+}
+
+// recordEvent applies the per-component budget and the derived node ceiling,
+// then records the event with the component annotation attached.
+func (e *nodeExporter) recordEvent(component, eventType, reason, message string) {
+	if !e.limiter.allow(component, eventType) {
+		return
+	}
+	e.recorder.AnnotatedEventf(e.nodeRef, map[string]string{componentAnnotation: component}, eventType, reason, "%s", message)
 }
 
 // Fatal updates the local state for the specified managed condition.
@@ -152,7 +172,7 @@ func (e *nodeExporter) Fatal(ctx context.Context, monitorCondition monitor.Condi
 // When the last reason is cleared, the condition is restored to its healthy
 // ready state. It returns true when the condition is healthy after the
 // resolution. Resolving a reason that was never reported is a no-op.
-func (e *nodeExporter) Resolve(ctx context.Context, monitorCondition monitor.Condition, conditionType corev1.NodeConditionType) (bool, error) {
+func (e *nodeExporter) Resolve(ctx context.Context, monitorCondition monitor.Condition, conditionType corev1.NodeConditionType, component string) (bool, error) {
 	e.managedConditionsLock.Lock()
 	defer e.managedConditionsLock.Unlock()
 
@@ -170,7 +190,7 @@ func (e *nodeExporter) Resolve(ctx context.Context, monitorCondition monitor.Con
 	}
 	e.fatalEntries[conditionType] = entries
 
-	e.recorder.Event(e.nodeRef, corev1.EventTypeNormal, string(conditionType),
+	e.recordEvent(component, corev1.EventTypeNormal, string(conditionType),
 		fmt.Sprintf("%s: the previously reported issue has been resolved", monitorCondition.Reason))
 
 	if len(entries) > 0 {
