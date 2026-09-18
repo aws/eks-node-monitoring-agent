@@ -80,12 +80,25 @@ func (m *nvidiaMonitor) Register(ctx context.Context, mgr monitor.Manager) error
 
 	// DCGM Reconcile - maintains connection to DCGM host
 	go func() {
+		failed := false
 		for range m.tickFunc(ctx, 30*time.Second) {
 			conditions, err := dcgmSystem.Reconcile(ctx)
 			if err != nil {
 				logger.Error(err, "failed to reconcile DCGM")
 				continue
 			}
+			if len(conditions) == 0 {
+				// reset the latched fatal condition once DCGM is reachable again
+				if failed {
+					if err := mgr.Recovered(ctx); err != nil {
+						logger.Error(err, "failed to notify DCGM recovery")
+						continue
+					}
+					failed = false
+				}
+				continue
+			}
+			failed = true
 			for _, condition := range conditions {
 				if err := mgr.Notify(ctx, condition); err != nil {
 					logger.Error(err, "failed to notify DCGM reconcile condition")

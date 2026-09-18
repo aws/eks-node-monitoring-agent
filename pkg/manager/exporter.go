@@ -18,4 +18,7 @@ type Exporter interface {
 
 	// Fatal exports fatal conditions
 	Fatal(ctx context.Context, condition monitor.Condition, conditionType corev1.NodeConditionType) error
+
+	// Recovered resets a managed condition back to its ready state
+	Recovered(ctx context.Context, conditionType corev1.NodeConditionType) error
 }

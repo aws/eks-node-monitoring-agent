@@ -181,6 +181,78 @@ func TestNodeExporter_ConditionReportedAfterTick(t *testing.T) {
 	}
 }
 
+func TestNodeExporter_RecoveredResetsCondition(t *testing.T) {
+	ctx := context.TODO()
+
+	fakeClient := fake.NewFakeClient()
+	nodeName := "test-node"
+	initialNode := corev1.Node{
+		ObjectMeta: v1.ObjectMeta{Name: nodeName},
+	}
+	if err := fakeClient.Create(ctx, &initialNode); err != nil {
+		t.Fatalf("failed to create initial node: %v", err)
+	}
+
+	var recorder fakeEventRecorder
+
+	conditionType := corev1.NodeConditionType("TestType")
+	nodeExporter := manager.NewNodeExporter(
+		&initialNode,
+		fakeClient,
+		&recorder,
+		map[corev1.NodeConditionType]manager.NodeConditionConfig{
+			conditionType: {
+				ReadyReason:  "Ready",
+				ReadyMessage: "Test Ready",
+			},
+		},
+	)
+
+	heartbeatChan := make(chan time.Time)
+	reportChan := make(chan time.Time)
+	go nodeExporter.RunWithTickers(ctx, heartbeatChan, reportChan)
+
+	fatalCondition := monitor.Condition{
+		Reason:  "TestReason",
+		Message: "TestMessage",
+	}
+	if err := nodeExporter.Fatal(ctx, fatalCondition, conditionType); err != nil {
+		t.Fatal(err)
+	}
+	if err := nodeExporter.Recovered(ctx, conditionType); err != nil {
+		t.Fatal(err)
+	}
+
+	reportChan <- time.Now()
+
+	// fatal then recovered lands on the ready state
+	expectedCondition := corev1.NodeCondition{
+		Type:    conditionType,
+		Reason:  "Ready",
+		Message: "Test Ready",
+		Status:  corev1.ConditionTrue,
+	}
+	nodeKey := client.ObjectKeyFromObject(&initialNode)
+	var node corev1.Node
+	if err := wait.PollUntilContextTimeout(ctx, 1*time.Second, 10*time.Second, true, func(ctx context.Context) (done bool, err error) {
+		if err := fakeClient.Get(ctx, nodeKey, &node); err != nil {
+			return false, fmt.Errorf("failed to get node: %v", err)
+		}
+		if !nodeHasCondition(node, expectedCondition) {
+			t.Logf("node condition not found: %+v: %+v", expectedCondition, node.Status.Conditions)
+			return false, nil
+		}
+		return true, nil
+	}); err != nil {
+		t.Fatalf("failed to verify node condition: %v", err)
+	}
+
+	// recovering an already-ready condition is a no-op
+	if err := nodeExporter.Recovered(ctx, conditionType); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func nodeHasCondition(node corev1.Node, condition corev1.NodeCondition) bool {
 	for _, c := range node.Status.Conditions {
 		if isConditionEqual(c, condition) {
