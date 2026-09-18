@@ -58,6 +58,14 @@ type Spec struct {
 	// on any healthy result. Must be at least 1.
 	FailureThreshold int `json:"failureThreshold"`
 
+	// RecoveryThreshold is the number of consecutive healthy results
+	// required before a previously emitted failure condition is resolved.
+	// It damps condition flapping: every False→True transition resets Auto
+	// Repair's wait clock, so a flapping agent would otherwise never be
+	// repaired. If zero, it defaults to 1, which resolves on the first
+	// healthy result and preserves the pre-hysteresis behavior.
+	RecoveryThreshold int `json:"recoveryThreshold,omitempty"`
+
 	// StartupGracePeriod suppresses failure emission for this duration after
 	// the runner starts, tolerating agents that come up after the monitoring
 	// agent during boot.
