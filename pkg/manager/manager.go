@@ -144,6 +144,16 @@ func (m *MonitorManager) exportCondition(ctx context.Context, monitorName string
 	return m.SendCondition(ctx, condition, conditionType)
 }
 
+// recovered resets the node condition owned by the monitor back to its ready state
+func (m *MonitorManager) recovered(ctx context.Context, monitorName string) error {
+	conditionType, ok := m.conditionTypeMap[monitorName]
+	if !ok {
+		return fmt.Errorf("missing condition type mapping for monitor: %s", monitorName)
+	}
+	conditionTypeGauge.WithLabelValues(string(conditionType)).Set(0.0)
+	return m.exporter.Recovered(ctx, conditionType)
+}
+
 // SendCondition sends a condition to the exporter based on severity
 func (m *MonitorManager) SendCondition(ctx context.Context, condition monitor.Condition, conditionType corev1.NodeConditionType) error {
 	log.FromContext(ctx).Info("sending condition to exporter", "condition", condition, "conditionType", conditionType)
@@ -198,6 +208,9 @@ func makeManagerWrapper(monMgr *MonitorManager, mon monitor.Monitor) *managerWra
 				return ctx.Err()
 			}
 		},
+		recoveredFunc: func(ctx context.Context) error {
+			return monMgr.recovered(ctx, mon.Name())
+		},
 	}
 }
 
@@ -207,11 +220,16 @@ var _ monitor.Manager = (*managerWrapper)(nil)
 // package which scopes the notify call to the manager.
 type managerWrapper struct {
 	*MonitorManager
-	notifyFunc func(ctx context.Context, condition monitor.Condition) error
+	notifyFunc    func(ctx context.Context, condition monitor.Condition) error
+	recoveredFunc func(ctx context.Context) error
 }
 
 func (m *managerWrapper) Notify(ctx context.Context, cond monitor.Condition) error {
 	return m.notifyFunc(ctx, cond)
+}
+
+func (m *managerWrapper) Recovered(ctx context.Context) error {
+	return m.recoveredFunc(ctx)
 }
 
 // resourceID creates a unique identifier for a resource subscription

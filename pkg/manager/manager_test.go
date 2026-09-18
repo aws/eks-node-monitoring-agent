@@ -49,6 +49,9 @@ func (e *mockExporter) Warning(context.Context, monitor.Condition, corev1.NodeCo
 func (e *mockExporter) Fatal(context.Context, monitor.Condition, corev1.NodeConditionType) error {
 	return e.notify()
 }
+func (e *mockExporter) Recovered(context.Context, corev1.NodeConditionType) error {
+	return e.notify()
+}
 
 func TestManager_Notification(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.TODO(), time.Millisecond)
