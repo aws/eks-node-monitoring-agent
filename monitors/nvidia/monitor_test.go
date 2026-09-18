@@ -19,12 +19,6 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/pkg/observer"
 )
 
-type mockSysInfo struct{}
-
-func (*mockSysInfo) Arch() string {
-	return "mock"
-}
-
 type mockManager struct {
 	monitor.Manager
 	obs     observer.BaseObserver
@@ -61,7 +55,7 @@ func newMonitorWithDcgm() (monitor.Monitor, *fake.FakeDcgm) {
 	provider := &fake.FakeInstanceTypeInfoProvider{
 		Info: &instanceinfo.InstanceInfo{InstanceType: "test", NvidiaGPUCount: 0},
 	}
-	nvidiaMonitor := nvidia.NewNvidiaMonitorWithDeps(mockDcgm, &mockSysInfo{}, immediateTick, provider)
+	nvidiaMonitor := nvidia.NewNvidiaMonitorWithDeps(mockDcgm, immediateTick, provider)
 	return nvidiaMonitor, mockDcgm
 }
 
