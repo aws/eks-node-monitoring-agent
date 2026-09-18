@@ -79,6 +79,12 @@ KernelReady:
       A kernel bug was detected and reported by the Linux kernel itself, though
       this may sometimes be caused by nodes with high CPU or memory usage
       leading to delayed event processing.
+  ZramHighUsage:
+    Template: 'ZramHighUsage'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      A ZRAM swap device is using more than 10% of its configured disk size,
+      indicating memory pressure on the node.
 ContainerRuntimeReady:
   KubeletFailed:
     Template: 'KubeletFailed'
