@@ -5,9 +5,6 @@ package nvidia
 import (
 	"context"
 	"os"
-	"runtime"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
@@ -15,7 +12,6 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/internal/pkg/instanceinfo"
 	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/dcgm"
 	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/nccl"
-	"github.com/aws/eks-node-monitoring-agent/pkg/config"
 	"github.com/aws/eks-node-monitoring-agent/pkg/util"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -44,17 +40,15 @@ func NewNvidiaMonitor() *nvidiaMonitor {
 				dcgm.FeaturePolicyViolations,
 			},
 		}),
-		sysInfo:                  &sysInfo{},
 		tickFunc:                 util.TimeTickWithJitterContext,
 		instanceTypeInfoProvider: instanceinfo.NewInstanceTypeInfoProvider(),
 	}
 }
 
 // NewNvidiaMonitorWithDeps creates an nvidiaMonitor with injectable dependencies for testing.
-func NewNvidiaMonitorWithDeps(dcgmClient dcgm.DCGM, sys SysInfo, tickFunc TickFunc, provider instanceinfo.InstanceTypeInfoProvider) *nvidiaMonitor {
+func NewNvidiaMonitorWithDeps(dcgmClient dcgm.DCGM, tickFunc TickFunc, provider instanceinfo.InstanceTypeInfoProvider) *nvidiaMonitor {
 	return &nvidiaMonitor{
 		dcgmClient:               dcgmClient,
-		sysInfo:                  sys,
 		tickFunc:                 tickFunc,
 		instanceTypeInfoProvider: provider,
 	}
@@ -67,7 +61,6 @@ type TickFunc func(ctx context.Context, d time.Duration) <-chan time.Time
 // nvidiaMonitor detects issues on nvidia GPUs
 type nvidiaMonitor struct {
 	dcgmClient               dcgm.DCGM
-	sysInfo                  SysInfo
 	tickFunc                 TickFunc
 	instanceTypeInfoProvider instanceinfo.InstanceTypeInfoProvider
 }
@@ -83,115 +76,108 @@ func (m *nvidiaMonitor) Conditions() []monitor.Condition {
 func (m *nvidiaMonitor) Register(ctx context.Context, mgr monitor.Manager) error {
 	logger := log.FromContext(ctx)
 
-	// TODO: until a dcgm-server manifest that contains arm64 images can be
-	// provided by the eks-node-monitoring agent chart/addon we are
-	// disabling this detection.
-	if !slices.Contains(config.GetRuntimeContext().Tags(), config.EKSAuto) && strings.Contains(m.sysInfo.Arch(), "arm") {
-		logger.Info("NVIDIA-based monitoring is disabled for the arm64 architecture in this version of the agent")
-	} else {
-		dcgmSystem := dcgm.NewDCGMSystemWithInstanceTypeInfoProvider(m.dcgmClient, dcgm.GetDiagType(), m.instanceTypeInfoProvider)
+	dcgmSystem := dcgm.NewDCGMSystemWithInstanceTypeInfoProvider(m.dcgmClient, dcgm.GetDiagType(), m.instanceTypeInfoProvider)
 
-		// DCGM Reconcile - maintains connection to DCGM host
-		go func() {
-			for range m.tickFunc(ctx, 30*time.Second) {
-				conditions, err := dcgmSystem.Reconcile(ctx)
+	// DCGM Reconcile - maintains connection to DCGM host
+	go func() {
+		for range m.tickFunc(ctx, 30*time.Second) {
+			conditions, err := dcgmSystem.Reconcile(ctx)
+			if err != nil {
+				logger.Error(err, "failed to reconcile DCGM")
+				continue
+			}
+			for _, condition := range conditions {
+				if err := mgr.Notify(ctx, condition); err != nil {
+					logger.Error(err, "failed to notify DCGM reconcile condition")
+				}
+			}
+		}
+	}()
+
+	// DCGM Active Diagnostics
+	go func() {
+		for range m.tickFunc(ctx, 5*time.Minute) {
+			conditions, err := dcgmSystem.ActiveDiagnostic(ctx)
+			if err != nil {
+				logger.Error(err, "failed to run DCGM active diagnostics")
+				continue
+			}
+			for _, condition := range conditions {
+				if err := mgr.Notify(ctx, condition); err != nil {
+					logger.Error(err, "failed to notify DCGM diagnostic condition")
+				}
+			}
+		}
+	}()
+
+	// DCGM Policy Violations - continuous monitoring
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				conditions, err := dcgmSystem.Policies(ctx)
 				if err != nil {
-					logger.Error(err, "failed to reconcile DCGM")
+					logger.Error(err, "failed to check DCGM policies")
 					continue
 				}
 				for _, condition := range conditions {
 					if err := mgr.Notify(ctx, condition); err != nil {
-						logger.Error(err, "failed to notify DCGM reconcile condition")
+						logger.Error(err, "failed to notify DCGM policy condition")
 					}
 				}
 			}
-		}()
+		}
+	}()
 
-		// DCGM Active Diagnostics
-		go func() {
-			for range m.tickFunc(ctx, 5*time.Minute) {
-				conditions, err := dcgmSystem.ActiveDiagnostic(ctx)
-				if err != nil {
-					logger.Error(err, "failed to run DCGM active diagnostics")
-					continue
-				}
-				for _, condition := range conditions {
-					if err := mgr.Notify(ctx, condition); err != nil {
-						logger.Error(err, "failed to notify DCGM diagnostic condition")
-					}
+	// DCGM Health Check
+	go func() {
+		for range m.tickFunc(ctx, 5*time.Minute) {
+			conditions, err := dcgmSystem.HealthCheck(ctx)
+			if err != nil {
+				logger.Error(err, "failed to run DCGM health check")
+				continue
+			}
+			for _, condition := range conditions {
+				if err := mgr.Notify(ctx, condition); err != nil {
+					logger.Error(err, "failed to notify DCGM health condition")
 				}
 			}
-		}()
+		}
+	}()
 
-		// DCGM Policy Violations - continuous monitoring
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				default:
-					conditions, err := dcgmSystem.Policies(ctx)
-					if err != nil {
-						logger.Error(err, "failed to check DCGM policies")
-						continue
-					}
-					for _, condition := range conditions {
-						if err := mgr.Notify(ctx, condition); err != nil {
-							logger.Error(err, "failed to notify DCGM policy condition")
-						}
-					}
+	// DCGM Watch Fields
+	go func() {
+		for range m.tickFunc(ctx, 5*time.Minute) {
+			conditions, err := dcgmSystem.WatchFields(ctx)
+			if err != nil {
+				logger.Error(err, "failed to watch DCGM fields")
+				continue
+			}
+			for _, condition := range conditions {
+				if err := mgr.Notify(ctx, condition); err != nil {
+					logger.Error(err, "failed to notify DCGM field condition")
 				}
 			}
-		}()
+		}
+	}()
 
-		// DCGM Health Check
-		go func() {
-			for range m.tickFunc(ctx, 5*time.Minute) {
-				conditions, err := dcgmSystem.HealthCheck(ctx)
-				if err != nil {
-					logger.Error(err, "failed to run DCGM health check")
-					continue
-				}
-				for _, condition := range conditions {
-					if err := mgr.Notify(ctx, condition); err != nil {
-						logger.Error(err, "failed to notify DCGM health condition")
-					}
+	// DCGM Device Count
+	go func() {
+		for range m.tickFunc(ctx, 5*time.Minute) {
+			conditions, err := dcgmSystem.DeviceCount(ctx)
+			if err != nil {
+				logger.Error(err, "failed to check DCGM device count")
+				continue
+			}
+			for _, condition := range conditions {
+				if err := mgr.Notify(ctx, condition); err != nil {
+					logger.Error(err, "failed to notify DCGM device count condition")
 				}
 			}
-		}()
-
-		// DCGM Watch Fields
-		go func() {
-			for range m.tickFunc(ctx, 5*time.Minute) {
-				conditions, err := dcgmSystem.WatchFields(ctx)
-				if err != nil {
-					logger.Error(err, "failed to watch DCGM fields")
-					continue
-				}
-				for _, condition := range conditions {
-					if err := mgr.Notify(ctx, condition); err != nil {
-						logger.Error(err, "failed to notify DCGM field condition")
-					}
-				}
-			}
-		}()
-
-		// DCGM Device Count
-		go func() {
-			for range m.tickFunc(ctx, 5*time.Minute) {
-				conditions, err := dcgmSystem.DeviceCount(ctx)
-				if err != nil {
-					logger.Error(err, "failed to check DCGM device count")
-					continue
-				}
-				for _, condition := range conditions {
-					if err := mgr.Notify(ctx, condition); err != nil {
-						logger.Error(err, "failed to notify DCGM device count condition")
-					}
-				}
-			}
-		}()
-	}
+		}
+	}()
 
 	// NCCL error monitoring from dmesg
 	kmsg, err := mgr.Subscribe(resource.ResourceTypeDmesg, []resource.Part{})
@@ -220,14 +206,4 @@ func (m *nvidiaMonitor) Register(ctx context.Context, mgr monitor.Manager) error
 	}()
 
 	return nil
-}
-
-type SysInfo interface {
-	Arch() string
-}
-
-type sysInfo struct{}
-
-func (*sysInfo) Arch() string {
-	return runtime.GOARCH
 }

@@ -536,6 +536,7 @@ spec:
                 operator: In
                 values:
                 - amd64
+                - arm64
       nodeSelector:
         kubernetes.io/os: linux
       priorityClassName: system-node-critical

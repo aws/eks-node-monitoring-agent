@@ -151,11 +151,12 @@ dcgmAgent:
             operator: NotIn
             values:
               - hyperpod
-            # Only schedule on amd64 nodes
+            # Schedule on amd64 and arm64 nodes
           - key: kubernetes.io/arch
             operator: In
             values:
               - amd64
+              - arm64
   # -- Container resources for the dcgm deployment
   resources: {}
   # -- Container resize policy for in-place pod vertical scaling (requires Kubernetes 1.33+)
