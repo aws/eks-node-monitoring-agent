@@ -5,6 +5,8 @@ package dcgm_test
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,7 +16,68 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/internal/pkg/instanceinfo"
 	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/dcgm"
 	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/dcgm/fake"
+	"github.com/aws/eks-node-monitoring-agent/pkg/config"
 )
+
+func createFakeDevices(t *testing.T, dir string, count int) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := range count {
+		f, err := os.Create(filepath.Join(dir, fmt.Sprintf("nvidia%d", i)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+	}
+}
+
+func TestGetNvidiaFSDeviceCount(t *testing.T) {
+	t.Run("StandardPath", func(t *testing.T) {
+		root := t.TempDir()
+		t.Setenv(config.HOST_ROOT_ENV, root)
+		createFakeDevices(t, filepath.Join(root, "dev"), 4)
+
+		count, err := dcgm.GetNvidiaFSDeviceCount()
+		assert.NoError(t, err)
+		assert.Equal(t, uint(4), count)
+	})
+
+	t.Run("GPUOperatorAutoDetect", func(t *testing.T) {
+		root := t.TempDir()
+		t.Setenv(config.HOST_ROOT_ENV, root)
+		// No devices in standard /dev, but GPU Operator path has them
+		gpuOpDev := filepath.Join(root, "run", "nvidia", "driver", "dev")
+		createFakeDevices(t, gpuOpDev, 8)
+
+		count, err := dcgm.GetNvidiaFSDeviceCount()
+		assert.NoError(t, err)
+		assert.Equal(t, uint(8), count)
+	})
+
+	t.Run("ExplicitOverride", func(t *testing.T) {
+		root := t.TempDir()
+		t.Setenv(config.HOST_ROOT_ENV, root)
+		t.Setenv(config.NVIDIA_DRIVER_ROOT_ENV, "/custom/driver")
+		customDev := filepath.Join(root, "custom", "driver", "dev")
+		createFakeDevices(t, customDev, 2)
+
+		count, err := dcgm.GetNvidiaFSDeviceCount()
+		assert.NoError(t, err)
+		assert.Equal(t, uint(2), count)
+	})
+
+	t.Run("NoDevicesAnywhere", func(t *testing.T) {
+		root := t.TempDir()
+		t.Setenv(config.HOST_ROOT_ENV, root)
+		os.MkdirAll(filepath.Join(root, "dev"), 0o755)
+
+		count, err := dcgm.GetNvidiaFSDeviceCount()
+		assert.NoError(t, err)
+		assert.Equal(t, uint(0), count)
+	})
+}
 
 func TestDeviceCount(t *testing.T) {
 	t.Run("DeviceCountError", func(t *testing.T) {
