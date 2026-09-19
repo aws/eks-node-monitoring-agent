@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"context"
+	"time"
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor/resource"
 )
@@ -44,6 +45,20 @@ type Condition struct {
 	// MinOccurrence is the minimal time the failure could occur before we export the condition.
 	// default is 0 if not assigned
 	MinOccurrences int64
+	// TTL is how long a Fatal condition remains valid without being re-observed.
+	// Conditions derived from a log line are latched: the monitor sees the failure
+	// once and has no corresponding "recovered" line to clear it, so the condition
+	// sticks until the node is replaced. Setting a TTL lets the exporter return the
+	// condition to its ready state once the underlying failure stops being observed.
+	//
+	// Only meaningful for SeverityFatal. Zero means the condition never expires,
+	// which preserves the previous latching behavior for issues that genuinely
+	// require external repair (e.g. uncorrectable GPU memory errors).
+	//
+	// A TTL is only appropriate for a failure that keeps being re-observed for as
+	// long as it is real. Set it to a comfortable multiple of that re-observation
+	// interval so a persistent problem never expires between observations.
+	TTL time.Duration
 }
 
 // A gauge for how severe the issue is, and whether actions need to be taken
