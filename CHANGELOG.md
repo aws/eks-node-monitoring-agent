@@ -5,6 +5,22 @@ All notable changes to the EKS Node Monitoring Agent will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.7.2] - 2026-09-18
+
+### What's Changed
+
+#### Features
+- Validate monitor config against registered plugins ([4ad319d](https://github.com/aws/eks-node-monitoring-agent/commit/4ad319de33db70376e5177f5ca2f1718ebc3a183))
+- Enable NVIDIA/DCGM monitoring on arm64 GPU nodes ([e0b98b2](https://github.com/aws/eks-node-monitoring-agent/commit/e0b98b22323638f439c7c8bfcd0222a738f45f69))
+
+#### Bug Fixes
+- Register ZramHighUsage in reasons.yaml ([807d06b](https://github.com/aws/eks-node-monitoring-agent/commit/807d06bd64dae6187afd2120371391e70979b3b3))
+- Downgrade NVLink lifetime counter code 71 to Warning on pre-Blackwell GPUs ([f0a2b3b](https://github.com/aws/eks-node-monitoring-agent/commit/f0a2b3b44dfd73480e7089c615313efcb4bdc55e))
+- Use typed ResourceNotFoundException for addon skip check in e2e ([44474bb](https://github.com/aws/eks-node-monitoring-agent/commit/44474bba6699f27fb2af9f413e8aab4e48a17e08))
+
+#### Dependencies
+- Bump google.golang.org/grpc from 1.82.1 to 1.83.2 ([504eb24](https://github.com/aws/eks-node-monitoring-agent/commit/504eb244e807b228bc300a28ba4f061774628384), [0215b40](https://github.com/aws/eks-node-monitoring-agent/commit/0215b40e76cd53db58f6f46364ada875d095cfc4))
+
 ## [v1.7.1] - 2026-09-01
 
 ### What's Changed
@@ -231,6 +247,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### What's Changed
 - Update base DCGM image to 4.5.2-4.8.1-ubuntu22.04 to resolve CVEs ([1a2cda4](https://github.com/aws/eks-node-monitoring-agent/commit/1a2cda4))
 
+[v1.7.2]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.7.1...v1.7.2
 [v1.7.1]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.7.0...v1.7.1
 [v1.7.0]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.7...v1.7.0
 [v1.6.7]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.6...v1.6.7
