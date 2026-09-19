@@ -219,7 +219,8 @@ func run() error {
 		}
 
 		// Load monitor configuration from ConfigMap mount
-		monitorConfig, configFound, err := config.LoadMonitorConfig(config.DefaultConfigPath)
+		allPlugins := registry.GlobalRegistry().List()
+		monitorConfig, configFound, err := config.LoadMonitorConfig(config.DefaultConfigPath, pluginNames(allPlugins))
 		if err != nil {
 			logger.Error(err, "failed to load monitor configuration")
 			return err
@@ -229,7 +230,6 @@ func run() error {
 		}
 
 		// Filter plugins by configuration and log effective state
-		allPlugins := registry.GlobalRegistry().List()
 		var enabledMonitors []monitor.Monitor
 		var disabledNames []string
 
@@ -407,6 +407,14 @@ func run() error {
 
 	logger.Info("starting controller manager")
 	return mgr.Start(ctx)
+}
+
+func pluginNames(plugins []registry.MonitorPlugin) []string {
+	names := make([]string, 0, len(plugins))
+	for _, plugin := range plugins {
+		names = append(names, plugin.Name())
+	}
+	return names
 }
 
 // registeredCheck reports ready only once registered is closed, so a node still

@@ -100,24 +100,14 @@ func (mc *MonitorConfig) GetExcludedInterfaceNameRegexps() []string {
 	return settings.ExcludedInterfaceNameRegexps
 }
 
-// KnownPluginNames is the set of valid plugin names for validation.
-var KnownPluginNames = []string{
-	"kernel-monitor",
-	"networking",
-	"storage-monitor",
-	"nvidia",
-	"neuron",
-	"runtime",
-}
-
 // Validate checks that all keys in Monitors are known plugin names.
-func (mc *MonitorConfig) Validate() error {
+func (mc *MonitorConfig) Validate(knownPluginNames []string) error {
 	if mc == nil || mc.Monitors == nil {
 		return nil
 	}
 	var unknown []string
 	for name := range mc.Monitors {
-		if !slices.Contains(KnownPluginNames, name) {
+		if !slices.Contains(knownPluginNames, name) {
 			unknown = append(unknown, name)
 		}
 	}
@@ -161,7 +151,7 @@ func (mc *MonitorConfig) Validate() error {
 // Returns a default (all-enabled) config if the file does not exist.
 // Returns an error if the file exists but contains invalid YAML or unknown plugin names.
 // The second return value indicates whether the config file was found on disk.
-func LoadMonitorConfig(path string) (*MonitorConfig, bool, error) {
+func LoadMonitorConfig(path string, knownPluginNames []string) (*MonitorConfig, bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -180,7 +170,7 @@ func LoadMonitorConfig(path string) (*MonitorConfig, bool, error) {
 		return nil, false, fmt.Errorf("parsing monitor config: %w", err)
 	}
 
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.Validate(knownPluginNames); err != nil {
 		return nil, false, fmt.Errorf("validating monitor config: %w", err)
 	}
 
