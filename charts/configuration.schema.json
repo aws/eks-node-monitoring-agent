@@ -50,6 +50,11 @@
                     "default": "",
                     "enum": ["", "ClusterFirst", "ClusterFirstWithHostNet", "Default"]
                 },
+                "nvidiaDriverRoot": {
+                    "type": "string",
+                    "description": "Override for the NVIDIA driver root path. Only needed when the GPU Operator uses a non-default driver install directory.",
+                    "default": ""
+                },
                 "podAnnotations": {
                     "$ref": "#/definitions/StringMap",
                     "description": "Annotations applied to the eks node monitoring agent pod. These annotations are merged with any global pod annotations, with component specific annotations taking precedence in the case of a conflict.",

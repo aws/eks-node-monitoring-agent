@@ -39,9 +39,10 @@ func TestGetNvidiaFSDeviceCount(t *testing.T) {
 		t.Setenv(config.HOST_ROOT_ENV, root)
 		createFakeDevices(t, filepath.Join(root, "dev"), 4)
 
-		count, err := dcgm.GetNvidiaFSDeviceCount()
+		count, devDir, err := dcgm.GetNvidiaFSDeviceCount()
 		assert.NoError(t, err)
 		assert.Equal(t, uint(4), count)
+		assert.Equal(t, filepath.Join(root, "dev"), devDir)
 	})
 
 	t.Run("GPUOperatorAutoDetect", func(t *testing.T) {
@@ -51,9 +52,10 @@ func TestGetNvidiaFSDeviceCount(t *testing.T) {
 		gpuOpDev := filepath.Join(root, "run", "nvidia", "driver", "dev")
 		createFakeDevices(t, gpuOpDev, 8)
 
-		count, err := dcgm.GetNvidiaFSDeviceCount()
+		count, devDir, err := dcgm.GetNvidiaFSDeviceCount()
 		assert.NoError(t, err)
 		assert.Equal(t, uint(8), count)
+		assert.Equal(t, gpuOpDev, devDir)
 	})
 
 	t.Run("ExplicitOverride", func(t *testing.T) {
@@ -63,9 +65,23 @@ func TestGetNvidiaFSDeviceCount(t *testing.T) {
 		customDev := filepath.Join(root, "custom", "driver", "dev")
 		createFakeDevices(t, customDev, 2)
 
-		count, err := dcgm.GetNvidiaFSDeviceCount()
+		count, devDir, err := dcgm.GetNvidiaFSDeviceCount()
 		assert.NoError(t, err)
 		assert.Equal(t, uint(2), count)
+		assert.Equal(t, customDev, devDir)
+	})
+
+	t.Run("EmptyGPUOperatorDirFallsBackToStandardDev", func(t *testing.T) {
+		root := t.TempDir()
+		t.Setenv(config.HOST_ROOT_ENV, root)
+		// GPU Operator dir exists but is empty; standard /dev has devices
+		os.MkdirAll(filepath.Join(root, "run", "nvidia", "driver", "dev"), 0o755)
+		createFakeDevices(t, filepath.Join(root, "dev"), 4)
+
+		count, devDir, err := dcgm.GetNvidiaFSDeviceCount()
+		assert.NoError(t, err)
+		assert.Equal(t, uint(4), count)
+		assert.Equal(t, filepath.Join(root, "dev"), devDir)
 	})
 
 	t.Run("NoDevicesAnywhere", func(t *testing.T) {
@@ -73,7 +89,7 @@ func TestGetNvidiaFSDeviceCount(t *testing.T) {
 		t.Setenv(config.HOST_ROOT_ENV, root)
 		os.MkdirAll(filepath.Join(root, "dev"), 0o755)
 
-		count, err := dcgm.GetNvidiaFSDeviceCount()
+		count, _, err := dcgm.GetNvidiaFSDeviceCount()
 		assert.NoError(t, err)
 		assert.Equal(t, uint(0), count)
 	})
@@ -102,11 +118,9 @@ func TestDeviceCount(t *testing.T) {
 		conditions, err := dcgmSystem.DeviceCount(context.TODO())
 		assert.NoError(t, err)
 		assert.NotEmpty(t, conditions)
-		assert.Equal(t, conditions[0], monitor.Condition{
-			Reason:   "NvidiaDeviceCountMismatch",
-			Message:  fmt.Sprintf("DCGM detected %d GPUs but %d nvidia device files were detected", 8, 0 /* test is not run on GPU */),
-			Severity: monitor.SeverityFatal,
-		})
+		assert.Equal(t, "NvidiaDeviceCountMismatch", conditions[0].Reason)
+		assert.Equal(t, monitor.SeverityFatal, conditions[0].Severity)
+		assert.Contains(t, conditions[0].Message, "DCGM detected 8 GPUs but 0 nvidia device files were detected at")
 	})
 }
 

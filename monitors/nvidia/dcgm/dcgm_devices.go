@@ -29,9 +29,9 @@ func (s *DCGMSystem) DeviceCount(ctx context.Context) ([]monitor.Condition, erro
 		return nil, fmt.Errorf("failed to call DCGM get device count: %w", err)
 	}
 
-	fsDeviceCount, err := GetNvidiaFSDeviceCount()
+	fsDeviceCount, fsDevicePath, err := GetNvidiaFSDeviceCount()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get nvidia device count from /dev directory")
+		return nil, fmt.Errorf("failed to get nvidia device count from %s", fsDevicePath)
 	}
 
 	var conditions []monitor.Condition
@@ -40,7 +40,7 @@ func (s *DCGMSystem) DeviceCount(ctx context.Context) ([]monitor.Condition, erro
 		conditions = append(conditions,
 			reasons.NvidiaDeviceCountMismatch.
 				Builder().
-				Message(fmt.Sprintf("DCGM detected %d GPUs but %d nvidia device files were detected", gpuDeviceCount, fsDeviceCount)).
+				Message(fmt.Sprintf("DCGM detected %d GPUs but %d nvidia device files were detected at %s", gpuDeviceCount, fsDeviceCount, fsDevicePath)).
 				Build(),
 		)
 	}
@@ -69,20 +69,38 @@ func (s *DCGMSystem) DeviceCount(ctx context.Context) ([]monitor.Condition, erro
 	return conditions, nil
 }
 
-// nvidiaDevDir resolves the directory containing nvidia device files.
-// Priority: explicit override > GPU Operator default > standard /dev.
-func nvidiaDevDir() string {
+// nvidiaDevDirs returns the candidate directories to search for nvidia device
+// files, ordered by priority: explicit override, GPU Operator default, /dev.
+func nvidiaDevDirs() []string {
 	if root := config.NvidiaDriverRoot(); root != "" {
-		return config.ToHostPath(filepath.Join(root, "dev"))
+		return []string{config.ToHostPath(filepath.Join(root, "dev"))}
 	}
 	gpuOpDir := config.ToHostPath(filepath.Join(config.DefaultGPUOperatorDriverRoot, "dev"))
+	standardDir := config.ToHostPath("/dev")
 	if info, err := os.Stat(gpuOpDir); err == nil && info.IsDir() {
-		return gpuOpDir
+		return []string{gpuOpDir, standardDir}
 	}
-	return config.ToHostPath("/dev")
+	return []string{standardDir}
 }
 
-func GetNvidiaFSDeviceCount() (uint, error) {
-	paths, err := filepath.Glob(filepath.Join(nvidiaDevDir(), "nvidia[0-9]*"))
-	return uint(len(paths)), err
+// GetNvidiaFSDeviceCount globs candidate directories and returns the count
+// from whichever directory contains the most nvidia device files.
+func GetNvidiaFSDeviceCount() (uint, string, error) {
+	var bestCount uint
+	var bestDir string
+	for _, dir := range nvidiaDevDirs() {
+		paths, err := filepath.Glob(filepath.Join(dir, "nvidia[0-9]*"))
+		if err != nil {
+			return 0, dir, err
+		}
+		if count := uint(len(paths)); count > bestCount {
+			bestCount = count
+			bestDir = dir
+		}
+	}
+	if bestDir == "" {
+		dirs := nvidiaDevDirs()
+		bestDir = dirs[len(dirs)-1]
+	}
+	return bestCount, bestDir, nil
 }
