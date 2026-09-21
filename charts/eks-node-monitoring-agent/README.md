@@ -110,7 +110,6 @@ The following table lists the configurable parameters for this chart and their d
 | dcgmAgent.resizePolicy | list | `[]` | Container resize policy for in-place pod vertical scaling (requires Kubernetes 1.33+) |
 | dcgmAgent.resources | object | `{}` | Container resources for the dcgm deployment |
 | dcgmAgent.tolerations | list | `[]` | Deployment tolerations for the dcgm |
-| extraObjects | list | see [`values.yaml`](./values.yaml), so template expressions (e.g. {{ .Release.Namespace }}) inside the manifests are evaluated. Example:   extraObjects:     - apiVersion: monitoring.coreos.com/v1       kind: PodMonitor       metadata:         name: eks-node-monitoring-agent         namespace: {{ .Release.Namespace }}       spec:         selector:           matchLabels:             app.kubernetes.io/name: eks-node-monitoring-agent         podMetricsEndpoints:           - port: metrics |
 | fullnameOverride | string | `"eks-node-monitoring-agent"` | A fullname override for the chart |
 | global | object | `{"podAnnotations":{},"podLabels":{}}` | Global values shared across components |
 | global.podAnnotations | object | `{}` | Annotations applied to eks-node-monitoring-agent and dcgm-exporter (can be overridden by component-specific annotations) |
@@ -127,7 +126,7 @@ The following table lists the configurable parameters for this chart and their d
 | nodeAgent.image.endpoint | string | `"ecr"` | ECR repository endpoint for the eks-node-monitoring-agent |
 | nodeAgent.image.pullPolicy | string | `"IfNotPresent"` | Container pull policyfor the eks-node-monitoring-agent |
 | nodeAgent.image.region | string | `"us-west-2"` | ECR repository region for the eks-node-monitoring-agent |
-| nodeAgent.image.tag | string | `"v1.7.1-eksbuild.1"` | Image tag for the eks-node-monitoring-agent |
+| nodeAgent.image.tag | string | `"v1.7.2-eksbuild.1"` | Image tag for the eks-node-monitoring-agent |
 | nodeAgent.monitors | object | `{}` | Per-monitor configuration keyed by plugin name. See the main README for details. |
 | nodeAgent.nodeSelector | object | `{}` | Node labels required for the eks-node-monitoring-agent to be scheduled on a node. |
 | nodeAgent.podAnnotations | object | `{}` | Pod annotations applied to the eks-node-monitoring-agent |
