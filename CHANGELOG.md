@@ -5,6 +5,50 @@ All notable changes to the EKS Node Monitoring Agent will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.7.2] - 2026-09-18
+
+### What's Changed
+
+#### Features
+- Validate monitor config against registered plugins ([4ad319d](https://github.com/aws/eks-node-monitoring-agent/commit/4ad319de33db70376e5177f5ca2f1718ebc3a183))
+- Enable NVIDIA/DCGM monitoring on arm64 GPU nodes ([e0b98b2](https://github.com/aws/eks-node-monitoring-agent/commit/e0b98b22323638f439c7c8bfcd0222a738f45f69))
+
+#### Bug Fixes
+- Register ZramHighUsage in reasons.yaml ([807d06b](https://github.com/aws/eks-node-monitoring-agent/commit/807d06bd64dae6187afd2120371391e70979b3b3))
+- Downgrade NVLink lifetime counter code 71 to Warning on pre-Blackwell GPUs ([f0a2b3b](https://github.com/aws/eks-node-monitoring-agent/commit/f0a2b3b44dfd73480e7089c615313efcb4bdc55e))
+- Use typed ResourceNotFoundException for addon skip check in e2e ([44474bb](https://github.com/aws/eks-node-monitoring-agent/commit/44474bba6699f27fb2af9f413e8aab4e48a17e08))
+
+#### Dependencies
+- Bump google.golang.org/grpc from 1.82.1 to 1.83.2 ([504eb24](https://github.com/aws/eks-node-monitoring-agent/commit/504eb244e807b228bc300a28ba4f061774628384), [0215b40](https://github.com/aws/eks-node-monitoring-agent/commit/0215b40e76cd53db58f6f46364ada875d095cfc4))
+
+## [v1.7.1] - 2026-09-01
+
+### What's Changed
+
+#### Features
+- Add generated name lookup for reason metadata ([bce215d](https://github.com/aws/eks-node-monitoring-agent/commit/bce215df5582fa2640163177765f55e4e344dfa4))
+- Support an external DCGM hostengine ([47c1895](https://github.com/aws/eks-node-monitoring-agent/commit/47c18959c6acc85bd93edb40eb1016ca8de4ddae))
+- Collect network-policy eBPF maps in the log-collector bundle ([a10b096](https://github.com/aws/eks-node-monitoring-agent/commit/a10b09667e99cb3136dc60a3ee21b03a9f9ea20d))
+- Expand the default interface exclusion list ([51af549](https://github.com/aws/eks-node-monitoring-agent/commit/51af5494fde6d2ed4629df2ed9f847ae800957fd))
+
+#### Bug Fixes
+- Rate-limit console writes to avoid serial-console stalls ([b2dbbf2](https://github.com/aws/eks-node-monitoring-agent/commit/b2dbbf24e4af05dc5a4744d339a59855260e0e6d))
+- Do not report intentional int3 traps as AppCrash ([1612d2c](https://github.com/aws/eks-node-monitoring-agent/commit/1612d2cea3850bed4d2bb905dc3247e2f198d5d5))
+- Report the real process name for AppCrash segfaults ([5b3b41d](https://github.com/aws/eks-node-monitoring-agent/commit/5b3b41d2bf6ce38580f9c8eee26b59448ff8fde4))
+- Bound collector execution so a blocked collector cannot stop diagnostics ([5557630](https://github.com/aws/eks-node-monitoring-agent/commit/55576308335269e36d9264dfc3010a2749262808))
+- Resolve kubeconfig client certificate paths against the host mount ([cd174b1](https://github.com/aws/eks-node-monitoring-agent/commit/cd174b11c1c4df93453b2b252a78f266f039c844))
+- Close the apiserver response body and reuse one client ([fe2129f](https://github.com/aws/eks-node-monitoring-agent/commit/fe2129f769592fdeb3e7c4d6fec477b9dcfb56da))
+- Read the CA cert from the kubectl config ([3549615](https://github.com/aws/eks-node-monitoring-agent/commit/354961597dd1064e5f19504d873d7ad73c8a914b))
+
+#### Dependencies
+- Bump go.opentelemetry.io/otel to v1.46.0 ([ef98565](https://github.com/aws/eks-node-monitoring-agent/commit/ef9856500eaf069bb3917f3533abcf3106275125))
+- Update Go dependencies ([b55e576](https://github.com/aws/eks-node-monitoring-agent/commit/b55e576d866c151146d49f5f91802c4143553241), [b7dea82](https://github.com/aws/eks-node-monitoring-agent/commit/b7dea820663dbbfa099eda7cb9a46dafef220b8c))
+
+#### CI & Build
+- Handle both ARN-form and plain-cluster-name kubeconfigs in ExtractClusterName ([0174ae6](https://github.com/aws/eks-node-monitoring-agent/commit/0174ae672a55fde34af804e54684cbf4808898ac))
+- Bump Go from 1.26.4 to 1.26.6 ([dc07fac](https://github.com/aws/eks-node-monitoring-agent/commit/dc07fac0729efd47608420c2249cf7cffd61ead7))
+- Emit gofmt-canonical generated code ([89ea036](https://github.com/aws/eks-node-monitoring-agent/commit/89ea0363ac55a45871e9a3df574056d39fed2967))
+
 ## [v1.7.0] - 2026-08-04
 
 ### What's Changed
@@ -203,6 +247,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### What's Changed
 - Update base DCGM image to 4.5.2-4.8.1-ubuntu22.04 to resolve CVEs ([1a2cda4](https://github.com/aws/eks-node-monitoring-agent/commit/1a2cda4))
 
+[v1.7.2]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.7.1...v1.7.2
+[v1.7.1]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.7.0...v1.7.1
 [v1.7.0]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.7...v1.7.0
 [v1.6.7]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.6...v1.6.7
 [v1.6.6]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.5...v1.6.6

@@ -315,3 +315,143 @@ func TestReadFileTail(t *testing.T) {
 		assert.Contains(t, string(got), "failed to read")
 	})
 }
+
+// errAfterWriter writes normally until it has accepted limit bytes, then fails.
+// Used to check that pacedWriter surfaces an underlying write error and reports
+// how much it managed to write.
+type errAfterWriter struct {
+	buf     bytes.Buffer
+	limit   int
+	written int
+}
+
+func (w *errAfterWriter) Write(p []byte) (int, error) {
+	if w.written >= w.limit {
+		return 0, errors.New("write failed")
+	}
+	w.written += len(p)
+	return w.buf.Write(p)
+}
+
+// chunkRecorder remembers the size of every Write it receives, so a test can
+// assert on how the bytes were split.
+type chunkRecorder struct {
+	buf   bytes.Buffer
+	sizes []int
+}
+
+func (c *chunkRecorder) Write(p []byte) (int, error) {
+	c.sizes = append(c.sizes, len(p))
+	return c.buf.Write(p)
+}
+
+func (c *chunkRecorder) maxSize() int {
+	m := 0
+	for _, s := range c.sizes {
+		if s > m {
+			m = s
+		}
+	}
+	return m
+}
+
+// The load-bearing claim of the fix is that no single write occupies the serial
+// line for long: every write to the underlying console is bounded by
+// consoleWriteChunk and all bytes arrive intact and in order.
+func TestPacedWriterBoundsEveryChunk(t *testing.T) {
+	// A realistic large section must be split into ceil(size/chunk) bounded
+	// writes. Against an unwrapped writer this fails with maxSize == sectionSize,
+	// which proves the harness measures the right thing.
+	t.Run("LargeSection", func(t *testing.T) {
+		const sectionSize = 9517
+
+		rec := &chunkRecorder{}
+		pw := newPacedWriter(rec, consoleBytesPerSecond, consoleWriteChunk)
+
+		// Distinguishable bytes so a chunk written twice, skipped, or reordered
+		// is visible.
+		payload := make([]byte, sectionSize)
+		for i := range payload {
+			payload[i] = byte('A' + i%26)
+		}
+
+		n, err := pw.Write(payload)
+
+		require.NoError(t, err)
+		assert.Equal(t, sectionSize, n)
+		assert.Equal(t, payload, rec.buf.Bytes(), "bytes must arrive intact and in order")
+		assert.LessOrEqual(t, rec.maxSize(), consoleWriteChunk,
+			"one oversized write is one long contiguous span on the serial line")
+		assert.Len(t, rec.sizes, (sectionSize+consoleWriteChunk-1)/consoleWriteChunk,
+			"must split into ceil(size/chunk) writes")
+	})
+
+	// Most real sections are under the chunk size; those pass through as one
+	// write and are not delayed (the initial bucket is full).
+	t.Run("SubChunkWrite", func(t *testing.T) {
+		rec := &chunkRecorder{}
+		pw := newPacedWriter(rec, consoleBytesPerSecond, consoleWriteChunk)
+
+		payload := []byte("short section")
+		start := time.Now()
+		n, err := pw.Write(payload)
+		elapsed := time.Since(start)
+
+		require.NoError(t, err)
+		assert.Equal(t, len(payload), n)
+		assert.Equal(t, payload, rec.buf.Bytes())
+		assert.Len(t, rec.sizes, 1, "a write below the chunk size must not be split")
+		assert.Less(t, elapsed, 100*time.Millisecond, "the initial bucket is full, so this must not block")
+	})
+}
+
+// burst MUST equal the chunk size: a larger burst lets several chunks fire
+// back-to-back with no gap, recreating the long contiguous write the fix removes.
+func TestPacedWriterBurstEqualsChunk(t *testing.T) {
+	pw := newPacedWriter(&bytes.Buffer{}, consoleBytesPerSecond, consoleWriteChunk)
+	assert.Equal(t, consoleWriteChunk, pw.limiter.Burst())
+}
+
+// pacedWriter must throttle throughput: pushing bytesPerSecond worth of data
+// should take on the order of a second, not complete instantly.
+func TestPacedWriterThrottlesThroughput(t *testing.T) {
+	var dst bytes.Buffer
+	const rate = 8 * 1024 // 8 KB/s
+	pw := newPacedWriter(&dst, rate, 1*1024)
+
+	// Write ~2x the per-second rate; at 8 KB/s that must take ~1s (with the
+	// initial burst allowance, a little less). Assert a conservative floor so
+	// the test is not flaky.
+	payload := bytes.Repeat([]byte("y"), 2*rate)
+	start := time.Now()
+	n, err := pw.Write(payload)
+	elapsed := time.Since(start)
+
+	require.NoError(t, err)
+	assert.Equal(t, len(payload), n)
+	assert.GreaterOrEqual(t, elapsed, 800*time.Millisecond,
+		"writing ~2s of data at the configured rate must be throttled, not instant")
+}
+
+// When the underlying writer fails mid-stream, pacedWriter must return the
+// error and the count of bytes written before the failure.
+func TestPacedWriterPropagatesWriteError(t *testing.T) {
+	// Accept the first chunk, fail on the next.
+	dst := &errAfterWriter{limit: 2 * 1024}
+	pw := newPacedWriter(dst, 10*1024*1024, 2*1024)
+
+	payload := bytes.Repeat([]byte("z"), 5*1024)
+	n, err := pw.Write(payload)
+
+	require.Error(t, err)
+	assert.EqualError(t, err, "write failed", "the underlying error must surface unwrapped")
+	assert.Equal(t, 2*1024, n, "must report exactly the bytes the first chunk wrote")
+}
+
+// Guards the wiring: if the wrap in NewDiagnosticLogger is removed the fix is
+// silently disabled while every pacedWriter test above still passes.
+func TestNewDiagnosticLoggerWrapsWriterInPacedWriter(t *testing.T) {
+	l := NewDiagnosticLogger(&bytes.Buffer{}, Settings{})
+	_, ok := l.writer.(*pacedWriter)
+	assert.True(t, ok, "NewDiagnosticLogger must wrap its writer for pacing")
+}

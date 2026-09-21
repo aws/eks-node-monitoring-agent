@@ -83,9 +83,15 @@ var (
 	)
 	appCrash = regexp.MustCompile(strings.Join([]string{
 		// each top level group is expected to have one sub group capture for the
-		// process name
-		`traps:\s*(.*?)\[`,
-		`\s(.*?)\[\d+]: segfault at.*`,
+		// process name, use appCrashProcessName to read whichever one matched.
+		// the fault names are a bounded allowlist from arch/x86/kernel/traps.c. int3
+		// is left out because it is a breakpoint applications raise deliberately (for
+		// example Chromium's IMMEDIATE_CRASH()), not a node problem. divide error is
+		// printed with a "trap " prefix, the rest are not.
+		`traps:\s*(.*?)\[\d+] (?:trap )?(?:divide error|general protection fault|stack segment|segment not present|invalid TSS|alignment check|bounds)`,
+		// anchored on the bracketed pid so the capture cannot grow left into the
+		// dmesg timestamp prefix
+		`\s([^\s\[]+)\[\d+]: segfault at.*`,
 	}, "|"))
 )
 var (
@@ -110,7 +116,7 @@ func (k *KernelMonitor) handleDmesg(line string) error {
 				Build(),
 		)
 	} else if matches := appCrash.FindStringSubmatch(line); matches != nil {
-		processName := matches[1]
+		processName := appCrashProcessName(matches)
 		return k.manager.Notify(context.Background(),
 			reasons.AppCrash.
 				Builder().
@@ -135,6 +141,17 @@ func (k *KernelMonitor) handleDmesg(line string) error {
 	}
 
 	return nil
+}
+
+// appCrash alternates between patterns that each carry their own capture group, so only the
+// group belonging to the alternation that matched is set and the rest are empty.
+func appCrashProcessName(matches []string) string {
+	for _, processName := range matches[1:] {
+		if processName != "" {
+			return processName
+		}
+	}
+	return ""
 }
 
 // ~~~~ kubelet logs ~~~~
@@ -401,11 +418,12 @@ func (k *KernelMonitor) checkZram(origSize, compSize, disksize int64, deviceName
 	}
 	usagePercent := float64(origSize) / float64(disksize)
 	if usagePercent > 0.10 {
-		return k.manager.Notify(context.Background(), monitor.Condition{
-			Reason:   "ZramHighUsage",
-			Message:  fmt.Sprintf("ZRAM device %s at %.1f%% capacity", deviceName, usagePercent*100),
-			Severity: monitor.SeverityWarning,
-		})
+		return k.manager.Notify(context.Background(),
+			reasons.ZramHighUsage.
+				Builder().
+				Message(fmt.Sprintf("ZRAM device %s at %.1f%% capacity", deviceName, usagePercent*100)).
+				Build(),
+		)
 	}
 	return nil
 

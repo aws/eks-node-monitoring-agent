@@ -3,6 +3,7 @@ package addon
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
+	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 	appsv1 "k8s.io/api/apps/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -46,8 +48,8 @@ func ConfigurationValues(stage string, awsCfg aws.Config) types.Feature {
 				ClusterName: clusterName,
 			})
 			if err != nil {
-				// TODO: handle this more elegantly.
-				if strings.Contains(err.Error(), "No addon: eks-node-monitoring-agent found in cluster") {
+				var nfe *ekstypes.ResourceNotFoundException
+				if errors.As(err, &nfe) {
 					t.Skip("agent is not installed as an EKS Addon")
 				}
 				t.Fatal(err)

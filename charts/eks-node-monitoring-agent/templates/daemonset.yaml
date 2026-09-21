@@ -38,6 +38,9 @@ spec:
         {{- end }}
       priorityClassName: {{ .Values.nodeAgent.priorityClassName | default "system-node-critical" }}
       serviceAccountName: {{ template "eks-node-monitoring-agent.serviceAccountName" . }}
+      {{- with .Values.nodeAgent.dnsPolicy }}
+      dnsPolicy: {{ . }}
+      {{- end }}
       hostNetwork: true
       hostPID: true
       {{- with .Values.imagePullSecrets }}
@@ -54,6 +57,10 @@ spec:
             {{- toYaml . | nindent 12 }}
             {{- end }}
           env:
+            {{- with .Values.nodeAgent.dcgmAddress }}
+            - name: DCGM_ADDRESS
+              value: {{ . | quote }}
+            {{- end }}
             - name: HOST_ROOT
               value: /host
             - name: MY_NODE_NAME

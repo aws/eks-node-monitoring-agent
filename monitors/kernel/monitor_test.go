@@ -77,14 +77,18 @@ func TestKernelMonitor(t *testing.T) {
 		resourceType resource.Type
 		resourcePart string
 		monitor.Severity
+		// only asserted when set
+		message string
 	}{
-		{"[Mon Jan 1 12:34:56 2022] BUG: something bad happened", "KernelBug", resource.ResourceTypeDmesg, "", monitor.SeverityWarning},
-		{"watchdog: BUG: soft lockup - CPU#6 stuck for 23s! [VM Thread:4054]", "SoftLockup", resource.ResourceTypeDmesg, "", monitor.SeverityWarning},
-		{`.*fork/exec.*resource temporarily unavailable`, "ForkFailedOutOfPIDs", resource.ResourceTypeJournal, "kubelet", monitor.SeverityFatal},
-		{"failed to create new OS thread (foo; errno=11)", "ForkFailedOutOfPIDs", resource.ResourceTypeJournal, "kubelet", monitor.SeverityFatal},
-		{"[   32.298491][  T896] kexec[896]: segfault at 0 ip 0000000000000000 sp 00007ffeaf0ff420 error 14 in dash[561ac3c57000+4000]", "AppCrash", resource.ResourceTypeDmesg, "", monitor.SeverityWarning},
-		{"task foo:123 blocked for more than 20s", "AppBlocked", resource.ResourceTypeDmesg, "", monitor.SeverityWarning},
-		{"nf_conntrack: nf_conntrack: table full, dropping packet", "ConntrackExceededKernel", resource.ResourceTypeDmesg, "", monitor.SeverityWarning},
+		{"[Mon Jan 1 12:34:56 2022] BUG: something bad happened", "KernelBug", resource.ResourceTypeDmesg, "", monitor.SeverityWarning, ""},
+		{"watchdog: BUG: soft lockup - CPU#6 stuck for 23s! [VM Thread:4054]", "SoftLockup", resource.ResourceTypeDmesg, "", monitor.SeverityWarning, ""},
+		{`.*fork/exec.*resource temporarily unavailable`, "ForkFailedOutOfPIDs", resource.ResourceTypeJournal, "kubelet", monitor.SeverityFatal, ""},
+		{"failed to create new OS thread (foo; errno=11)", "ForkFailedOutOfPIDs", resource.ResourceTypeJournal, "kubelet", monitor.SeverityFatal, ""},
+		{"[   32.298491][  T896] kexec[896]: segfault at 0 ip 0000000000000000 sp 00007ffeaf0ff420 error 14 in dash[561ac3c57000+4000]", "AppCrash", resource.ResourceTypeDmesg, "", monitor.SeverityWarning, `Process "kexec" on the node has crashed`},
+		{"[Wed Aug 12 19:49:58 2026] traps: chrome[1450999] trap divide error ip:5c6363ff7f04 sp:7fffb68653e0 error:0 in chrome[5c6361908000+c48d000]", "AppCrash", resource.ResourceTypeDmesg, "", monitor.SeverityWarning, `Process "chrome" on the node has crashed`},
+		{"[Wed Aug 12 19:49:58 2026] traps: app[1234] general protection fault ip:5c6363ff7f04 sp:7fffb68653e0 error:0 in app[5c6361908000+c48d000]", "AppCrash", resource.ResourceTypeDmesg, "", monitor.SeverityWarning, `Process "app" on the node has crashed`},
+		{"task foo:123 blocked for more than 20s", "AppBlocked", resource.ResourceTypeDmesg, "", monitor.SeverityWarning, ""},
+		{"nf_conntrack: nf_conntrack: table full, dropping packet", "ConntrackExceededKernel", resource.ResourceTypeDmesg, "", monitor.SeverityWarning, ""},
 	} {
 		t.Run(testCase.log, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -113,6 +117,9 @@ func TestKernelMonitor(t *testing.T) {
 			case monitorResult := <-mockManager.res:
 				assert.Equal(t, testCase.reason, monitorResult.Reason)
 				assert.Equal(t, testCase.Severity, monitorResult.Severity)
+				if testCase.message != "" {
+					assert.Equal(t, testCase.message, monitorResult.Message)
+				}
 			}
 		})
 	}
@@ -150,6 +157,34 @@ func TestKernelMonitor(t *testing.T) {
 			assert.Equal(t, "RapidCron", monitorResult.Reason)
 			assert.Equal(t, monitor.SeverityWarning, monitorResult.Severity)
 		}
+	})
+
+	t.Run("AppCrashIgnoresIntentionalTrap", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		mon := &KernelMonitor{}
+		mockManager := &mockManager{obs: newMockObserver(), res: make(chan monitor.Condition, 5)}
+		mon.Register(ctx, mockManager)
+		line := "[Wed Aug 12 19:49:58 2026] traps: chrome[1450999] trap int3 ip:5c6363ff7f04 sp:7fffb68653e0 error:0 in chrome[5c6361908000+c48d000]"
+		if err := mon.handleDmesg(line); err != nil {
+			t.Fatal(err)
+		}
+		assert.Equal(t, 0, len(mockManager.res))
+	})
+
+	t.Run("AppCrashIgnoresInvalidOpcode", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		mon := &KernelMonitor{}
+		mockManager := &mockManager{obs: newMockObserver(), res: make(chan monitor.Condition, 5)}
+		mon.Register(ctx, mockManager)
+		// __builtin_trap() lowers to ud2 and prints "trap invalid opcode", which is a
+		// wrong-binary problem rather than a node problem, so it is not in the allowlist
+		line := "[Wed Aug 12 19:49:58 2026] traps: app[1234] trap invalid opcode ip:5c6363ff7f04 sp:7fffb68653e0 error:0 in app[5c6361908000+c48d000]"
+		if err := mon.handleDmesg(line); err != nil {
+			t.Fatal(err)
+		}
+		assert.Equal(t, 0, len(mockManager.res))
 	})
 
 	t.Run("SubscribeError", func(t *testing.T) {

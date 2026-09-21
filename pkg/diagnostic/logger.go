@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/time/rate"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -73,12 +74,67 @@ const (
 	// unit journal is buffered into memory each cycle and grows unbounded
 	// over the node's lifetime. Chosen to comfortably exceed the section budget.
 	journalMaxLines = "2000"
+
+	// Pace console writes below the serial device's drain rate so a diagnostic
+	// cycle cannot monopolize the line and stall co-located workloads' network
+	// path. Set under the ~40 KB/s observed on a 2-vCPU node.
+	consoleBytesPerSecond = 32 * 1024
+	// Bound each contiguous write so no single write is large enough to stall
+	// the line, independent of section size.
+	consoleWriteChunk = 2 * 1024
 )
+
+// pacedWriter wraps an io.Writer (the /dev/console handle) and feeds bytes
+// through at a fixed rate in small chunks, so a large diagnostic cycle is
+// spread over time rather than written as one blocking burst.
+type pacedWriter struct {
+	w       io.Writer
+	limiter *rate.Limiter
+	chunk   int
+}
+
+// newPacedWriter returns a writer that hands bytes to w at bytesPerSecond in
+// chunks of at most chunkBytes. The limiter's burst equals chunkBytes so the
+// allowance never accumulates enough to permit a large instantaneous write.
+func newPacedWriter(w io.Writer, bytesPerSecond, chunkBytes int) *pacedWriter {
+	return &pacedWriter{
+		w:       w,
+		limiter: rate.NewLimiter(rate.Limit(bytesPerSecond), chunkBytes),
+		chunk:   chunkBytes,
+	}
+}
+
+// Write splits p into chunks and blocks before each one until the rate limiter
+// permits it, so the aggregate throughput to the underlying writer stays at or
+// below the configured bytes-per-second.
+func (pw *pacedWriter) Write(p []byte) (int, error) {
+	written := 0
+	for written < len(p) {
+		end := written + pw.chunk
+		if end > len(p) {
+			end = len(p)
+		}
+		// context.Background: this path has no cancellation signal, and a bounded
+		// cycle stays well under the flush grace, so a paced write is not worth
+		// making abortable.
+		if err := pw.limiter.WaitN(context.Background(), end-written); err != nil {
+			return written, err
+		}
+		n, err := pw.w.Write(p[written:end])
+		written += n
+		if err != nil {
+			return written, err
+		}
+	}
+	return written, nil
+}
 
 func NewDiagnosticLogger(writer io.Writer, settings Settings) diagnosticLogger {
 	if writer == nil {
 		writer = os.Stdout
 	}
+	// Rate-limit console writes; see consoleBytesPerSecond.
+	writer = newPacedWriter(writer, consoleBytesPerSecond, consoleWriteChunk)
 	if settings.LogInterval <= 0 {
 		settings.LogInterval = 5 * time.Minute
 	}

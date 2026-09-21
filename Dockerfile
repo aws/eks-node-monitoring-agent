@@ -48,7 +48,7 @@ RUN mkdir -p /staging/usr/lib64 /staging/usr/bin /staging/usr/libexec && \
 # =============================================================================
 # Stage 3: Go builder to compile the application
 # =============================================================================
-FROM public.ecr.aws/docker/library/golang:1.26.4 AS go-builder
+FROM public.ecr.aws/docker/library/golang:1.26.6 AS go-builder
 
 WORKDIR /workspace
 

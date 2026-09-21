@@ -31,6 +31,7 @@ func (m Networking) Collect(acc *Accessor) error {
 		ipInfo(acc),
 		apiServerConnectivity(acc),
 		systemdNetworkConfig(acc),
+		networkPolicyEbpfInfo(acc),
 	)
 }
 
