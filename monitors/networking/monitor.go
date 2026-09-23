@@ -26,6 +26,7 @@ import (
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 	"github.com/aws/eks-node-monitoring-agent/api/monitor/resource"
+	"github.com/aws/eks-node-monitoring-agent/monitors/networking/corefile"
 	"github.com/aws/eks-node-monitoring-agent/monitors/networking/efa"
 	toolexec "github.com/aws/eks-node-monitoring-agent/monitors/networking/exec"
 	"github.com/aws/eks-node-monitoring-agent/monitors/networking/ipamd"
@@ -252,6 +253,17 @@ func (m *NetworkingMonitor) Register(ctx context.Context, mgr monitor.Manager) e
 		go util.NewChannelHandler(
 			func(time.Time) error { return npaDetector.HandleState() },
 			util.TimeTickWithJitterContext(ctx, 5*time.Minute),
+		).Start(ctx)
+	}
+
+	// CoreDNS Corefile agent /readyz polling — Auto Mode only. Short cadence
+	// because the agent's outcomes flip on ConfigMap edit (path 2), not on
+	// long-lived resource state.
+	if slices.Contains(m.runtimeContext.Tags(), config.EKSAuto) {
+		corefileDetector := corefile.New(mgr, m.log)
+		go util.NewChannelHandler(
+			func(time.Time) error { return corefileDetector.HandleState() },
+			util.TimeTickWithJitterContext(ctx, 30*time.Second),
 		).Start(ctx)
 	}
 
