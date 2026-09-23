@@ -458,7 +458,7 @@ func (m *NetworkingMonitor) handleInterfaces() error {
 func (m *NetworkingMonitor) checkInterfaces(interfaces []net.Interface) error {
 	hasLoopback := false
 	for _, intf := range interfaces {
-		m.log.Info("Checking interface", "interface", intf.Name)
+		m.log.V(1).Info("Checking interface", "interface", intf.Name)
 		// ignores things like docker0 for now.
 		// NetworkingReady         False   Tue, 11 Mar 2025 14:47:30 +0000   Fri, 07 Mar 2025 21:27:30 +0000   InterfaceNotRunning          Interface "docker0" is not running
 		if strings.HasPrefix(intf.Name, "docker") {
@@ -1020,9 +1020,9 @@ func (m *NetworkingMonitor) handleMACAddressPolicy() error {
 		}
 	}
 
-	m.log.Info("Processing unique LinkFiles", "count", len(linkFiles))
+	m.log.V(1).Info("Processing unique LinkFiles", "count", len(linkFiles))
 	for linkFile := range linkFiles {
-		m.log.Info("Checking MAC address policy", "linkFile", linkFile)
+		m.log.V(1).Info("Checking MAC address policy", "linkFile", linkFile)
 		// Get the effective configuration for this link file
 		configOutput, err := m.exec.Command("systemd-analyze", "cat-config", linkFile).CombinedOutput()
 		if err != nil {
