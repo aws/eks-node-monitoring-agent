@@ -52,6 +52,16 @@ const (
 	// on the handleIPAMD interval (currently 5m), so this should ideally be kept longer than that
 	// TODO: should preferably use a concept of a minimum rate for a condition in node exporter
 	ipamdNotRunningConsistencyDuration = 15 * time.Minute
+
+	// how long an "Unable to reach API Server" observation keeps NetworkingReady
+	// down. IPAMD polls the API server every 2s while it is unreachable and logs
+	// on each failure, so a node that is genuinely cut off re-arms this
+	// continuously. A single log line, by contrast, is usually just the boot race
+	// between IPAMD starting and kube-proxy programming the service ClusterIP;
+	// that resolves in seconds but used to latch the condition until the node was
+	// replaced. 15m is far longer than the 2s re-log interval, so a real outage
+	// never lapses between observations.
+	ipamdAPIServerUnreachableTTL = 15 * time.Minute
 )
 
 type criIPDetails struct {
@@ -304,6 +314,7 @@ func (m *NetworkingMonitor) handleIPAMDLogs(line string) error {
 			reasons.IPAMDNotReady.
 				Builder().
 				Message("IPAM-D has failed to connect to API Server which could be an issue with IPTable rules or any other network configuration.").
+				TTL(ipamdAPIServerUnreachableTTL).
 				Build(),
 		)
 	} else if strings.Contains(line, "Starting L-IPAMD") {
