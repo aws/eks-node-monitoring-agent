@@ -161,8 +161,11 @@ dcgmAgent:
   resources: {}
   # -- Container resize policy for in-place pod vertical scaling (requires Kubernetes 1.33+)
   resizePolicy: []
-  # -- Deployment tolerations for the dcgm
-  tolerations: []
+  # -- Deployment tolerations for the dcgm-server DaemonSet. Tolerates the
+  # NVIDIA GPU taint so dcgm-server still schedules on tainted GPU nodes.
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
   # -- Pod labels applied to the dcgm exporter
   podLabels: {}
   # -- Node labels required for the dcgm exporter to be scheduled on a node.
