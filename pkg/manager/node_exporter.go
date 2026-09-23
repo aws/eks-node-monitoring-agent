@@ -191,7 +191,7 @@ func (e *nodeExporter) reportManagedConditions(ctx context.Context) error {
 	if !e.managedConditionsDirty {
 		return nil
 	}
-	log.FromContext(ctx).Info("reporting managed conditions")
+	log.FromContext(ctx).V(1).Info("reporting managed conditions")
 	var oldNode corev1.Node
 	if err := e.kubeClient.Get(ctx, e.nodeKey, &oldNode); err != nil {
 		return err
@@ -215,6 +215,6 @@ func (e *nodeExporter) reportManagedConditions(ctx context.Context) error {
 		return err
 	}
 	e.managedConditionsDirty = false
-	log.FromContext(ctx).Info("reported node conditions")
+	log.FromContext(ctx).V(1).Info("reported node conditions")
 	return nil
 }
