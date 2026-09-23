@@ -38,6 +38,10 @@ func (m *mockManager) Notify(ctx context.Context, condition monitor.Condition) e
 	return nil
 }
 
+func (m *mockManager) Recovered(ctx context.Context) error {
+	return nil
+}
+
 func TestRuntimeMonitor(t *testing.T) {
 	for _, testCase := range []struct {
 		log      string

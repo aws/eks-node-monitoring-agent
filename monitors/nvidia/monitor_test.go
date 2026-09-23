@@ -34,6 +34,10 @@ func (m *mockManager) Notify(ctx context.Context, condition monitor.Condition) e
 	return nil
 }
 
+func (m *mockManager) Recovered(ctx context.Context) error {
+	return nil
+}
+
 // immediateTick returns a TickFunc that fires immediately and then at short
 // intervals, eliminating the jitter delay that makes timer-based tests slow.
 func immediateTick(ctx context.Context, _ time.Duration) <-chan time.Time {
