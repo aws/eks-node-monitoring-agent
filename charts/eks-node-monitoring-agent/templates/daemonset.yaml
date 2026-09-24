@@ -61,6 +61,10 @@ spec:
             - name: DCGM_ADDRESS
               value: {{ . | quote }}
             {{- end }}
+            {{- with .Values.nodeAgent.ipamdIntrospectionURL }}
+            - name: IPAMD_INTROSPECTION_URL
+              value: {{ . | quote }}
+            {{- end }}
             - name: HOST_ROOT
               value: /host
             - name: MY_NODE_NAME
