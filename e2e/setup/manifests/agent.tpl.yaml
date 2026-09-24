@@ -537,6 +537,9 @@ spec:
                 values:
                 - amd64
                 - arm64
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
       nodeSelector:
         kubernetes.io/os: linux
       priorityClassName: system-node-critical

@@ -109,7 +109,7 @@ The following table lists the configurable parameters for this chart and their d
 | dcgmAgent.priorityClassName | string | `"system-node-critical"` | PriorityClass for the dcgm exporter. |
 | dcgmAgent.resizePolicy | list | `[]` | Container resize policy for in-place pod vertical scaling (requires Kubernetes 1.33+) |
 | dcgmAgent.resources | object | `{}` | Container resources for the dcgm deployment |
-| dcgmAgent.tolerations | list | `[]` | Deployment tolerations for the dcgm |
+| dcgmAgent.tolerations | list | `[{"key":"nvidia.com/gpu","operator":"Exists"}]` | Deployment tolerations for the dcgm-server DaemonSet. Tolerates the NVIDIA GPU taint so dcgm-server still schedules on tainted GPU nodes. |
 | fullnameOverride | string | `"eks-node-monitoring-agent"` | A fullname override for the chart |
 | global | object | `{"podAnnotations":{},"podLabels":{}}` | Global values shared across components |
 | global.podAnnotations | object | `{}` | Annotations applied to eks-node-monitoring-agent and dcgm-exporter (can be overridden by component-specific annotations) |
