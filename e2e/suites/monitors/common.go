@@ -4,15 +4,22 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/eks-node-monitoring-agent/e2e/metrics"
+	nodeconditions "github.com/aws/eks-node-monitoring-agent/pkg/conditions"
+	"github.com/aws/eks-node-monitoring-agent/pkg/util/validation"
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"sigs.k8s.io/e2e-framework/klient/k8s"
 	"sigs.k8s.io/e2e-framework/klient/k8s/resources"
+	e2ewait "sigs.k8s.io/e2e-framework/klient/wait"
 	"sigs.k8s.io/e2e-framework/klient/wait/conditions"
+	"sigs.k8s.io/e2e-framework/pkg/envconf"
 )
 
 var hostRootVolume = corev1.Volume{
@@ -54,6 +61,93 @@ func GetNodeStatusCondition(node *corev1.Node, matcherFn func(corev1.NodeConditi
 		}
 	}
 	return condition
+}
+
+func acceleratedHardwareHealthy(node *corev1.Node, vendor string) bool {
+	if node.DeletionTimestamp != nil {
+		return false
+	}
+	condition := GetNodeStatusCondition(node, func(nc corev1.NodeCondition) bool {
+		return nc.Type == nodeconditions.AcceleratedHardwareReady
+	})
+	return condition != nil &&
+		condition.Status == corev1.ConditionTrue &&
+		strings.Contains(condition.Message, vendor)
+}
+
+// replaceAcceleratedNode removes node and returns its healthy replacement.
+//
+// Fault injection leaves AcceleratedHardwareReady False permanently: nothing
+// clears it, so Auto Mode node auto-repair reaps the node ~10min later, inside
+// whatever test is running by then, evicting pods with a 1s grace period and
+// bypassing PDBs. Replacing it here keeps that bounded and synchronous.
+func replaceAcceleratedNode(
+	ctx context.Context,
+	t *testing.T,
+	cfg *envconf.Config,
+	ec2Client *ec2.Client,
+	node *corev1.Node,
+	vendor string,
+) *corev1.Node {
+	t.Helper()
+	oldNodeName := node.Name
+
+	// Auto Mode instances are owned by an AWS-managed service principal that
+	// denies customer roles ec2:TerminateInstances, so deletion has to go
+	// through Karpenter's termination finalizer instead.
+	switch {
+	case node.Labels[computeTypeLabelKey] == computeTypeAuto:
+		t.Logf("auto mode node detected; skipping direct EC2 termination and relying on karpenter finalizer on node delete")
+	default:
+		t.Logf("terminating node %q to mimic node repair", oldNodeName)
+		instanceId, err := validation.ParseProviderID(node.Spec.ProviderID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ec2Client.TerminateInstances(ctx, &ec2.TerminateInstancesInput{
+			InstanceIds: []string{instanceId},
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Logf("deleting node object %q from cluster", oldNodeName)
+	if err := cfg.Client().Resources().Delete(ctx, node); err != nil && !k8serrors.IsNotFound(err) {
+		t.Fatal(err)
+	}
+
+	t.Logf("waiting for node object %q to be deleted from cluster", oldNodeName)
+	if err := e2ewait.For(
+		conditions.New(cfg.Client().Resources()).ResourceDeleted(node),
+		e2ewait.WithTimeout(10*time.Minute),
+		e2ewait.WithContext(ctx),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Logf("waiting for a new %s node to join the cluster...", vendor)
+	var newNode *corev1.Node
+	if err := e2ewait.For(func(ctx context.Context) (bool, error) {
+		var nodeList corev1.NodeList
+		if err := cfg.Client().Resources().List(ctx, &nodeList); err != nil {
+			return false, err
+		}
+		for i := range nodeList.Items {
+			candidate := &nodeList.Items[i]
+			if candidate.Name == oldNodeName {
+				continue
+			}
+			if acceleratedHardwareHealthy(candidate, vendor) {
+				newNode = candidate
+				return true, nil
+			}
+		}
+		return false, nil
+	}, e2ewait.WithTimeout(10*time.Minute), e2ewait.WithInterval(10*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("node %q replaced by healthy node %q", oldNodeName, newNode.Name)
+	return newNode
 }
 
 func nodeConditionWaiter(ctx context.Context, cond *conditions.Condition, node *corev1.Node, startTime time.Time, conditionType corev1.NodeConditionType, reason string) wait.ConditionWithContextFunc {
