@@ -10,7 +10,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	nodeconditions "github.com/aws/eks-node-monitoring-agent/pkg/conditions"
-	"github.com/aws/eks-node-monitoring-agent/pkg/util/validation"
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -26,6 +25,10 @@ import (
 const (
 	computeTypeLabelKey = "eks.amazonaws.com/compute-type"
 	computeTypeAuto     = "auto"
+
+	// vendor markers as they appear in the AcceleratedHardwareReady message.
+	nvidiaVendor = "Nvidia"
+	neuronVendor = "Neuron"
 )
 
 func NvidiaMonitor(awsCfg aws.Config) types.Feature {
@@ -46,7 +49,7 @@ func NvidiaMonitor(awsCfg aws.Config) types.Feature {
 					if condition.Status != corev1.ConditionTrue {
 						t.Fatalf("status of condition %+v was not %s", condition, corev1.ConditionTrue)
 					}
-					if strings.Contains(condition.Message, "Nvidia") {
+					if strings.Contains(condition.Message, nvidiaVendor) {
 						targetNode = &node
 						break
 					}
@@ -77,69 +80,8 @@ func NvidiaMonitor(awsCfg aws.Config) types.Feature {
 			return ctx
 		}).
 		Assess("NodeReplacement", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			oldNodeName := targetNode.Name
-
-			// On EKS Auto mode, the EC2 instance is owned by an AWS-managed
-			// service principal and customer roles are explicitly denied
-			// ec2:TerminateInstances. Instead, deleting the Node object lets
-			// Karpenter's termination finalizer drain and terminate the
-			// backing instance. On MNG/self-managed nodes, we terminate the
-			// instance directly to mimic a node repair event.
-			if targetNode.Labels[computeTypeLabelKey] == computeTypeAuto {
-				t.Logf("auto mode node detected; skipping direct EC2 termination and relying on karpenter finalizer on node delete")
-			} else {
-				t.Logf("terminating node %q to mimic node repair", oldNodeName)
-				instanceId, err := validation.ParseProviderID(targetNode.Spec.ProviderID)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if _, err := ec2Client.TerminateInstances(ctx, &ec2.TerminateInstancesInput{
-					InstanceIds: []string{instanceId},
-				}); err != nil {
-					t.Fatal(err)
-				}
-			}
-
-			t.Logf("deleting node object %q from cluster", oldNodeName)
-			if err := cfg.Client().Resources().Delete(ctx, targetNode); err != nil {
-				t.Fatal(err)
-			}
-
-			t.Logf("waiting for node object %q to be deleted from cluster", oldNodeName)
-			if err := wait.For(
-				conditions.New(cfg.Client().Resources()).ResourceDeleted(targetNode),
-				wait.WithTimeout(10*time.Minute),
-				wait.WithContext(ctx),
-			); err != nil {
-				t.Fatal(err)
-			}
-
-			t.Log("waiting for a new nvidia node to join the cluster...")
-			if err := wait.For(func(ctx context.Context) (bool, error) {
-				var nodeList corev1.NodeList
-				if err := cfg.Client().Resources().List(ctx, &nodeList); err != nil {
-					return false, err
-				}
-				for _, node := range nodeList.Items {
-					if node.Name == oldNodeName {
-						continue
-					}
-					// exclude nodes that are being deleted
-					if node.DeletionTimestamp != nil {
-						continue
-					}
-					condition := GetNodeStatusCondition(&node, func(nc corev1.NodeCondition) bool { return nc.Type == nodeconditions.AcceleratedHardwareReady })
-					if condition != nil && condition.Status == corev1.ConditionTrue && strings.Contains(condition.Message, "Nvidia") {
-						targetNode = &node
-						t.Logf("targetting new node %q for subsequent tests", targetNode.Name)
-						return true, nil
-					}
-				}
-				return false, nil
-			}, wait.WithTimeout(10*time.Minute), wait.WithInterval(10*time.Second)); err != nil {
-				t.Fatal(err)
-			}
-
+			targetNode = replaceAcceleratedNode(ctx, t, cfg, ec2Client, targetNode, nvidiaVendor)
+			t.Logf("targetting new node %q for subsequent tests", targetNode.Name)
 			return ctx
 		}).
 		Assess("DCGMError", func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
