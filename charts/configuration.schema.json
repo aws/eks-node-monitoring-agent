@@ -41,6 +41,11 @@
                     "description": "Optional DCGM hostengine endpoint used by the eks node monitoring agent. When empty, the agent uses localhost:5555.",
                     "default": ""
                 },
+                "ipamdIntrospectionURL": {
+                    "type": "string",
+                    "description": "Optional ipamd introspection API base URL. When empty, the agent uses http://localhost:61679/v1/. Set when the VPC CNI is configured with INTROSPECTION_BIND_ADDRESS, e.g. \"http://169.254.1.1:61679/v1/\".",
+                    "default": ""
+                },
                 "dnsPolicy": {
                     "type": "string",
                     "description": "Optional DNS policy for the eks node monitoring agent pod. Set ClusterFirstWithHostNet when dcgmAddress uses a Kubernetes Service hostname.",

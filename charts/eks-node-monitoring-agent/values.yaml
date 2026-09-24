@@ -51,6 +51,9 @@ nodeAgent:
     - "--metrics-address=:8003"
   # -- Optional DCGM hostengine endpoint. When empty, the agent uses localhost:5555.
   dcgmAddress: ""
+  # -- Optional ipamd introspection API base URL. When empty, the agent uses http://localhost:61679/v1/.
+  # Set when the VPC CNI is configured with INTROSPECTION_BIND_ADDRESS, e.g. "http://169.254.1.1:61679/v1/".
+  ipamdIntrospectionURL: ""
   # -- Optional pod DNS policy. Set to ClusterFirstWithHostNet when dcgmAddress uses a Kubernetes Service hostname.
   dnsPolicy: ""
   # -- Map of pod affinities for the eks-node-monitoring-agent

@@ -76,6 +76,13 @@ nodeAgent:
         - "^ib[0-9]+$"
 ```
 
+The base URL of the ipamd introspection API can be overridden with the `IPAMD_INTROSPECTION_URL` environment variable (default `http://localhost:61679/v1/`). Set it when ipamd does not listen on localhost, for example when the VPC CNI is configured with `INTROSPECTION_BIND_ADDRESS=169.254.1.1:61679`:
+
+```yaml
+nodeAgent:
+  ipamdIntrospectionURL: "http://169.254.1.1:61679/v1/"
+```
+
 ### Config File Format
 
 The agent reads a YAML config file mounted at `/etc/nma/config.yaml`. Omitted monitors default to enabled.
