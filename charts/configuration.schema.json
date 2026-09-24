@@ -96,7 +96,7 @@
                             "$ref": "#/definitions/MonitorSettings"
                         },
                         "nvidia": {
-                            "$ref": "#/definitions/MonitorSettings"
+                            "$ref": "#/definitions/NvidiaMonitorSettings"
                         },
                         "neuron": {
                             "$ref": "#/definitions/MonitorSettings"
@@ -251,6 +251,25 @@
                     "items": {
                       "type": "string"
                     }
+                }
+            }
+        },
+        "NvidiaMonitorSettings": {
+            "title": "NvidiaMonitorSettings",
+            "type": "object",
+            "description": "Per-monitor settings for the NVIDIA monitor",
+            "additionalProperties": false,
+            "properties": {
+                "enabled": {
+                    "type": "boolean",
+                    "description": "Whether this monitor is enabled",
+                    "default": true
+                },
+                "dcgmPowerThresholdWatts": {
+                    "type": "integer",
+                    "description": "Optional board-power threshold in watts for DCGM power-excursion warnings. This does not cap GPU power. When omitted, existing go-dcgm behavior is unchanged.",
+                    "minimum": 1,
+                    "maximum": 4294967295
                 }
             }
         },

@@ -73,6 +73,10 @@ func (m *nvidiaMonitor) Conditions() []monitor.Condition {
 	return []monitor.Condition{}
 }
 
+func (m *nvidiaMonitor) SetDCGMPowerThresholdWatts(watts uint32) {
+	m.dcgmClient.SetPowerPolicyThresholdWatts(watts)
+}
+
 func (m *nvidiaMonitor) Register(ctx context.Context, mgr monitor.Manager) error {
 	logger := log.FromContext(ctx)
 
