@@ -124,14 +124,32 @@ func (m *MonitorManager) runLoop(ctx context.Context) error {
 func (m *MonitorManager) exportCondition(ctx context.Context, monitorName string, condition monitor.Condition) error {
 	logger := log.FromContext(ctx).WithValues("source", monitorName, "condition", condition)
 
-	// track condition metrics
-	conditionCount.WithLabelValues(string(condition.Severity), condition.Reason).Add(1)
-
 	conditionType, ok := m.conditionTypeMap[monitorName]
 	if !ok {
 		return fmt.Errorf("missing condition type mapping for monitor: %s", monitorName)
 	}
 	logger = logger.WithValues("conditionType", conditionType)
+
+	// Resolved fatal conditions clear state instead of reporting it: reset the
+	// occurrence debounce for the reason and route to the exporter's resolve
+	// path, bypassing MinOccurrences gating. Resolved only applies to fatal
+	// conditions; any other severity is routed below as usual.
+	if condition.Resolved && condition.Severity == monitor.SeverityFatal {
+		m.conditionCountMap[condition.Reason] = 0
+		recovered, err := m.exporter.Resolve(ctx, condition, conditionType)
+		if err != nil {
+			return err
+		}
+		if recovered {
+			conditionTypeGauge.WithLabelValues(string(conditionType)).Set(0)
+		}
+		logger.Info("resolved condition", "recovered", recovered)
+		return nil
+	}
+
+	// track condition metrics; resolutions return above, so this counts
+	// problem reports only
+	conditionCount.WithLabelValues(string(condition.Severity), condition.Reason).Add(1)
 
 	// Skip requests for conditions that have not met their minimum occurrences
 	if m.conditionCountMap[condition.Reason] < condition.MinOccurrences {
