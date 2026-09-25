@@ -94,5 +94,6 @@ var collectorMap = map[v1alpha1.LogCategory][]collect.Collector{
 		&collect.System{},
 		&collect.Throttles{},
 		&collect.Pressure{},
+		&collect.Pstore{},
 	},
 }
