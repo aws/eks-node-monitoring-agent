@@ -5,6 +5,8 @@ package dcgm_test
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,7 +16,84 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/internal/pkg/instanceinfo"
 	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/dcgm"
 	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/dcgm/fake"
+	"github.com/aws/eks-node-monitoring-agent/pkg/config"
 )
+
+func createFakeDevices(t *testing.T, dir string, count int) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := range count {
+		f, err := os.Create(filepath.Join(dir, fmt.Sprintf("nvidia%d", i)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+	}
+}
+
+func TestGetNvidiaFSDeviceCount(t *testing.T) {
+	t.Run("StandardPath", func(t *testing.T) {
+		root := t.TempDir()
+		t.Setenv(config.HOST_ROOT_ENV, root)
+		createFakeDevices(t, filepath.Join(root, "dev"), 4)
+
+		count, devDir, err := dcgm.GetNvidiaFSDeviceCount()
+		assert.NoError(t, err)
+		assert.Equal(t, uint(4), count)
+		assert.Equal(t, filepath.Join(root, "dev"), devDir)
+	})
+
+	t.Run("GPUOperatorAutoDetect", func(t *testing.T) {
+		root := t.TempDir()
+		t.Setenv(config.HOST_ROOT_ENV, root)
+		// No devices in standard /dev, but GPU Operator path has them
+		gpuOpDev := filepath.Join(root, "run", "nvidia", "driver", "dev")
+		createFakeDevices(t, gpuOpDev, 8)
+
+		count, devDir, err := dcgm.GetNvidiaFSDeviceCount()
+		assert.NoError(t, err)
+		assert.Equal(t, uint(8), count)
+		assert.Equal(t, gpuOpDev, devDir)
+	})
+
+	t.Run("ExplicitOverride", func(t *testing.T) {
+		root := t.TempDir()
+		t.Setenv(config.HOST_ROOT_ENV, root)
+		t.Setenv(config.NVIDIA_DRIVER_ROOT_ENV, "/custom/driver")
+		customDev := filepath.Join(root, "custom", "driver", "dev")
+		createFakeDevices(t, customDev, 2)
+
+		count, devDir, err := dcgm.GetNvidiaFSDeviceCount()
+		assert.NoError(t, err)
+		assert.Equal(t, uint(2), count)
+		assert.Equal(t, customDev, devDir)
+	})
+
+	t.Run("EmptyGPUOperatorDirFallsBackToStandardDev", func(t *testing.T) {
+		root := t.TempDir()
+		t.Setenv(config.HOST_ROOT_ENV, root)
+		// GPU Operator dir exists but is empty; standard /dev has devices
+		os.MkdirAll(filepath.Join(root, "run", "nvidia", "driver", "dev"), 0o755)
+		createFakeDevices(t, filepath.Join(root, "dev"), 4)
+
+		count, devDir, err := dcgm.GetNvidiaFSDeviceCount()
+		assert.NoError(t, err)
+		assert.Equal(t, uint(4), count)
+		assert.Equal(t, filepath.Join(root, "dev"), devDir)
+	})
+
+	t.Run("NoDevicesAnywhere", func(t *testing.T) {
+		root := t.TempDir()
+		t.Setenv(config.HOST_ROOT_ENV, root)
+		os.MkdirAll(filepath.Join(root, "dev"), 0o755)
+
+		count, _, err := dcgm.GetNvidiaFSDeviceCount()
+		assert.NoError(t, err)
+		assert.Equal(t, uint(0), count)
+	})
+}
 
 func TestDeviceCount(t *testing.T) {
 	t.Run("DeviceCountError", func(t *testing.T) {
@@ -39,11 +118,9 @@ func TestDeviceCount(t *testing.T) {
 		conditions, err := dcgmSystem.DeviceCount(context.TODO())
 		assert.NoError(t, err)
 		assert.NotEmpty(t, conditions)
-		assert.Equal(t, conditions[0], monitor.Condition{
-			Reason:   "NvidiaDeviceCountMismatch",
-			Message:  fmt.Sprintf("DCGM detected %d GPUs but %d nvidia device files were detected", 8, 0 /* test is not run on GPU */),
-			Severity: monitor.SeverityFatal,
-		})
+		assert.Equal(t, "NvidiaDeviceCountMismatch", conditions[0].Reason)
+		assert.Equal(t, monitor.SeverityFatal, conditions[0].Severity)
+		assert.Contains(t, conditions[0].Message, "DCGM detected 8 GPUs but 0 nvidia device files were detected at")
 	})
 }
 

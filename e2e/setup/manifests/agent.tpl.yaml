@@ -408,6 +408,7 @@ spec:
           volumeMounts:
             - name: host-root
               mountPath: /host
+              mountPropagation: HostToContainer
       volumes:
         - name: host-root
           hostPath:

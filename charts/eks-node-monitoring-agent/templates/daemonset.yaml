@@ -63,6 +63,10 @@ spec:
             {{- end }}
             - name: HOST_ROOT
               value: /host
+            {{- with .Values.nodeAgent.nvidiaDriverRoot }}
+            - name: NVIDIA_DRIVER_ROOT
+              value: {{ . | quote }}
+            {{- end }}
             - name: MY_NODE_NAME
               valueFrom:
                 fieldRef:
@@ -84,6 +88,7 @@ spec:
           volumeMounts:
             - name: host-root
               mountPath: /host
+              mountPropagation: HostToContainer
             {{- if .Values.nodeAgent.monitors }}
             - name: monitor-config
               mountPath: /etc/nma
