@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
+	"sigs.k8s.io/controller-runtime/pkg/metrics"
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 	"github.com/aws/eks-node-monitoring-agent/api/monitor/resource"
@@ -34,6 +35,7 @@ func NewManagerWithExporterFuncs(fns ...func(*mockExporter)) (*manager.MonitorMa
 
 type mockExporter struct {
 	notifyChan   chan struct{}
+	warningChan  chan monitor.Condition
 	resolveChan  chan monitor.Condition
 	resolveValue bool
 }
@@ -45,7 +47,11 @@ func (e *mockExporter) notify() error {
 func (e *mockExporter) Info(context.Context, monitor.Condition, corev1.NodeConditionType) error {
 	return e.notify()
 }
-func (e *mockExporter) Warning(context.Context, monitor.Condition, corev1.NodeConditionType) error {
+func (e *mockExporter) Warning(_ context.Context, condition monitor.Condition, _ corev1.NodeConditionType) error {
+	if e.warningChan != nil {
+		e.warningChan <- condition
+		return nil
+	}
 	return e.notify()
 }
 func (e *mockExporter) Fatal(context.Context, monitor.Condition, corev1.NodeConditionType) error {
@@ -176,6 +182,93 @@ func TestManager_ResolvedConditionRoutedToExporter(t *testing.T) {
 	case <-ctx.Done():
 		t.Fatal("resolved condition was not routed to the exporter")
 	}
+}
+
+func TestManager_ResolvedConditionNotCountedAsProblem(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.TODO(), time.Second)
+	defer cancel()
+
+	const reason = "ResolvedNotCounted"
+	mockMon := &mockMonitor{
+		registerFunc: func(ctx context.Context, mgr monitor.Manager) error {
+			go mgr.Notify(ctx, monitor.Condition{Reason: reason, Severity: monitor.SeverityFatal, Resolved: true})
+			return nil
+		},
+	}
+	mMgr, mockExp := NewManagerWithExporterFuncs(func(e *mockExporter) {
+		e.resolveChan = make(chan monitor.Condition, 1)
+		e.resolveValue = true
+	})
+	if err := mMgr.Register(ctx, mockMon, "MockPassed"); err != nil {
+		t.Fatal(err)
+	}
+	go mMgr.Start(ctx)
+
+	select {
+	case <-mockExp.resolveChan:
+	case <-ctx.Done():
+		t.Fatal("resolved condition was not routed to the exporter")
+	}
+	if got := problemConditionCount(t, monitor.SeverityFatal, reason); got != 0 {
+		t.Errorf("problem_condition_count{reason=%q} = %v after a resolve, want 0", reason, got)
+	}
+}
+
+func TestManager_ResolvedNonFatalRoutedBySeverity(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.TODO(), time.Second)
+	defer cancel()
+
+	mockMon := &mockMonitor{
+		registerFunc: func(ctx context.Context, mgr monitor.Manager) error {
+			go mgr.Notify(ctx, monitor.Condition{Reason: "ExampleReason", Severity: monitor.SeverityWarning, Resolved: true})
+			return nil
+		},
+	}
+	mMgr, mockExp := NewManagerWithExporterFuncs(func(e *mockExporter) {
+		e.warningChan = make(chan monitor.Condition, 1)
+		e.resolveChan = make(chan monitor.Condition, 1)
+	})
+	if err := mMgr.Register(ctx, mockMon, "MockPassed"); err != nil {
+		t.Fatal(err)
+	}
+	go mMgr.Start(ctx)
+
+	select {
+	case cond := <-mockExp.warningChan:
+		if cond.Reason != "ExampleReason" {
+			t.Fatalf("warning reason = %q, want ExampleReason", cond.Reason)
+		}
+	case <-mockExp.resolveChan:
+		t.Fatal("a non-fatal condition must not take the resolve path")
+	case <-ctx.Done():
+		t.Fatal("resolved Warning was not routed to the exporter")
+	}
+}
+
+// problemConditionCount reads problem_condition_count for one series from the
+// registry the manager registers its metrics with. A series that was never
+// incremented reads as 0.
+func problemConditionCount(t *testing.T, severity monitor.Severity, reason string) float64 {
+	t.Helper()
+	families, err := metrics.Registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, family := range families {
+		if family.GetName() != "problem_condition_count" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			labels := map[string]string{}
+			for _, label := range metric.GetLabel() {
+				labels[label.GetName()] = label.GetValue()
+			}
+			if labels["severity"] == string(severity) && labels["reason"] == reason {
+				return metric.GetCounter().GetValue()
+			}
+		}
+	}
+	return 0
 }
 
 // this tests the creation of an observable resource from end to end.
