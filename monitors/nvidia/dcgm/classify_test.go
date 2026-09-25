@@ -3,6 +3,8 @@
 package dcgm
 
 import (
+	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
@@ -27,8 +29,6 @@ func TestClassify_currentPolicy(t *testing.T) {
 		wantReason string // "" => expect NO condition
 		wantSev    monitor.Severity
 	}{
-		{"well-known XID 79 => Fatal", NormalizedSignals{XIDs: []uint{79}}, "NvidiaXID79Error", monitor.SeverityFatal},
-		{"non-well-known XID 13 => Warning", NormalizedSignals{XIDs: []uint{13}}, "NvidiaXID13Warning", monitor.SeverityWarning},
 		{"DBE => Fatal", NormalizedSignals{DoubleBitECC: true}, "NvidiaDoubleBitError", monitor.SeverityFatal},
 		{"NVLink hard error => Fatal", NormalizedSignals{NVLinkError: true}, "NvidiaNVLinkError", monitor.SeverityFatal},
 		{"thermal => Warning only (documents FN1: no repair)", NormalizedSignals{ThermalViolation: true}, "NvidiaThermalError", monitor.SeverityWarning},
@@ -63,3 +63,45 @@ func TestClassify_currentPolicy(t *testing.T) {
 }
 
 func u64(v uint64) *uint64 { return &v }
+
+// TestClassify_xidAllowlist locks the well-known XID allowlist. The expected
+// codes are an explicit literal rather than a loop over WellKnownXidCodes, so an
+// accidental addition to or removal from the allowlist fails here and shows up
+// in review. Every listed code must classify as a Fatal NvidiaXID<code>Error
+// (which sets the node condition); any other code must classify as a Warning
+// NvidiaXID<code>Warning (a Kubernetes event only).
+func TestClassify_xidAllowlist(t *testing.T) {
+	wellKnown := []uint{46, 48, 54, 62, 63, 64, 74, 79, 95, 109, 110, 119, 120, 136, 140, 142, 143, 151, 155, 156, 158}
+
+	sorted := slices.Clone(WellKnownXidCodes)
+	slices.Sort(sorted)
+	if !slices.Equal(sorted, wellKnown) {
+		t.Fatalf("WellKnownXidCodes changed:\n got  %v\n want %v\nupdate this test deliberately if the change is intended", sorted, wellKnown)
+	}
+
+	for _, xid := range wellKnown {
+		t.Run(fmt.Sprintf("well-known XID %d => Fatal", xid), func(t *testing.T) {
+			assertSingleCondition(t, Classify(NormalizedSignals{XIDs: []uint{xid}}),
+				fmt.Sprintf("NvidiaXID%dError", xid), monitor.SeverityFatal)
+		})
+	}
+
+	// Codes outside the allowlist, including ones NVIDIA classifies as
+	// application-level or informational (e.g. 13, 31, 43, 45, 94, 121).
+	for _, xid := range []uint{0, 13, 31, 43, 45, 94, 121, 1000} {
+		t.Run(fmt.Sprintf("unlisted XID %d => Warning", xid), func(t *testing.T) {
+			assertSingleCondition(t, Classify(NormalizedSignals{XIDs: []uint{xid}}),
+				fmt.Sprintf("NvidiaXID%dWarning", xid), monitor.SeverityWarning)
+		})
+	}
+}
+
+func assertSingleCondition(t *testing.T, got []monitor.Condition, wantReason string, wantSev monitor.Severity) {
+	t.Helper()
+	if len(got) != 1 {
+		t.Fatalf("want exactly one condition, got %+v", got)
+	}
+	if got[0].Reason != wantReason || got[0].Severity != wantSev {
+		t.Errorf("want %s/%s, got %s/%s", wantReason, wantSev, got[0].Reason, got[0].Severity)
+	}
+}
