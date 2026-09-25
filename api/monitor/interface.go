@@ -48,7 +48,9 @@ type Condition struct {
 	// has recovered. A resolved condition clears the reason from the
 	// corresponding NodeCondition; when the last fatal reason for a
 	// NodeCondition is resolved, the condition returns to a healthy status.
-	// Resolving a reason that was never reported is a no-op.
+	// Resolving a reason that was never reported is a no-op. Resolved applies
+	// to Fatal conditions only; a condition of any other severity is routed
+	// by its severity as usual.
 	Resolved bool
 }
 

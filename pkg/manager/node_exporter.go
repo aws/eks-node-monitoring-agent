@@ -102,12 +102,18 @@ type nodeExporter struct {
 	// arrival order, so that resolving one reason does not clear a condition
 	// that is still failing for another.
 	fatalEntries map[corev1.NodeConditionType][]fatalEntry
+	// reportSeq increases on every Fatal call and stamps the entry it
+	// touches, so the condition reason can follow the most recent report
+	// while messages keep their arrival order.
+	reportSeq uint64
 }
 
-// fatalEntry is one unresolved fatal reason and its latest message.
+// fatalEntry is one unresolved fatal reason, its latest message, and the
+// sequence number of its most recent report.
 type fatalEntry struct {
-	reason  string
-	message string
+	reason   string
+	message  string
+	reported uint64
 }
 
 // Info records an event for the specified condition.
@@ -125,22 +131,25 @@ func (e *nodeExporter) Warning(ctx context.Context, c monitor.Condition, conditi
 // Fatal updates the local state for the specified managed condition.
 // The condition will be reported in the Node.Status.Conditions periodically.
 // Each distinct Reason is tracked until it is resolved via Resolve; messages
-// from all unresolved reasons are aggregated into the condition message.
+// from all unresolved reasons are aggregated into the condition message in
+// arrival order, and the condition reason is the most recently reported one.
 func (e *nodeExporter) Fatal(ctx context.Context, monitorCondition monitor.Condition, conditionType corev1.NodeConditionType) error {
 	e.managedConditionsLock.Lock()
 	defer e.managedConditionsLock.Unlock()
 
+	e.reportSeq++
 	entries := e.fatalEntries[conditionType]
 	updated := false
 	for i := range entries {
 		if entries[i].reason == monitorCondition.Reason {
 			entries[i].message = monitorCondition.Message
+			entries[i].reported = e.reportSeq
 			updated = true
 			break
 		}
 	}
 	if !updated {
-		entries = append(entries, fatalEntry{reason: monitorCondition.Reason, message: monitorCondition.Message})
+		entries = append(entries, fatalEntry{reason: monitorCondition.Reason, message: monitorCondition.Message, reported: e.reportSeq})
 	}
 	e.fatalEntries[conditionType] = entries
 
@@ -170,15 +179,22 @@ func (e *nodeExporter) Resolve(ctx context.Context, monitorCondition monitor.Con
 	}
 	e.fatalEntries[conditionType] = entries
 
-	e.recorder.Event(e.nodeRef, corev1.EventTypeNormal, string(conditionType),
-		fmt.Sprintf("%s: the previously reported issue has been resolved", monitorCondition.Reason))
-
 	if len(entries) > 0 {
 		// Other reasons are still failing; rebuild the condition without the
-		// resolved reason.
+		// resolved reason, and name the remaining reasons in the event so it
+		// does not read as a recovery of the whole condition.
+		remaining := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			remaining = append(remaining, entry.reason)
+		}
+		e.recorder.Event(e.nodeRef, corev1.EventTypeNormal, string(conditionType),
+			fmt.Sprintf("%s: resolved, %s still reports %s", monitorCondition.Reason, conditionType, strings.Join(remaining, ", ")))
 		e.rebuildFatalCondition(conditionType)
 		return false, nil
 	}
+
+	e.recorder.Event(e.nodeRef, corev1.EventTypeNormal, string(conditionType),
+		fmt.Sprintf("%s: the previously reported issue has been resolved", monitorCondition.Reason))
 
 	// No fatal reasons remain: restore the ready state.
 	now := metav1.Now()
@@ -203,11 +219,19 @@ func (e *nodeExporter) Resolve(ctx context.Context, monitorCondition monitor.Con
 }
 
 // rebuildFatalCondition recomputes the managed condition for the type from
-// the tracked fatal entries. The caller must hold managedConditionsLock and
-// ensure at least one entry exists.
+// the tracked fatal entries: the reason is the most recently reported entry,
+// and messages are aggregated in arrival order. The caller must hold
+// managedConditionsLock and ensure at least one entry exists.
 func (e *nodeExporter) rebuildFatalCondition(conditionType corev1.NodeConditionType) {
 	entries := e.fatalEntries[conditionType]
 	now := metav1.Now()
+
+	latest := entries[0]
+	for _, entry := range entries[1:] {
+		if entry.reported > latest.reported {
+			latest = entry
+		}
+	}
 
 	// Aggregate distinct messages in arrival order.
 	var messages []string
@@ -226,7 +250,7 @@ func (e *nodeExporter) rebuildFatalCondition(conditionType corev1.NodeConditionT
 
 	newCondition := corev1.NodeCondition{
 		Type:               conditionType,
-		Reason:             entries[len(entries)-1].reason,
+		Reason:             latest.reason,
 		Message:            strings.Join(messages, "; "),
 		Status:             corev1.ConditionFalse,
 		LastTransitionTime: now,
