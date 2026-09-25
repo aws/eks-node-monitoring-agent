@@ -129,6 +129,23 @@ make test
 make docker-build
 ```
 
+### Running checks on a non-Linux host
+
+Some packages (for example the NVIDIA DCGM monitor) use cgo and build only on
+Linux, so `make test` cannot run or vet them on macOS. To run the lint checks
+(gofmt + `go vet`) and unit tests on Linux from any host, run them in a
+container:
+
+```bash
+# Uses Docker by default; set CONTAINER_TOOL to use finch, podman, etc.
+make test-in-container
+make test-in-container CONTAINER_TOOL=finch
+```
+
+This builds a small test image (Go toolchain plus `libsystemd-dev`) once, tagged
+by the Go version in `go.mod`, and reuses it on subsequent runs. Force a rebuild
+with `make test-image FORCE=1`.
+
 ## Contributing
 
 We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:

@@ -37,6 +37,17 @@ GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 # Multi-arch build platforms
 DOCKER_PLATFORMS ?= linux/amd64,linux/arm64
 
+# Container-based testing configuration.
+# CONTAINER_TOOL selects the container runtime (docker, finch, podman, nerdctl).
+# GO_VERSION is read from go.mod so the test container matches the module's Go
+# version. TEST_BASE_IMAGE is what the test image builds FROM; TEST_IMAGE is the
+# locally built image the unit tests run in, tagged by Go version so a go.mod
+# bump naturally triggers a rebuild.
+CONTAINER_TOOL  ?= docker
+GO_VERSION      ?= $(shell awk '/^go [0-9]/{print $$2; exit}' go.mod)
+TEST_BASE_IMAGE ?= golang:$(GO_VERSION)
+TEST_IMAGE      ?= eks-node-monitoring-agent-test:go$(GO_VERSION)
+
 # Compute IMAGE_URI based on whether registry is set
 ifdef IMAGE_REGISTRY
     IMAGE_URI ?= $(IMAGE_REGISTRY)/$(IMAGE_REPOSITORY):$(IMAGE_TAG)
@@ -89,7 +100,7 @@ help: ## Show this help message
 	@echo "EKS Node Monitoring Agent - Available Targets"
 	@echo ""
 	@echo "Development:"
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | grep -E '(build|test|generate|fmt|vet|clean)' | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | grep -E '(build|test|generate|fmt|vet|lint|clean)' | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
 	@echo ""
 	@echo "Helm Operations:"
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | grep -E '(helm-)' | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-20s %s\n", $$1, $$2}'
@@ -106,6 +117,7 @@ help: ## Show this help message
 	@echo "  IMAGE_TAG           Image tag (default: latest)"
 	@echo "  GOBUILDARGS         Additional Go build arguments for Docker build"
 	@echo "  DOCKER_PLATFORMS    Platforms for multi-arch build (default: linux/amd64,linux/arm64)"
+	@echo "  CONTAINER_TOOL      Container runtime for test-in-container (default: docker; e.g. finch)"
 	@echo "  NAMESPACE           Kubernetes namespace (default: kube-system)"
 	@echo "  HELM_EXTRA_FLAGS    Additional flags for helm commands"
 	@echo ""
@@ -114,6 +126,8 @@ help: ## Show this help message
 	@echo "  make docker-build IMAGE_REGISTRY=your-account.dkr.ecr.us-west-2.amazonaws.com IMAGE_TAG=v1.0.0"
 	@echo "  make docker-build IMAGE_REGISTRY=your-account.dkr.ecr.us-west-2.amazonaws.com GOBUILDARGS='-race'"
 	@echo "  make deploy HELM_EXTRA_FLAGS='--set nodeAgent.image.tag=v1.0.0'"
+	@echo "  make test-in-container CONTAINER_TOOL=finch"
+	@echo "  make test-image FORCE=1"
 
 # =============================================================================
 # Development Targets
@@ -128,13 +142,43 @@ build: generate fmt vet ## Build Go code
 	go build -o $(OUTPUT_BIN)/chroot ./cmd/chroot
 
 .PHONY: test
-test: generate fmt vet covignore ## Run tests
+test: generate fmt vet covignore unit-test ## Run tests
+	@echo "Running Helm chart validation..."
+	$(MAKE) helm-lint
+
+.PHONY: unit-test
+unit-test: ## Run Go unit tests only (no codegen or helm lint; used by test-in-container)
 	@echo "Running Go tests..."
 	@# Only test packages that contain test files to avoid 'go: no such tool covdata'
 	@# errors from coverage instrumentation on packages without tests.
 	go test $$(go list ./... | while read pkg; do dir=$$(go list -f '{{.Dir}}' "$$pkg"); if ls "$$dir"/*_test.go >/dev/null 2>&1; then echo "$$pkg"; fi; done) -cover -covermode=atomic
-	@echo "Running Helm chart validation..."
-	$(MAKE) helm-lint
+
+.PHONY: test-image
+test-image: ## Build the Linux unit-test image if missing (FORCE=1 to rebuild)
+	@if [ "$(FORCE)" = "1" ] || ! $(CONTAINER_TOOL) image inspect $(TEST_IMAGE) >/dev/null 2>&1; then \
+		echo "Building test image $(TEST_IMAGE) (from $(TEST_BASE_IMAGE))..."; \
+		$(CONTAINER_TOOL) build $(if $(filter 1,$(FORCE)),--no-cache,) \
+			--build-arg GO_VERSION=$(GO_VERSION) \
+			-f hack/test.Dockerfile -t $(TEST_IMAGE) hack; \
+	else \
+		echo "Test image $(TEST_IMAGE) already present (run with FORCE=1 to rebuild)."; \
+	fi
+
+.PHONY: test-in-container
+test-in-container: test-image ## Run lint (gofmt + go vet) and unit tests inside the Linux test image (CONTAINER_TOOL=docker|finch|podman)
+	@# Runs lint and the unit tests on Linux so contributors on macOS (or any
+	@# non-Linux host) can exercise the cgo/Linux-only build paths -- e.g. the
+	@# NVIDIA DCGM monitor -- which neither compile nor vet on the host. The
+	@# system build deps are baked into the test image (built once by test-image,
+	@# reused thereafter). Named volumes cache the Go module and build caches.
+	@echo "Running lint + unit tests in $(TEST_IMAGE) via $(CONTAINER_TOOL)..."
+	$(CONTAINER_TOOL) run --rm \
+		-v "$(CURDIR)":/workspace \
+		-v nma-go-mod-cache:/go/pkg/mod \
+		-v nma-go-build-cache:/root/.cache/go-build \
+		-w /workspace \
+		$(TEST_IMAGE) \
+		make lint unit-test
 
 .PHONY: generate
 generate: mod-tidy controller-gen generate-crds generate-reasons generate-docs helm-docs update-e2e-manifests ## Run all code generation
@@ -169,6 +213,19 @@ fmt: ## Format Go code
 .PHONY: vet
 vet: ## Run go vet
 	go vet ./...
+
+.PHONY: fmt-check
+fmt-check: ## Check Go formatting without modifying files (fails if gofmt would change any)
+	@out=$$(gofmt -l .); \
+	if [ -n "$$out" ]; then \
+		echo "The following files are not gofmt-ed:"; echo "$$out"; \
+		echo "Run 'make fmt' to fix."; \
+		exit 1; \
+	fi
+	@echo "gofmt: clean"
+
+.PHONY: lint
+lint: fmt-check vet ## Run non-mutating checks (gofmt check + go vet)
 
 .PHONY: covignore
 covignore: ## Regenerate .covignore from source annotations
