@@ -288,6 +288,38 @@ NetworkingReady:
     DefaultSeverity: 'Warning'
     Description: >-
       EFA driver metrics shows there is an interface with performance degredation.
+  CoreDNSCorefileValidationFailed:
+    Template: 'CoreDNSCorefileValidationFailed'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      The customer's CoreDNS Corefile failed admission-time validation on this
+      Auto Mode node. The agent leaves the previous good Corefile in place; DNS
+      on this node continues to serve the last accepted configuration. Auto Mode
+      only.
+  CoreDNSCorefileReloadFailed:
+    Template: 'CoreDNSCorefileReloadFailed'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      CoreDNS refused to load the customer's Corefile on this Auto Mode node.
+      CoreDNS keeps serving the previous good configuration from memory; the
+      agent retries and may revert. Auto Mode only.
+  CoreDNSCorefileRevertedToLastApplied:
+    Template: 'CoreDNSCorefileRevertedToLastApplied'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      After repeated reload failures on the customer's Corefile the agent
+      reverted this Auto Mode node to the previous good Corefile. Customer's
+      most recent edit is not live on this node. Auto Mode only.
+  CoreDNSCorefileRevertedToBaseline:
+    Template: 'CoreDNSCorefileRevertedToBaseline'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      The agent could not converge on the customer's Corefile and reverted
+      this Auto Mode node to the AMI baseline. Baseline DNS is serving, so
+      the node itself remains functional; a node replacement would land the
+      same customer Corefile from the ConfigMap and repeat the failure, so
+      this is surfaced as a Warning rather than triggering node repair.
+      Auto Mode only.
 AcceleratedHardwareReady:
   DCGMDiagnosticFailure:
     Template: 'DCGMDiagnosticFailure'

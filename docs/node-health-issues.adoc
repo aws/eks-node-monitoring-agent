@@ -243,6 +243,22 @@ The monitoring condition is `NetworkingReady` for issues in the following table 
 |Event
 |Connection tracking exceeded the maximum for the instance and new connections could not be established, which can result in packet loss.
 
+|CoreDNSCorefileReloadFailed
+|Event
+|CoreDNS refused to load the customer's Corefile on this Auto Mode node. CoreDNS keeps serving the previous good configuration from memory; the agent retries and may revert. Auto Mode only.
+
+|CoreDNSCorefileRevertedToBaseline
+|Event
+|The agent could not converge on the customer's Corefile and reverted this Auto Mode node to the AMI baseline. Baseline DNS is serving, so the node itself remains functional; a node replacement would land the same customer Corefile from the ConfigMap and repeat the failure, so this is surfaced as a Warning rather than triggering node repair. Auto Mode only.
+
+|CoreDNSCorefileRevertedToLastApplied
+|Event
+|After repeated reload failures on the customer's Corefile the agent reverted this Auto Mode node to the previous good Corefile. Customer's most recent edit is not live on this node. Auto Mode only.
+
+|CoreDNSCorefileValidationFailed
+|Event
+|The customer's CoreDNS Corefile failed admission-time validation on this Auto Mode node. The agent leaves the previous good Corefile in place; DNS on this node continues to serve the last accepted configuration. Auto Mode only.
+
 |EFAErrorMetric
 |Event
 |EFA driver metrics shows there is an interface with performance degredation.
