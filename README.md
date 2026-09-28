@@ -146,6 +146,15 @@ This builds a small test image (Go toolchain plus `libsystemd-dev`) once, tagged
 by the Go version in `go.mod`, and reuses it on subsequent runs. Force a rebuild
 with `make test-image FORCE=1`.
 
+The container resolves Go modules using your host's module settings (`GOPROXY`,
+`GOSUMDB`, `GONOSUMDB`, `GOPRIVATE`, `GONOPROXY`, `GOFLAGS`), taken from the
+environment or `go env`. If `proxy.golang.org` is unreachable on your network,
+set a proxy that works for you, for example:
+
+```bash
+make test-in-container CONTAINER_TOOL=finch GOPROXY=direct
+```
+
 ## Contributing
 
 We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
