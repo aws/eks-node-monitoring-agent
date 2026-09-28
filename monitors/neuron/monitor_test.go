@@ -31,6 +31,10 @@ func (m *mockManager) Notify(ctx context.Context, condition monitor.Condition) e
 	return nil
 }
 
+func (m *mockManager) Recovered(ctx context.Context) error {
+	return m.err
+}
+
 func (m *mockManager) GetNotifications() []monitor.Condition {
 	return m.notifications
 }

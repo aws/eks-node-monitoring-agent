@@ -41,12 +41,18 @@ func NewNodeExporter(
 	recorder record.EventRecorder,
 	managedConditionConfigs map[corev1.NodeConditionType]NodeConditionConfig,
 ) *nodeExporter {
+	readyConditions := initializeManagedConditions(managedConditionConfigs)
+	managedConditions := make(map[corev1.NodeConditionType]corev1.NodeCondition, len(readyConditions))
+	for conditionType, condition := range readyConditions {
+		managedConditions[conditionType] = condition
+	}
 	return &nodeExporter{
 		nodeRef:                makeNodeReference(node),
 		nodeKey:                client.ObjectKeyFromObject(node),
 		kubeClient:             kubeClient,
 		recorder:               recorder,
-		managedConditions:      initializeManagedConditions(managedConditionConfigs),
+		readyConditions:        readyConditions,
+		managedConditions:      managedConditions,
 		managedConditionsDirty: true,
 	}
 }
@@ -89,6 +95,7 @@ type nodeExporter struct {
 	nodeRef    *corev1.ObjectReference
 	nodeKey    client.ObjectKey
 
+	readyConditions        map[corev1.NodeConditionType]corev1.NodeCondition
 	managedConditions      map[corev1.NodeConditionType]corev1.NodeCondition
 	managedConditionsDirty bool
 	managedConditionsLock  sync.Mutex
@@ -136,6 +143,25 @@ func (e *nodeExporter) Fatal(ctx context.Context, monitorCondition monitor.Condi
 		}
 	}
 	e.managedConditions[conditionType] = newCondition
+	e.managedConditionsDirty = true
+	return nil
+}
+
+// Recovered resets the local state for the specified managed condition back to
+// its ready state. Without this, a fatal condition would stay latched until the
+// agent restarts, since Fatal only ever sets conditions to False.
+func (e *nodeExporter) Recovered(_ context.Context, conditionType corev1.NodeConditionType) error {
+	e.managedConditionsLock.Lock()
+	defer e.managedConditionsLock.Unlock()
+	current, ok := e.managedConditions[conditionType]
+	ready, readyOk := e.readyConditions[conditionType]
+	if !ok || !readyOk || current.Status == ready.Status {
+		return nil
+	}
+	now := metav1.Now()
+	ready.LastHeartbeatTime = now
+	ready.LastTransitionTime = now
+	e.managedConditions[conditionType] = ready
 	e.managedConditionsDirty = true
 	return nil
 }

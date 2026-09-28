@@ -67,6 +67,10 @@ func (m *mockManager) Notify(ctx context.Context, condition monitor.Condition) e
 	return nil
 }
 
+func (m *mockManager) Recovered(ctx context.Context) error {
+	return nil
+}
+
 func TestNetworkingMonitor(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

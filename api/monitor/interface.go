@@ -27,6 +27,9 @@ type Manager interface {
 	// Notify is used to emit conditions directly to the manager. It will block
 	// until either the message is sent or the context deadline is exceeded.
 	Notify(context.Context, Condition) error
+	// Recovered signals that a previously reported fatal condition no longer
+	// applies, resetting the monitor's node condition back to its ready state.
+	Recovered(context.Context) error
 }
 
 // Condition is a state provided by a monitor which holds information regarding

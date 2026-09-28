@@ -30,6 +30,10 @@ func (m *mockManager) Notify(ctx context.Context, condition monitor.Condition) e
 	return nil
 }
 
+func (m *mockManager) Recovered(ctx context.Context) error {
+	return nil
+}
+
 func newTestManager() *mockManager {
 	return &mockManager{
 		obs: observer.BaseObserver{},
