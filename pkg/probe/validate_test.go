@@ -16,15 +16,22 @@ func validSpec() probe.Spec {
 		Subsystem: "ipamd",
 		Checks: probe.Checks{
 			Liveness: probe.Check{
-				Transport: probe.TransportSystemdDBus,
-				Address:   "ipamd.service",
+				Transport:       probe.TransportSystemdDBus,
+				Address:         "ipamd.service",
+				ReasonOnFail:    "IPAMDNotRunning",
+				FailureSeverity: monitor.SeverityFatal,
 			},
 		},
-		ReasonOnFail:       "IPAMDNotRunning",
-		FailureSeverity:    monitor.SeverityFatal,
 		Interval:           metav1.Duration{Duration: 30 * time.Second},
 		FailureThreshold:   3,
 		StartupGracePeriod: metav1.Duration{Duration: 5 * time.Minute},
+	}
+}
+
+// httpLiveness switches the liveness check to http-loopback at address.
+func httpLiveness(address string) func(*probe.Spec) {
+	return func(s *probe.Spec) {
+		s.Checks.Liveness = probe.Check{Transport: probe.TransportHTTPLoopback, Address: address, Path: "/healthz", ReasonOnFail: "IPAMDNotRunning"}
 	}
 }
 
@@ -41,13 +48,19 @@ func TestValidate(t *testing.T) {
 		{
 			name: "valid http-loopback spec with readiness",
 			mutate: func(s *probe.Spec) {
-				s.Checks.Liveness = probe.Check{Transport: probe.TransportHTTPLoopback, Address: "127.0.0.1:8173", Path: "/healthz"}
-				s.Checks.Readiness = &probe.Check{Transport: probe.TransportHTTPLoopback, Address: "127.0.0.1:8173", Path: "/readyz"}
+				s.Checks.Liveness = probe.Check{Transport: probe.TransportHTTPLoopback, Address: "127.0.0.1:8173", Path: "/healthz", ReasonOnFail: "IPAMDNotRunning"}
+				s.Checks.Readiness = &probe.Check{Transport: probe.TransportHTTPLoopback, Address: "127.0.0.1:8173", Path: "/readyz", ReasonOnFail: "IPAMDNotReady"}
+			},
+		},
+		{
+			name: "readiness can use a different severity than liveness",
+			mutate: func(s *probe.Spec) {
+				s.Checks.Readiness = &probe.Check{Transport: probe.TransportHTTPLoopback, Address: "127.0.0.1:8173", Path: "/readyz", ReasonOnFail: "IPAMDNotReady", FailureSeverity: monitor.SeverityWarning}
 			},
 		},
 		{
 			name:   "empty failureSeverity defaults later and is valid",
-			mutate: func(s *probe.Spec) { s.FailureSeverity = "" },
+			mutate: func(s *probe.Spec) { s.Checks.Liveness.FailureSeverity = "" },
 		},
 		{
 			name:    "missing subsystem",
@@ -67,7 +80,7 @@ func TestValidate(t *testing.T) {
 		{
 			name: "http check without path",
 			mutate: func(s *probe.Spec) {
-				s.Checks.Liveness = probe.Check{Transport: probe.TransportHTTPLoopback, Address: "127.0.0.1:8173"}
+				s.Checks.Liveness = probe.Check{Transport: probe.TransportHTTPLoopback, Address: "127.0.0.1:8173", ReasonOnFail: "IPAMDNotRunning"}
 			},
 			wantErr: "requires a path",
 		},
@@ -84,19 +97,100 @@ func TestValidate(t *testing.T) {
 			wantErr: "readiness check is missing address",
 		},
 		{
+			name:   "http-loopback accepts the IPv6 loopback",
+			mutate: httpLiveness("[::1]:8173"),
+		},
+		{
+			name:   "http-loopback accepts localhost",
+			mutate: httpLiveness("localhost:8173"),
+		},
+		{
+			name:    "http-loopback rejects a non-loopback IP",
+			mutate:  httpLiveness("10.0.0.1:8173"),
+			wantErr: "must use localhost or a loopback IP",
+		},
+		{
+			name:    "http-loopback rejects other hostnames",
+			mutate:  httpLiveness("example.com:8173"),
+			wantErr: "must use localhost or a loopback IP",
+		},
+		{
+			name:    "http-loopback requires a port",
+			mutate:  httpLiveness("127.0.0.1"),
+			wantErr: "must be host:port",
+		},
+		{
+			name:    "http-loopback rejects port zero",
+			mutate:  httpLiveness("127.0.0.1:0"),
+			wantErr: "invalid port",
+		},
+		{
+			name: "readiness cannot use systemd-dbus",
+			mutate: func(s *probe.Spec) {
+				s.Checks.Readiness = &probe.Check{Transport: probe.TransportSystemdDBus, Address: "ipamd.service", ReasonOnFail: "IPAMDNotReady"}
+			},
+			wantErr: "only the liveness check can use it",
+		},
+		{
+			name:    "missing liveness reason",
+			mutate:  func(s *probe.Spec) { s.Checks.Liveness.ReasonOnFail = "" },
+			wantErr: "liveness check is missing reasonOnFail",
+		},
+		{
+			name: "missing readiness reason",
+			mutate: func(s *probe.Spec) {
+				s.Checks.Readiness = &probe.Check{Transport: probe.TransportHTTPLoopback, Address: "127.0.0.1:8173", Path: "/readyz"}
+			},
+			wantErr: "readiness check is missing reasonOnFail",
+		},
+		{
+			name: "readiness reuses the liveness reason",
+			mutate: func(s *probe.Spec) {
+				s.Checks.Readiness = &probe.Check{Transport: probe.TransportHTTPLoopback, Address: "127.0.0.1:8173", Path: "/readyz", ReasonOnFail: "IPAMDNotRunning"}
+			},
+			wantErr: "each check needs its own reason",
+		},
+		{
 			name:    "unregistered reason",
-			mutate:  func(s *probe.Spec) { s.ReasonOnFail = "NoSuchReason" },
+			mutate:  func(s *probe.Spec) { s.Checks.Liveness.ReasonOnFail = "NoSuchReason" },
 			wantErr: "not a registered reason",
 		},
 		{
 			name:    "parameterized reason template",
-			mutate:  func(s *probe.Spec) { s.ReasonOnFail = "NvidiaXIDError" },
+			mutate:  func(s *probe.Spec) { s.Checks.Liveness.ReasonOnFail = "NvidiaXIDError" },
 			wantErr: "parameterized template",
 		},
 		{
 			name:    "invalid severity",
-			mutate:  func(s *probe.Spec) { s.FailureSeverity = "Critical" },
+			mutate:  func(s *probe.Spec) { s.Checks.Liveness.FailureSeverity = "Critical" },
 			wantErr: "invalid failureSeverity",
+		},
+		{
+			name: "invalid readiness severity",
+			mutate: func(s *probe.Spec) {
+				s.Checks.Readiness = &probe.Check{Transport: probe.TransportHTTPLoopback, Address: "127.0.0.1:8173", Path: "/readyz", ReasonOnFail: "IPAMDNotReady", FailureSeverity: "Critical"}
+			},
+			wantErr: "readiness check: invalid failureSeverity",
+		},
+		{
+			name: "valid diagnostics check",
+			mutate: func(s *probe.Spec) {
+				s.Checks.Diagnostics = &probe.Check{Transport: probe.TransportHTTPLoopback, Address: "127.0.0.1:8173", Path: "/diagnostics"}
+			},
+		},
+		{
+			name: "diagnostics cannot set a reason",
+			mutate: func(s *probe.Spec) {
+				s.Checks.Diagnostics = &probe.Check{Transport: probe.TransportHTTPLoopback, Address: "127.0.0.1:8173", Path: "/diagnostics", ReasonOnFail: "IPAMDNotReady"}
+			},
+			wantErr: "cannot set reasonOnFail or failureSeverity",
+		},
+		{
+			name: "diagnostics cannot use systemd-dbus",
+			mutate: func(s *probe.Spec) {
+				s.Checks.Diagnostics = &probe.Check{Transport: probe.TransportSystemdDBus, Address: "ipamd.service"}
+			},
+			wantErr: "only the liveness check can use it",
 		},
 		{
 			name:    "zero interval",

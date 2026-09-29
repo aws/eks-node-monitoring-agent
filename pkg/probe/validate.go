@@ -6,11 +6,21 @@ package probe
 
 import (
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 	"github.com/aws/eks-node-monitoring-agent/api/probe"
 	"github.com/aws/eks-node-monitoring-agent/pkg/reasons"
+)
+
+// Names of the checks in a spec, used in error messages and to apply the
+// rules that differ between them.
+const (
+	livenessCheck    = "liveness"
+	readinessCheck   = "readiness"
+	diagnosticsCheck = "diagnostics"
 )
 
 // Validate checks that a Spec is internally consistent and references only
@@ -21,34 +31,9 @@ func Validate(spec probe.Spec) error {
 	if spec.Subsystem == "" {
 		return fmt.Errorf("probe spec is missing subsystem")
 	}
-	if err := validateCheck("liveness", spec.Checks.Liveness); err != nil {
+	if err := validateChecks(spec.Checks); err != nil {
 		return fmt.Errorf("probe %q: %w", spec.Subsystem, err)
 	}
-	if spec.Checks.Readiness != nil {
-		if err := validateCheck("readiness", *spec.Checks.Readiness); err != nil {
-			return fmt.Errorf("probe %q: %w", spec.Subsystem, err)
-		}
-	}
-	if spec.Checks.Diagnostics != nil {
-		if err := validateCheck("diagnostics", *spec.Checks.Diagnostics); err != nil {
-			return fmt.Errorf("probe %q: %w", spec.Subsystem, err)
-		}
-	}
-
-	meta, ok := reasons.ByName(spec.ReasonOnFail)
-	if !ok {
-		return fmt.Errorf("probe %q: reasonOnFail %q is not a registered reason", spec.Subsystem, spec.ReasonOnFail)
-	}
-	if strings.Contains(meta.Template(), "%") {
-		return fmt.Errorf("probe %q: reasonOnFail %q has a parameterized template %q and cannot be used by a probe", spec.Subsystem, spec.ReasonOnFail, meta.Template())
-	}
-
-	switch spec.FailureSeverity {
-	case "", monitor.SeverityInfo, monitor.SeverityWarning, monitor.SeverityFatal:
-	default:
-		return fmt.Errorf("probe %q: invalid failureSeverity %q", spec.Subsystem, spec.FailureSeverity)
-	}
-
 	if spec.Interval.Duration <= 0 {
 		return fmt.Errorf("probe %q: interval must be positive, got %v", spec.Subsystem, spec.Interval.Duration)
 	}
@@ -61,22 +46,101 @@ func Validate(spec probe.Spec) error {
 	return nil
 }
 
-// validateCheck validates a single check's transport, address, and path.
+// validateChecks validates each check in the spec. Liveness and readiness
+// must report different reasons: failures are tracked per reason, so two
+// checks sharing one would overwrite and resolve each other's failure.
+func validateChecks(checks probe.Checks) error {
+	if err := validateCheck(livenessCheck, checks.Liveness); err != nil {
+		return err
+	}
+	if err := validateFailure(livenessCheck, checks.Liveness); err != nil {
+		return err
+	}
+	if readiness := checks.Readiness; readiness != nil {
+		if err := validateCheck(readinessCheck, *readiness); err != nil {
+			return err
+		}
+		if err := validateFailure(readinessCheck, *readiness); err != nil {
+			return err
+		}
+		if readiness.ReasonOnFail == checks.Liveness.ReasonOnFail {
+			return fmt.Errorf("liveness and readiness both use reasonOnFail %q; each check needs its own reason", readiness.ReasonOnFail)
+		}
+	}
+	if diagnostics := checks.Diagnostics; diagnostics != nil {
+		if err := validateCheck(diagnosticsCheck, *diagnostics); err != nil {
+			return err
+		}
+		if diagnostics.ReasonOnFail != "" || diagnostics.FailureSeverity != "" {
+			return fmt.Errorf("diagnostics check has no pass or fail, so it cannot set reasonOnFail or failureSeverity")
+		}
+	}
+	return nil
+}
+
+// validateCheck validates how a check reaches its agent: the transport,
+// address, and path. Only liveness can use systemd-dbus, because a unit's
+// ActiveState says whether the agent is running, not whether it is doing
+// its job or what state it is in.
 func validateCheck(name string, c probe.Check) error {
 	if c.Address == "" {
 		return fmt.Errorf("%s check is missing address", name)
 	}
 	switch c.Transport {
 	case probe.TransportHTTPLoopback:
+		if err := validateLoopbackAddress(c.Address); err != nil {
+			return fmt.Errorf("%s check: %w", name, err)
+		}
 		if !strings.HasPrefix(c.Path, "/") {
 			return fmt.Errorf("%s check: http-loopback requires a path starting with %q, got %q", name, "/", c.Path)
 		}
 	case probe.TransportSystemdDBus:
+		if name != livenessCheck {
+			return fmt.Errorf("%s check: systemd-dbus only reports whether a unit is running, so only the liveness check can use it", name)
+		}
 		if c.Path != "" {
 			return fmt.Errorf("%s check: systemd-dbus does not use a path, got %q", name, c.Path)
 		}
 	default:
 		return fmt.Errorf("%s check: unknown transport %q", name, c.Transport)
+	}
+	return nil
+}
+
+// validateLoopbackAddress requires localhost or a loopback IP, and a port,
+// so an http-loopback check never leaves the node. Other hostnames are
+// rejected because they could resolve to an address off the node.
+func validateLoopbackAddress(address string) error {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("http-loopback address %q must be host:port: %w", address, err)
+	}
+	if ip := net.ParseIP(host); host != "localhost" && (ip == nil || !ip.IsLoopback()) {
+		return fmt.Errorf("http-loopback address %q must use localhost or a loopback IP such as 127.0.0.1 or [::1]", address)
+	}
+	if n, err := strconv.ParseUint(port, 10, 16); err != nil || n == 0 {
+		return fmt.Errorf("http-loopback address %q has an invalid port", address)
+	}
+	return nil
+}
+
+// validateFailure validates what a check reports when it fails: a
+// registered, non-parameterized reason and, if set, a known severity.
+func validateFailure(name string, c probe.Check) error {
+	if c.ReasonOnFail == "" {
+		return fmt.Errorf("%s check is missing reasonOnFail", name)
+	}
+	meta, ok := reasons.ByName(c.ReasonOnFail)
+	if !ok {
+		return fmt.Errorf("%s check: reasonOnFail %q is not a registered reason", name, c.ReasonOnFail)
+	}
+	if strings.Contains(meta.Template(), "%") {
+		return fmt.Errorf("%s check: reasonOnFail %q has a parameterized template %q and cannot be used by a probe", name, c.ReasonOnFail, meta.Template())
+	}
+	switch c.FailureSeverity {
+	case "", monitor.SeverityInfo, monitor.SeverityWarning, monitor.SeverityFatal:
+	default:
+		return fmt.Errorf("%s check: invalid failureSeverity %q", name, c.FailureSeverity)
 	}
 	return nil
 }

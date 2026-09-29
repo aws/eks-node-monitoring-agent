@@ -16,17 +16,19 @@ func makeSpec() Spec {
 		Subsystem: "ipamd",
 		Checks: Checks{
 			Liveness: Check{
-				Transport: TransportSystemdDBus,
-				Address:   "ipamd.service",
+				Transport:       TransportSystemdDBus,
+				Address:         "ipamd.service",
+				ReasonOnFail:    "IPAMDNotRunning",
+				FailureSeverity: monitor.SeverityFatal,
 			},
 			Readiness: &Check{
-				Transport: TransportHTTPLoopback,
-				Address:   "127.0.0.1:8173",
-				Path:      "/readyz",
+				Transport:       TransportHTTPLoopback,
+				Address:         "127.0.0.1:8173",
+				Path:            "/readyz",
+				ReasonOnFail:    "IPAMDNotReady",
+				FailureSeverity: monitor.SeverityWarning,
 			},
 		},
-		ReasonOnFail:       "IPAMDNotRunning",
-		FailureSeverity:    monitor.SeverityFatal,
 		Interval:           metav1.Duration{Duration: 30 * time.Second},
 		FailureThreshold:   3,
 		StartupGracePeriod: metav1.Duration{Duration: 5 * time.Minute},
@@ -46,10 +48,10 @@ func TestSpecJSONRoundTrip(t *testing.T) {
 	if out.Interval.Duration != 30*time.Second {
 		t.Errorf("interval = %v, want 30s", out.Interval.Duration)
 	}
-	if out.Checks.Readiness == nil || out.Checks.Readiness.Path != "/readyz" {
-		t.Errorf("readiness check did not round-trip: %+v", out.Checks.Readiness)
+	if out.Checks.Readiness == nil || *out.Checks.Readiness != *in.Checks.Readiness {
+		t.Errorf("readiness check did not round-trip: got %+v, want %+v", out.Checks.Readiness, in.Checks.Readiness)
 	}
-	if out.Subsystem != in.Subsystem || out.ReasonOnFail != in.ReasonOnFail || out.FailureThreshold != in.FailureThreshold {
+	if out.Subsystem != in.Subsystem || out.Checks.Liveness != in.Checks.Liveness || out.FailureThreshold != in.FailureThreshold {
 		t.Errorf("spec did not round-trip: got %+v, want %+v", out, in)
 	}
 }
@@ -64,7 +66,7 @@ checks:
     transport: http-loopback
     address: 127.0.0.1:8901
     path: /healthz
-reasonOnFail: NPANotRunning
+    reasonOnFail: NPANotRunning
 interval: 30s
 failureThreshold: 3
 startupGracePeriod: 5m
@@ -82,7 +84,10 @@ startupGracePeriod: 5m
 	if spec.Checks.Readiness != nil {
 		t.Errorf("readiness should be nil when omitted, got %+v", spec.Checks.Readiness)
 	}
-	if spec.FailureSeverity != "" {
-		t.Errorf("failureSeverity should be empty when omitted, got %q", spec.FailureSeverity)
+	if spec.Checks.Liveness.ReasonOnFail != "NPANotRunning" {
+		t.Errorf("liveness reasonOnFail = %q, want NPANotRunning", spec.Checks.Liveness.ReasonOnFail)
+	}
+	if spec.Checks.Liveness.FailureSeverity != "" {
+		t.Errorf("failureSeverity should be empty when omitted, got %q", spec.Checks.Liveness.FailureSeverity)
 	}
 }

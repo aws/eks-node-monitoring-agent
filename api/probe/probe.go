@@ -18,9 +18,10 @@ import (
 type TransportKind string
 
 const (
-	// TransportHTTPLoopback performs an HTTP GET against a local-only
-	// address. A 2xx response is healthy; any other response, including a
-	// refused connection, is unhealthy.
+	// TransportHTTPLoopback performs an HTTP GET against a loopback address
+	// and port, such as 127.0.0.1:8173 or localhost:8173. A 2xx response is
+	// healthy; any other response, including a refused connection, is
+	// unhealthy.
 	TransportHTTPLoopback TransportKind = "http-loopback"
 	// TransportSystemdDBus queries the ActiveState of a systemd unit over
 	// D-Bus. Liveness only: "active" is healthy, anything else is unhealthy.
@@ -39,16 +40,6 @@ type Spec struct {
 
 	// Checks defines the agent's health surface.
 	Checks Checks `json:"checks"`
-
-	// ReasonOnFail is the reason identifier (a key in reasons.yaml) emitted
-	// when the probe fails. It must reference a registered,
-	// non-parameterized reason; this is validated at startup.
-	ReasonOnFail string `json:"reasonOnFail"`
-
-	// FailureSeverity is the severity of the emitted condition on probe
-	// failure. If empty, the reason's default severity from reasons.yaml is
-	// used.
-	FailureSeverity monitor.Severity `json:"failureSeverity,omitempty"`
 
 	// Interval is the time between check rounds.
 	Interval metav1.Duration `json:"interval"`
@@ -75,11 +66,13 @@ type Checks struct {
 	// the readiness answer is owned by the agent, not by this contract.
 	Readiness *Check `json:"readiness,omitempty"`
 	// Diagnostics optionally returns free-form structured detail that is
-	// surfaced as informational events, never as condition flips.
+	// surfaced as informational events, never as condition flips. It has no
+	// pass or fail, so it sets neither ReasonOnFail nor FailureSeverity.
 	Diagnostics *Check `json:"diagnostics,omitempty"`
 }
 
-// Check is a single health question asked over a specific transport.
+// Check is a single health question asked over a specific transport, and
+// what to report when the answer is unhealthy.
 type Check struct {
 	// Transport selects how the target is reached.
 	Transport TransportKind `json:"transport"`
@@ -89,4 +82,16 @@ type Check struct {
 	// Path is the HTTP request path, e.g. "/healthz". Required for
 	// http-loopback and must be empty for systemd-dbus.
 	Path string `json:"path,omitempty"`
+
+	// ReasonOnFail is the reason identifier (a key in reasons.yaml) emitted
+	// when this check fails. Liveness and readiness each need their own
+	// registered, non-parameterized reason, so a repair rule can tell a dead
+	// agent from one that is running but not doing its job. This is
+	// validated at startup.
+	ReasonOnFail string `json:"reasonOnFail,omitempty"`
+
+	// FailureSeverity is the severity of the condition emitted when this
+	// check fails. If empty, the reason's default severity from reasons.yaml
+	// is used.
+	FailureSeverity monitor.Severity `json:"failureSeverity,omitempty"`
 }
