@@ -176,6 +176,10 @@ var (
 		template:        "SoftLockup",
 		defaultSeverity: "Warning",
 	}
+	ZramHighUsage = ReasonMeta{
+		template:        "ZramHighUsage",
+		defaultSeverity: "Warning",
+	}
 
 	// reasons for the NetworkingReady condition.
 
@@ -365,6 +369,7 @@ var byName = map[string]ReasonMeta{
 	"LargeEnvironment":                  LargeEnvironment,
 	"RapidCron":                         RapidCron,
 	"SoftLockup":                        SoftLockup,
+	"ZramHighUsage":                     ZramHighUsage,
 	"BandwidthInExceeded":               BandwidthInExceeded,
 	"BandwidthOutExceeded":              BandwidthOutExceeded,
 	"ConntrackExceeded":                 ConntrackExceeded,

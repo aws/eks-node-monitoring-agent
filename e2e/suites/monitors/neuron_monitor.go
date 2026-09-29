@@ -6,8 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	nodeconditions "github.com/aws/eks-node-monitoring-agent/pkg/conditions"
 	corev1 "k8s.io/api/core/v1"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/e2e-framework/klient/wait"
 	"sigs.k8s.io/e2e-framework/klient/wait/conditions"
@@ -16,8 +19,9 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/types"
 )
 
-func NeuronMonitor() types.Feature {
+func NeuronMonitor(awsCfg aws.Config) types.Feature {
 	var targetNode *corev1.Node
+	ec2Client := ec2.NewFromConfig(awsCfg)
 
 	var pod = corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -56,7 +60,7 @@ func NeuronMonitor() types.Feature {
 					if condition.Status != corev1.ConditionTrue {
 						t.Fatalf("status of condition %+v was not %s", condition, corev1.ConditionTrue)
 					}
-					if strings.Contains(condition.Message, "Neuron") {
+					if strings.Contains(condition.Message, neuronVendor) {
 						targetNode = &node
 						break
 					}
@@ -85,16 +89,44 @@ func NeuronMonitor() types.Feature {
 			return ctx
 		}).
 		Teardown(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
-			if err := cfg.Client().Resources().Delete(ctx, &pod); err != nil {
-				t.Fatal(err)
+			deleteInjectorPod(ctx, t, cfg, &pod)
+
+			if targetNode == nil {
+				return ctx
 			}
-			if err := wait.For(
-				conditions.New(cfg.Client().Resources()).ResourceDeleted(&pod),
-				wait.WithTimeout(time.Minute),
-			); err != nil {
-				t.Fatal(err)
+			var node corev1.Node
+			if err := cfg.Client().Resources().Get(ctx, targetNode.Name, "", &node); err != nil {
+				if !k8serrors.IsNotFound(err) {
+					t.Errorf("failed to re-read node %q during teardown: %s", targetNode.Name, err)
+				}
+				return ctx
 			}
+			// Skip when the fault never landed, so an early assessment failure
+			// does not cost a node.
+			if acceleratedHardwareHealthy(&node, neuronVendor) {
+				t.Logf("node %q is still healthy; no replacement needed", node.Name)
+				return ctx
+			}
+			replaceAcceleratedNode(ctx, t, cfg, ec2Client, &node, neuronVendor)
 			return ctx
 		}).
 		Feature()
+}
+
+// deleteInjectorPod tolerates a pod already removed along with its node.
+func deleteInjectorPod(ctx context.Context, t *testing.T, cfg *envconf.Config, pod *corev1.Pod) {
+	t.Helper()
+	if err := cfg.Client().Resources().Delete(ctx, pod); err != nil {
+		if k8serrors.IsNotFound(err) {
+			return
+		}
+		t.Errorf("failed to delete pod %q: %s", pod.Name, err)
+		return
+	}
+	if err := wait.For(
+		conditions.New(cfg.Client().Resources()).ResourceDeleted(pod),
+		wait.WithTimeout(time.Minute),
+	); err != nil {
+		t.Errorf("pod %q was not deleted: %s", pod.Name, err)
+	}
 }

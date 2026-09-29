@@ -29,7 +29,7 @@ serviceAccount:
 nodeAgent:
   image:
     # -- Image tag for the eks-node-monitoring-agent
-    tag: v1.7.1-eksbuild.1
+    tag: v1.7.2-eksbuild.1
     # -- Full container registry URL override (e.g., 602401143452.dkr.ecr.us-west-2.amazonaws.com).
     # When set, this takes precedence over account/endpoint/region/domain fields.
     containerRegistry: ""
@@ -154,17 +154,21 @@ dcgmAgent:
             operator: NotIn
             values:
               - hyperpod
-            # Only schedule on amd64 nodes
+            # Schedule on amd64 and arm64 nodes
           - key: kubernetes.io/arch
             operator: In
             values:
               - amd64
+              - arm64
   # -- Container resources for the dcgm deployment
   resources: {}
   # -- Container resize policy for in-place pod vertical scaling (requires Kubernetes 1.33+)
   resizePolicy: []
-  # -- Deployment tolerations for the dcgm
-  tolerations: []
+  # -- Deployment tolerations for the dcgm-server DaemonSet. Tolerates the
+  # NVIDIA GPU taint so dcgm-server still schedules on tainted GPU nodes.
+  tolerations:
+    - key: nvidia.com/gpu
+      operator: Exists
   # -- Pod labels applied to the dcgm exporter
   podLabels: {}
   # -- Node labels required for the dcgm exporter to be scheduled on a node.
@@ -180,20 +184,3 @@ updateStrategy:
   rollingUpdate:
     maxUnavailable: "10%"
 
-# -- Additional Kubernetes manifests to deploy alongside this chart.
-# Each entry is rendered through `tpl`, so template expressions
-# (e.g. {{ .Release.Namespace }}) inside the manifests are evaluated.
-# Example:
-#   extraObjects:
-#     - apiVersion: monitoring.coreos.com/v1
-#       kind: PodMonitor
-#       metadata:
-#         name: eks-node-monitoring-agent
-#         namespace: {{ .Release.Namespace }}
-#       spec:
-#         selector:
-#           matchLabels:
-#             app.kubernetes.io/name: eks-node-monitoring-agent
-#         podMetricsEndpoints:
-#           - port: metrics
-extraObjects: []

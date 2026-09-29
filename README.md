@@ -76,6 +76,19 @@ nodeAgent:
         - "^ib[0-9]+$"
 ```
 
+The NVIDIA monitor supports `dcgmPowerThresholdWatts` to configure the DCGM power policy warning threshold for GPUs whose normal board power exceeds the library default.
+This setting controls when DCGM reports a power excursion and does not cap GPU power, so choose a threshold appropriate for every GPU on the node.
+When omitted, the existing behavior is unchanged: an existing policy is preserved or go-dcgm supplies its default threshold.
+Omitting the setting does not reset a threshold previously stored in the running hostengine.
+For example:
+
+```yaml
+nodeAgent:
+  monitors:
+    nvidia:
+      dcgmPowerThresholdWatts: 1000
+```
+
 ### Config File Format
 
 The agent reads a YAML config file mounted at `/etc/nma/config.yaml`. Omitted monitors default to enabled.
@@ -114,6 +127,32 @@ make test
 
 # Build container image
 make docker-build
+```
+
+### Running checks on a non-Linux host
+
+Some packages (for example the NVIDIA DCGM monitor) use cgo and build only on
+Linux, so `make test` cannot run or vet them on macOS. To run the lint checks
+(gofmt + `go vet`) and unit tests on Linux from any host, run them in a
+container:
+
+```bash
+# Uses Docker by default; set CONTAINER_TOOL to use finch, podman, etc.
+make test-in-container
+make test-in-container CONTAINER_TOOL=finch
+```
+
+This builds a small test image (Go toolchain plus `libsystemd-dev`) once, tagged
+by the Go version in `go.mod`, and reuses it on subsequent runs. Force a rebuild
+with `make test-image FORCE=1`.
+
+The container resolves Go modules using your host's module settings (`GOPROXY`,
+`GOSUMDB`, `GONOSUMDB`, `GOPRIVATE`, `GONOPROXY`, `GOFLAGS`), taken from the
+environment or `go env`. If `proxy.golang.org` is unreachable on your network,
+set a proxy that works for you, for example:
+
+```bash
+make test-in-container CONTAINER_TOOL=finch GOPROXY=direct
 ```
 
 ## Contributing

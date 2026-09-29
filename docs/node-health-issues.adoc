@@ -213,6 +213,10 @@ The monitoring condition is `KernelReady` for issues in the following table that
 |Event
 |The CPU stalled for a given amount of time.
 
+|ZramHighUsage
+|Event
+|A ZRAM swap device is using more than 10% of its configured disk size, indicating memory pressure on the node.
+
 |===
 
 [#node-health-Networking]

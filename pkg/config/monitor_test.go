@@ -15,15 +15,22 @@ func boolPtr(b bool) *bool {
 	return &b
 }
 
+// testKnownPlugins stands in for the registered plugin names main passes in.
+var testKnownPlugins = []string{"kernel-monitor", "networking", "storage-monitor", "nvidia", "neuron", "runtime"}
+
+func uint32Ptr(value uint32) *uint32 {
+	return &value
+}
+
 func TestLoadMonitorConfig_NonExistentFile(t *testing.T) {
-	cfg, found, err := config.LoadMonitorConfig("/tmp/does-not-exist-nma-test.yaml")
+	cfg, found, err := config.LoadMonitorConfig("/tmp/does-not-exist-nma-test.yaml", testKnownPlugins)
 	require.NoError(t, err)
 	assert.NotNil(t, cfg)
 	assert.False(t, found, "expected found to be false for non-existent file")
 	// Default config: all monitors enabled (empty map).
 	assert.Empty(t, cfg.Monitors)
 	// Every known plugin should be enabled by default.
-	for _, name := range config.KnownPluginNames {
+	for _, name := range testKnownPlugins {
 		assert.True(t, cfg.IsMonitorEnabled(name), "expected %s to be enabled by default", name)
 	}
 }
@@ -38,7 +45,7 @@ func TestLoadMonitorConfig_ValidFileOneDisabled(t *testing.T) {
 `)
 	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
 
-	cfg, found, err := config.LoadMonitorConfig(cfgPath)
+	cfg, found, err := config.LoadMonitorConfig(cfgPath, testKnownPlugins)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	assert.True(t, found)
@@ -60,7 +67,7 @@ func TestLoadMonitorConfig_InvalidYAML(t *testing.T) {
 	content := []byte(`monitors: [this is not valid: yaml: {{{`)
 	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
 
-	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	cfg, _, err := config.LoadMonitorConfig(cfgPath, testKnownPlugins)
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
 	assert.Contains(t, err.Error(), "parsing monitor config")
@@ -76,7 +83,7 @@ func TestLoadMonitorConfig_UnknownPluginName(t *testing.T) {
 `)
 	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
 
-	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	cfg, _, err := config.LoadMonitorConfig(cfgPath, testKnownPlugins)
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
 	assert.Contains(t, err.Error(), "unknown-plugin")
@@ -89,13 +96,13 @@ func TestLoadMonitorConfig_EmptyFile(t *testing.T) {
 
 	require.NoError(t, os.WriteFile(cfgPath, []byte(""), 0644))
 
-	cfg, found, err := config.LoadMonitorConfig(cfgPath)
+	cfg, found, err := config.LoadMonitorConfig(cfgPath, testKnownPlugins)
 	require.NoError(t, err)
 	assert.NotNil(t, cfg)
 	assert.True(t, found)
 	assert.Empty(t, cfg.Monitors)
 	// All monitors should be enabled by default.
-	for _, name := range config.KnownPluginNames {
+	for _, name := range testKnownPlugins {
 		assert.True(t, cfg.IsMonitorEnabled(name), "expected %s to be enabled for empty file", name)
 	}
 }
@@ -179,6 +186,77 @@ func TestGetAllowedIPTablesChains(t *testing.T) {
 	})
 }
 
+func TestGetNvidiaDCGMPowerThresholdWatts(t *testing.T) {
+	t.Run("NilConfig", func(t *testing.T) {
+		var cfg *config.MonitorConfig
+		assert.Nil(t, cfg.GetNvidiaDCGMPowerThresholdWatts())
+	})
+	t.Run("NoNvidiaEntry", func(t *testing.T) {
+		cfg := &config.MonitorConfig{}
+		assert.Nil(t, cfg.GetNvidiaDCGMPowerThresholdWatts())
+	})
+	t.Run("Configured", func(t *testing.T) {
+		cfg := &config.MonitorConfig{
+			Monitors: map[string]config.MonitorSettings{
+				"nvidia": {DCGMPowerThresholdWatts: uint32Ptr(1000)},
+			},
+		}
+		require.NotNil(t, cfg.GetNvidiaDCGMPowerThresholdWatts())
+		assert.Equal(t, uint32(1000), *cfg.GetNvidiaDCGMPowerThresholdWatts())
+	})
+}
+
+func TestLoadMonitorConfig_NvidiaDCGMPowerThresholdWatts(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`monitors:
+  nvidia:
+    enabled: true
+    dcgmPowerThresholdWatts: 1000
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, found, err := config.LoadMonitorConfig(cfgPath, testKnownPlugins)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.True(t, found)
+	require.NotNil(t, cfg.GetNvidiaDCGMPowerThresholdWatts())
+	assert.Equal(t, uint32(1000), *cfg.GetNvidiaDCGMPowerThresholdWatts())
+}
+
+func TestLoadMonitorConfig_ZeroNvidiaDCGMPowerThresholdWattsRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`monitors:
+  nvidia:
+    dcgmPowerThresholdWatts: 0
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, _, err := config.LoadMonitorConfig(cfgPath, testKnownPlugins)
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "dcgmPowerThresholdWatts must be greater than zero")
+}
+
+func TestLoadMonitorConfig_NvidiaDCGMPowerThresholdWattsOnOtherMonitorRejected(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+
+	content := []byte(`monitors:
+  runtime:
+    dcgmPowerThresholdWatts: 1000
+`)
+	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
+
+	cfg, _, err := config.LoadMonitorConfig(cfgPath, testKnownPlugins)
+	assert.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "dcgmPowerThresholdWatts is only supported by the nvidia monitor")
+}
+
 func TestLoadMonitorConfig_AllowedIPTablesChains(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "config.yaml")
@@ -191,7 +269,7 @@ func TestLoadMonitorConfig_AllowedIPTablesChains(t *testing.T) {
 `)
 	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
 
-	cfg, found, err := config.LoadMonitorConfig(cfgPath)
+	cfg, found, err := config.LoadMonitorConfig(cfgPath, testKnownPlugins)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	assert.True(t, found)
@@ -210,7 +288,7 @@ func TestLoadMonitorConfig_EmptyChainRejected(t *testing.T) {
 `)
 	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
 
-	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	cfg, _, err := config.LoadMonitorConfig(cfgPath, testKnownPlugins)
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
 	assert.Contains(t, err.Error(), "must use \"table/chain\" format")
@@ -227,7 +305,7 @@ func TestLoadMonitorConfig_WhitespaceOnlyChainRejected(t *testing.T) {
 `)
 	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
 
-	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	cfg, _, err := config.LoadMonitorConfig(cfgPath, testKnownPlugins)
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
 	assert.Contains(t, err.Error(), "must not have leading or trailing whitespace")
@@ -244,7 +322,7 @@ func TestLoadMonitorConfig_UnqualifiedChainRejected(t *testing.T) {
 `)
 	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
 
-	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	cfg, _, err := config.LoadMonitorConfig(cfgPath, testKnownPlugins)
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
 	assert.Contains(t, err.Error(), "must use \"table/chain\" format")
@@ -261,7 +339,7 @@ func TestLoadMonitorConfig_ChainWithExtraSlashRejected(t *testing.T) {
 `)
 	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
 
-	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	cfg, _, err := config.LoadMonitorConfig(cfgPath, testKnownPlugins)
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
 	assert.Contains(t, err.Error(), "must use \"table/chain\" format")
@@ -278,7 +356,7 @@ func TestLoadMonitorConfig_ChainWithSurroundingWhitespaceRejected(t *testing.T) 
 `)
 	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
 
-	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	cfg, _, err := config.LoadMonitorConfig(cfgPath, testKnownPlugins)
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
 	assert.Contains(t, err.Error(), "must not have leading or trailing whitespace")
@@ -295,7 +373,7 @@ func TestLoadMonitorConfig_AllowedIPTablesChainsOnNonNetworkingMonitorRejected(t
 `)
 	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
 
-	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	cfg, _, err := config.LoadMonitorConfig(cfgPath, testKnownPlugins)
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
 	assert.Contains(t, err.Error(), "allowedIPTablesChains is only supported by the networking monitor")
@@ -360,7 +438,7 @@ func TestLoadMonitorConfig_ExcludedInterfaceNameRegexps(t *testing.T) {
 `)
 	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
 
-	cfg, found, err := config.LoadMonitorConfig(cfgPath)
+	cfg, found, err := config.LoadMonitorConfig(cfgPath, testKnownPlugins)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	assert.True(t, found)
@@ -378,7 +456,7 @@ func TestLoadMonitorConfig_InvalidRegexpRejected(t *testing.T) {
 `)
 	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
 
-	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	cfg, _, err := config.LoadMonitorConfig(cfgPath, testKnownPlugins)
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
 	assert.Contains(t, err.Error(), "is not a valid regular expression")
@@ -395,7 +473,7 @@ func TestLoadMonitorConfig_EmptyRegexpRejected(t *testing.T) {
 `)
 	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
 
-	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	cfg, _, err := config.LoadMonitorConfig(cfgPath, testKnownPlugins)
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
 	assert.Contains(t, err.Error(), "must not be empty")
@@ -412,7 +490,7 @@ func TestLoadMonitorConfig_ExcludedInterfaceNameRegexpsOnNonNetworkingMonitorRej
 `)
 	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
 
-	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	cfg, _, err := config.LoadMonitorConfig(cfgPath, testKnownPlugins)
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
 	assert.Contains(t, err.Error(), "excludedInterfaceNameRegexps is only supported by the networking monitor")
@@ -430,7 +508,7 @@ func TestLoadMonitorConfig_StrictUnmarshalRejectsUnknownFields(t *testing.T) {
 `)
 	require.NoError(t, os.WriteFile(cfgPath, content, 0644))
 
-	cfg, _, err := config.LoadMonitorConfig(cfgPath)
+	cfg, _, err := config.LoadMonitorConfig(cfgPath, testKnownPlugins)
 	assert.Error(t, err)
 	assert.Nil(t, cfg)
 	assert.Contains(t, err.Error(), "parsing monitor config")

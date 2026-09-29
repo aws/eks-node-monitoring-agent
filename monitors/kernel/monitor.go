@@ -418,11 +418,12 @@ func (k *KernelMonitor) checkZram(origSize, compSize, disksize int64, deviceName
 	}
 	usagePercent := float64(origSize) / float64(disksize)
 	if usagePercent > 0.10 {
-		return k.manager.Notify(context.Background(), monitor.Condition{
-			Reason:   "ZramHighUsage",
-			Message:  fmt.Sprintf("ZRAM device %s at %.1f%% capacity", deviceName, usagePercent*100),
-			Severity: monitor.SeverityWarning,
-		})
+		return k.manager.Notify(context.Background(),
+			reasons.ZramHighUsage.
+				Builder().
+				Message(fmt.Sprintf("ZRAM device %s at %.1f%% capacity", deviceName, usagePercent*100)).
+				Build(),
+		)
 	}
 	return nil
 

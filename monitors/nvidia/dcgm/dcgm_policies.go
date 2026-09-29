@@ -5,13 +5,11 @@ package dcgm
 import (
 	"context"
 	"fmt"
-	"slices"
 
 	dcgmapi "github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
-	"github.com/aws/eks-node-monitoring-agent/pkg/reasons"
 )
 
 // WellKnownXidCodes is a curated list of NVIDIA XID error codes that are known to indicate
@@ -98,14 +96,10 @@ import (
 var WellKnownXidCodes = []uint{46, 48, 54, 62, 63, 64, 74, 79, 95, 109, 110, 119, 120, 136, 140, 142, 143, 151, 155, 156, 158}
 
 func (s *DCGMSystem) Policies(ctx context.Context) ([]monitor.Condition, error) {
-	condition := s.handle(ctx)
-	if condition != nil {
-		return []monitor.Condition{*condition}, nil
-	}
-	return nil, nil
+	return s.handle(ctx), nil
 }
 
-func (s *DCGMSystem) handle(ctx context.Context) *monitor.Condition {
+func (s *DCGMSystem) handle(ctx context.Context) []monitor.Condition {
 	logger := log.FromContext(ctx)
 	logger.V(4).Info("waiting for next DCGM policy violation finding")
 	// policy events are stores in a 'Data' field as an interface{}, so once we
@@ -131,76 +125,57 @@ func (s *DCGMSystem) handle(ctx context.Context) *monitor.Condition {
 	}
 }
 
-func (s *DCGMSystem) handleXidFinding(xidFinding dcgmapi.XidPolicyCondition) *monitor.Condition {
-	xidCode := xidFinding.ErrNum
-	if slices.Contains(WellKnownXidCodes, xidCode) {
-		condition := reasons.NvidiaXIDError.
-			Builder(xidCode).
-			Message(fmt.Sprintf("detected XID-%d on the instance, review kernel logs for additional information.", xidCode)).
-			Build()
-		return &condition
-	} else {
-		// If the XID code is not well known, emit a warning (i.e Kubernetes event) rather than set a node condition.
-		condition := reasons.NvidiaXIDWarning.
-			Builder(xidCode).
-			Message(fmt.Sprintf("detected unknown XID-%d on the instance, review kernel logs for additional information.", xidCode)).
-			Build()
-		return &condition
+// withMessage replaces the message of each classified condition with the
+// source-specific message. Classify owns the decision (whether a condition is
+// emitted, its reason, and its severity); the acquisition path owns the
+// message, since it carries source-specific detail (counters, locations) that a
+// source-agnostic classifier does not. Each handler classifies a single signal,
+// so it yields at most one condition; none (a power/thermal violation of 0)
+// yields an empty result.
+func withMessage(conds []monitor.Condition, msg string) []monitor.Condition {
+	for i := range conds {
+		conds[i].Message = msg
 	}
+	return conds
 }
 
-func (s *DCGMSystem) handleDbeFinding(dbeData dcgmapi.DbePolicyCondition) *monitor.Condition {
-	condition := reasons.NvidiaDoubleBitError.
-		Builder().
-		Message(fmt.Sprintf("detected %d Nvidia Double Bit error(s) on location %v", dbeData.NumErrors, dbeData.Location)).
-		Build()
-	return &condition
+// The handlers below delegate the reason+severity decision to the pure Classify
+// function (classify.go) and plug in the same message text they emitted before,
+// so both the repair behavior and the event/condition messages are unchanged.
+
+func (s *DCGMSystem) handleXidFinding(xidFinding dcgmapi.XidPolicyCondition) []monitor.Condition {
+	// Classify's XID messages are identical to the ones previously built here.
+	return Classify(NormalizedSignals{XIDs: []uint{xidFinding.ErrNum}})
 }
 
-func (s *DCGMSystem) handleNvlinkFinding(nvLinkData dcgmapi.NvlinkPolicyCondition) *monitor.Condition {
-	condition := reasons.NvidiaNVLinkError.
-		Builder().
-		Message(fmt.Sprintf("detected %d NVLink errors on fieldId %v", nvLinkData.Counter, nvLinkData.FieldId)).
-		Build()
-	return &condition
+func (s *DCGMSystem) handleDbeFinding(dbeData dcgmapi.DbePolicyCondition) []monitor.Condition {
+	return withMessage(Classify(NormalizedSignals{DoubleBitECC: true}),
+		fmt.Sprintf("detected %d Nvidia Double Bit error(s) on location %v", dbeData.NumErrors, dbeData.Location))
 }
 
-func (s *DCGMSystem) handlePageRetirementFinding(retirementData dcgmapi.RetiredPagesPolicyCondition) *monitor.Condition {
-	condition := reasons.NvidiaPageRetirement.
-		Builder().
-		Message(fmt.Sprintf("detected %d SBE, and %d DBE page retirements", retirementData.SbePages, retirementData.DbePages)).
-		Build()
-	return &condition
+func (s *DCGMSystem) handleNvlinkFinding(nvLinkData dcgmapi.NvlinkPolicyCondition) []monitor.Condition {
+	return withMessage(Classify(NormalizedSignals{NVLinkError: true}),
+		fmt.Sprintf("detected %d NVLink errors on fieldId %v", nvLinkData.Counter, nvLinkData.FieldId))
 }
 
-func (s *DCGMSystem) handlePowerFinding(powerData dcgmapi.PowerPolicyCondition) *monitor.Condition {
+func (s *DCGMSystem) handlePageRetirementFinding(retirementData dcgmapi.RetiredPagesPolicyCondition) []monitor.Condition {
+	return withMessage(Classify(NormalizedSignals{PageRetirement: true}),
+		fmt.Sprintf("detected %d SBE, and %d DBE page retirements", retirementData.SbePages, retirementData.DbePages))
+}
+
+func (s *DCGMSystem) handlePowerFinding(powerData dcgmapi.PowerPolicyCondition) []monitor.Condition {
 	// see: https://github.com/NVIDIA/DCGM/blob/d47c0b77920f8dbfef588eaac2cbbea3401ef463/dcgmlib/dcgm_errors.h#L162-L171
-	if powerData.PowerViolation != 0 {
-		condition := reasons.NvidiaPowerError.
-			Builder().
-			Message(fmt.Sprintf("detected power usage outside of thresholds with severity code %d", powerData.PowerViolation)).
-			Build()
-		return &condition
-	}
-	return nil
+	return withMessage(Classify(NormalizedSignals{PowerViolation: powerData.PowerViolation != 0}),
+		fmt.Sprintf("detected power usage outside of thresholds with severity code %d", powerData.PowerViolation))
 }
 
-func (s *DCGMSystem) handlePCIePolicyFinding(pcieData dcgmapi.PciPolicyCondition) *monitor.Condition {
-	condition := reasons.NvidiaPCIeError.
-		Builder().
-		Message(fmt.Sprintf("detected %d PCIe replays", pcieData.ReplayCounter)).
-		Build()
-	return &condition
+func (s *DCGMSystem) handlePCIePolicyFinding(pcieData dcgmapi.PciPolicyCondition) []monitor.Condition {
+	return withMessage(Classify(NormalizedSignals{PCIeReplay: true}),
+		fmt.Sprintf("detected %d PCIe replays", pcieData.ReplayCounter))
 }
 
-func (s *DCGMSystem) handleThermalPolicyFinding(thermalData dcgmapi.ThermalPolicyCondition) *monitor.Condition {
+func (s *DCGMSystem) handleThermalPolicyFinding(thermalData dcgmapi.ThermalPolicyCondition) []monitor.Condition {
 	// see: https://github.com/NVIDIA/DCGM/blob/d47c0b77920f8dbfef588eaac2cbbea3401ef463/dcgmlib/dcgm_errors.h#L162-L171
-	if thermalData.ThermalViolation != 0 {
-		condition := reasons.NvidiaThermalError.
-			Builder().
-			Message(fmt.Sprintf("detected GPU thermals outside of thresholds with severity code %d", thermalData.ThermalViolation)).
-			Build()
-		return &condition
-	}
-	return nil
+	return withMessage(Classify(NormalizedSignals{ThermalViolation: thermalData.ThermalViolation != 0}),
+		fmt.Sprintf("detected GPU thermals outside of thresholds with severity code %d", thermalData.ThermalViolation))
 }

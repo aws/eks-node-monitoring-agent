@@ -18,6 +18,7 @@ const DefaultConfigPath = "/etc/nma/config.yaml"
 type MonitorSettings struct {
 	Enabled                      *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	AllowedIPTablesChains        []string `yaml:"allowedIPTablesChains,omitempty" json:"allowedIPTablesChains,omitempty"`
+	DCGMPowerThresholdWatts      *uint32  `yaml:"dcgmPowerThresholdWatts,omitempty" json:"dcgmPowerThresholdWatts,omitempty"`
 	ExcludedInterfaceNameRegexps []string `yaml:"excludedInterfaceNameRegexps,omitempty" json:"excludedInterfaceNameRegexps,omitempty"`
 }
 
@@ -62,6 +63,19 @@ func (mc *MonitorConfig) GetAllowedIPTablesChains() []string {
 	return settings.AllowedIPTablesChains
 }
 
+// GetNvidiaDCGMPowerThresholdWatts returns the configured DCGM power policy
+// threshold for the NVIDIA monitor.
+func (mc *MonitorConfig) GetNvidiaDCGMPowerThresholdWatts() *uint32 {
+	if mc == nil || mc.Monitors == nil {
+		return nil
+	}
+	settings, exists := mc.Monitors["nvidia"]
+	if !exists {
+		return nil
+	}
+	return settings.DCGMPowerThresholdWatts
+}
+
 // DefaultExcludedInterfaceNameRegexps are the interface-name exclusion regexps
 // applied when the networking monitor has none explicitly configured. These
 // interfaces are not part of Kubernetes node networking and would otherwise
@@ -100,24 +114,14 @@ func (mc *MonitorConfig) GetExcludedInterfaceNameRegexps() []string {
 	return settings.ExcludedInterfaceNameRegexps
 }
 
-// KnownPluginNames is the set of valid plugin names for validation.
-var KnownPluginNames = []string{
-	"kernel-monitor",
-	"networking",
-	"storage-monitor",
-	"nvidia",
-	"neuron",
-	"runtime",
-}
-
 // Validate checks that all keys in Monitors are known plugin names.
-func (mc *MonitorConfig) Validate() error {
+func (mc *MonitorConfig) Validate(knownPluginNames []string) error {
 	if mc == nil || mc.Monitors == nil {
 		return nil
 	}
 	var unknown []string
 	for name := range mc.Monitors {
-		if !slices.Contains(KnownPluginNames, name) {
+		if !slices.Contains(knownPluginNames, name) {
 			unknown = append(unknown, name)
 		}
 	}
@@ -126,6 +130,14 @@ func (mc *MonitorConfig) Validate() error {
 		return fmt.Errorf("unknown monitor plugin name(s): %s", strings.Join(unknown, ", "))
 	}
 	for name, settings := range mc.Monitors {
+		if settings.DCGMPowerThresholdWatts != nil {
+			if name != "nvidia" {
+				return fmt.Errorf("dcgmPowerThresholdWatts is only supported by the nvidia monitor, not %q", name)
+			}
+			if *settings.DCGMPowerThresholdWatts == 0 {
+				return fmt.Errorf("dcgmPowerThresholdWatts must be greater than zero")
+			}
+		}
 		if len(settings.AllowedIPTablesChains) > 0 {
 			if name != "networking" {
 				return fmt.Errorf("allowedIPTablesChains is only supported by the networking monitor, not %q", name)
@@ -161,7 +173,7 @@ func (mc *MonitorConfig) Validate() error {
 // Returns a default (all-enabled) config if the file does not exist.
 // Returns an error if the file exists but contains invalid YAML or unknown plugin names.
 // The second return value indicates whether the config file was found on disk.
-func LoadMonitorConfig(path string) (*MonitorConfig, bool, error) {
+func LoadMonitorConfig(path string, knownPluginNames []string) (*MonitorConfig, bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -180,7 +192,7 @@ func LoadMonitorConfig(path string) (*MonitorConfig, bool, error) {
 		return nil, false, fmt.Errorf("parsing monitor config: %w", err)
 	}
 
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.Validate(knownPluginNames); err != nil {
 		return nil, false, fmt.Errorf("validating monitor config: %w", err)
 	}
 

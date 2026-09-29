@@ -219,7 +219,8 @@ func run() error {
 		}
 
 		// Load monitor configuration from ConfigMap mount
-		monitorConfig, configFound, err := config.LoadMonitorConfig(config.DefaultConfigPath)
+		allPlugins := registry.GlobalRegistry().List()
+		monitorConfig, configFound, err := config.LoadMonitorConfig(config.DefaultConfigPath, pluginNames(allPlugins))
 		if err != nil {
 			logger.Error(err, "failed to load monitor configuration")
 			return err
@@ -229,7 +230,6 @@ func run() error {
 		}
 
 		// Filter plugins by configuration and log effective state
-		allPlugins := registry.GlobalRegistry().List()
 		var enabledMonitors []monitor.Monitor
 		var disabledNames []string
 
@@ -256,6 +256,18 @@ func run() error {
 				if c, ok := mon.(chainConfigurable); ok {
 					c.SetAllowedIPTablesChains(chains)
 					logger.Info("configured allowed iptables chains", "monitor", mon.Name(), "chains", chains)
+				}
+			}
+		}
+
+		if threshold := monitorConfig.GetNvidiaDCGMPowerThresholdWatts(); threshold != nil {
+			for _, mon := range enabledMonitors {
+				type dcgmPowerThresholdConfigurable interface {
+					SetDCGMPowerThresholdWatts(uint32)
+				}
+				if c, ok := mon.(dcgmPowerThresholdConfigurable); ok {
+					c.SetDCGMPowerThresholdWatts(*threshold)
+					logger.Info("configured DCGM power policy threshold", "monitor", mon.Name(), "watts", *threshold)
 				}
 			}
 		}
@@ -407,6 +419,14 @@ func run() error {
 
 	logger.Info("starting controller manager")
 	return mgr.Start(ctx)
+}
+
+func pluginNames(plugins []registry.MonitorPlugin) []string {
+	names := make([]string, 0, len(plugins))
+	for _, plugin := range plugins {
+		names = append(names, plugin.Name())
+	}
+	return names
 }
 
 // registeredCheck reports ready only once registered is closed, so a node still

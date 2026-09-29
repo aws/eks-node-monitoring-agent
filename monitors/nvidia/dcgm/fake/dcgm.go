@@ -25,6 +25,11 @@ type FakeDcgm struct {
 	FieldErr          error
 	DeviceCount       uint
 	DeviceCountErr    error
+	PowerThreshold    *uint32
+}
+
+func (m *FakeDcgm) SetPowerPolicyThresholdWatts(watts uint32) {
+	m.PowerThreshold = &watts
 }
 
 func (m *FakeDcgm) Reconcile(context.Context) (bool, error) {
