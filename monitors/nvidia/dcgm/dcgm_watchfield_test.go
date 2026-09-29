@@ -64,39 +64,11 @@ func TestFields(t *testing.T) {
 		assert.Empty(t, conditions)
 	})
 
-	t.Run("FabricManagerStatusSuccess", func(t *testing.T) {
-		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_FABRIC_MANAGER_STATUS}
-		fieldValue.Status = dcgmapi.DCGM_ST_OK
-		binary.LittleEndian.PutUint64(fieldValue.Value[:], 3) // DcgmFMStatusSuccess
-		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}}
-		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
-		conditions, err := dcgmSystem.WatchFields(context.TODO())
-		assert.NoError(t, err)
-		assert.Empty(t, conditions)
-	})
-
-	t.Run("FabricManagerStatusNotSupported", func(t *testing.T) {
-		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_FABRIC_MANAGER_STATUS}
-		fieldValue.Status = dcgmapi.DCGM_ST_OK
-		binary.LittleEndian.PutUint64(fieldValue.Value[:], 0) // DcgmFMStatusNotSupported
-		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}}
-		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
-		conditions, err := dcgmSystem.WatchFields(context.TODO())
-		assert.NoError(t, err)
-		assert.Empty(t, conditions)
-	})
-
-	t.Run("FabricManagerStatusInProgress", func(t *testing.T) {
-		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_FABRIC_MANAGER_STATUS}
-		fieldValue.Status = dcgmapi.DCGM_ST_OK
-		binary.LittleEndian.PutUint64(fieldValue.Value[:], 2) // DcgmFMStatusInProgress
-		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}}
-		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
-		conditions, err := dcgmSystem.WatchFields(context.TODO())
-		assert.NoError(t, err)
-		assert.Empty(t, conditions)
-	})
-
+	// The two FabricManagerStatus cases below cover the read + routing path through
+	// WatchFields (FieldID recognition and reading the status from the raw value
+	// bytes) for a fault and a healthy status. The decode of every
+	// dcgmFabricManagerStatus_t value is covered by
+	// TestClassify_fabricManagerStatusSpec (classify_fabric_spec_test.go).
 	t.Run("FabricManagerStatusFailure", func(t *testing.T) {
 		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_FABRIC_MANAGER_STATUS}
 		fieldValue.Status = dcgmapi.DCGM_ST_OK

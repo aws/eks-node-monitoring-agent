@@ -16,16 +16,22 @@ import (
 // Today the DCGM reader (dcgm_policies.go / dcgm_watchfield.go) is the only
 // producer, but additional signal sources may populate it in the future.
 // Because Classify is a pure function over this struct, the classification
-// policy and its unit tests bind to any source unchanged.
+// policy and its unit tests bind to any source unchanged, provided the source
+// fills each field in its documented encoding. Some fields use a DCGM-specific
+// encoding: FabricManagerStatus is a dcgmFabricManagerStatus_t, so a non-DCGM
+// source (e.g. NVML, which reports fabric state and status separately) must
+// translate its values to that enum, and the resulting messages name DCGM's
+// statuses.
 type NormalizedSignals struct {
-	XIDs             []uint  // observed XID error codes (DCGM XidPolicy today)
-	FabricHealthMask *uint64 // NVLink fabric health mask; nil when not applicable/observed
-	DoubleBitECC     bool    // DCGM DbePolicy
-	NVLinkError      bool    // DCGM NvlinkPolicy (hard NVLink error)
-	PageRetirement   bool    // DCGM MaxRtPgPolicy
-	PowerViolation   bool    // DCGM PowerPolicy
-	ThermalViolation bool    // DCGM ThermalPolicy
-	PCIeReplay       bool    // DCGM PCIePolicy
+	XIDs                []uint  // observed XID error codes (DCGM XidPolicy today)
+	FabricHealthMask    *uint64 // NVLink fabric health mask; nil when not applicable/observed
+	FabricManagerStatus *int64  // dcgmFabricManagerStatus_t (DCGM_FI_DEV_FABRIC_MANAGER_STATUS); nil when not observed
+	DoubleBitECC        bool    // DCGM DbePolicy
+	NVLinkError         bool    // DCGM NvlinkPolicy (hard NVLink error)
+	PageRetirement      bool    // DCGM MaxRtPgPolicy
+	PowerViolation      bool    // DCGM PowerPolicy
+	ThermalViolation    bool    // DCGM ThermalPolicy
+	PCIeReplay          bool    // DCGM PCIePolicy
 }
 
 // Classify maps a source-agnostic signal snapshot to node conditions. It is
@@ -55,6 +61,23 @@ func Classify(s NormalizedSignals) []monitor.Condition {
 		if faults := fabricHealthMaskFaults(int64(*s.FabricHealthMask)); len(faults) > 0 {
 			out = append(out, reasons.NvidiaFabricError.Builder().
 				Message(fmt.Sprintf("GPU fabric health mask 0x%x: %s", *s.FabricHealthMask, strings.Join(faults, ", "))).
+				Build())
+		}
+	}
+
+	// Fabric Manager status: see handleFabricField (dcgm_watchfield.go) for why
+	// NotSupported, NotStarted, InProgress, and Success are treated as healthy.
+	if s.FabricManagerStatus != nil {
+		switch status := *s.FabricManagerStatus; status {
+		case DcgmFMStatusSuccess, DcgmFMStatusNotSupported, DcgmFMStatusInProgress, DcgmFMStatusNotStarted:
+			// Healthy or not applicable: no condition.
+		default:
+			name := fabricManagerStatusNames[status]
+			if name == "" {
+				name = fmt.Sprintf("Unknown(%d)", status)
+			}
+			out = append(out, reasons.FabricManagerNotRunning.Builder().
+				Message(fmt.Sprintf("Fabric Manager status: %s", name)).
 				Build())
 		}
 	}

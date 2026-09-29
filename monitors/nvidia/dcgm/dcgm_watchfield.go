@@ -86,19 +86,13 @@ func handleFabricField(fv dcgmapi.FieldValue_v2) (*monitor.Condition, bool) {
 		// where FM is not needed but DCGM doesn't report NotSupported (e.g. GB200/GB300).
 		// InProgress: FM is still performing fabric training during boot.
 		// Success: FM is running and healthy.
-		if status == DcgmFMStatusSuccess || status == DcgmFMStatusNotSupported ||
-			status == DcgmFMStatusInProgress || status == DcgmFMStatusNotStarted {
+		// Classification is delegated to Classify (classify.go), which applies
+		// these rules.
+		conds := Classify(NormalizedSignals{FabricManagerStatus: &status})
+		if len(conds) == 0 {
 			return nil, true
 		}
-		name := fabricManagerStatusNames[status]
-		if name == "" {
-			name = fmt.Sprintf("Unknown(%d)", status)
-		}
-		c := reasons.FabricManagerNotRunning.
-			Builder().
-			Message(fmt.Sprintf("Fabric Manager status: %s", name)).
-			Build()
-		return &c, true
+		return &conds[0], true
 	case dcgmapi.DCGM_FI_DEV_FABRIC_HEALTH_MASK:
 		mask := uint64(fv.Int64())
 		// The mask packs several 2-bit sub-fields, each decoded as
