@@ -48,6 +48,15 @@ GO_VERSION      ?= $(shell awk '/^go [0-9]/{print $$2; exit}' go.mod)
 TEST_BASE_IMAGE ?= golang:$(GO_VERSION)
 TEST_IMAGE      ?= eks-node-monitoring-agent-test:go$(GO_VERSION)
 
+# Go module-download settings forwarded from the host into the test container,
+# so the container resolves modules the same way the host does (for example
+# GOPROXY=direct on networks where proxy.golang.org is unreachable). Each value
+# is taken from the environment or make command line if set, otherwise from the
+# host's `go env` (when Go is installed); unset or empty values are not passed.
+TEST_GO_ENV_VARS ?= GOPROXY GOSUMDB GONOSUMDB GOPRIVATE GONOPROXY GOFLAGS
+host_go_env       = $(or $($(1)),$(shell go env $(1) 2>/dev/null))
+TEST_GO_ENV_ARGS  = $(foreach v,$(TEST_GO_ENV_VARS),$(if $(call host_go_env,$(v)),-e '$(v)=$(call host_go_env,$(v))'))
+
 # Compute IMAGE_URI based on whether registry is set
 ifdef IMAGE_REGISTRY
     IMAGE_URI ?= $(IMAGE_REGISTRY)/$(IMAGE_REPOSITORY):$(IMAGE_TAG)
@@ -118,6 +127,7 @@ help: ## Show this help message
 	@echo "  GOBUILDARGS         Additional Go build arguments for Docker build"
 	@echo "  DOCKER_PLATFORMS    Platforms for multi-arch build (default: linux/amd64,linux/arm64)"
 	@echo "  CONTAINER_TOOL      Container runtime for test-in-container (default: docker; e.g. finch)"
+	@echo "  GOPROXY, GOFLAGS    Go module settings forwarded into test-in-container (default: host go env)"
 	@echo "  NAMESPACE           Kubernetes namespace (default: kube-system)"
 	@echo "  HELM_EXTRA_FLAGS    Additional flags for helm commands"
 	@echo ""
@@ -176,6 +186,7 @@ test-in-container: test-image ## Run lint (gofmt + go vet) and unit tests inside
 		-v "$(CURDIR)":/workspace \
 		-v nma-go-mod-cache:/go/pkg/mod \
 		-v nma-go-build-cache:/root/.cache/go-build \
+		$(TEST_GO_ENV_ARGS) \
 		-w /workspace \
 		$(TEST_IMAGE) \
 		make lint unit-test
