@@ -140,28 +140,41 @@ func TestFields(t *testing.T) {
 			value           int64
 			expectedMessage string
 		}{
-			{
-				dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_CLOCKS_EVENT_REASONS}, dcgm.DCGM_CLOCKS_THROTTLE_REASON_CLOCKS_SETTING,
-				fmt.Sprintf(`DCGM detected fieldID %d with statusCode -1: Clocks Throttle Reason "clocks_setting"`, dcgmapi.DCGM_FI_DEV_CLOCKS_EVENT_REASONS),
-			},
+			// Clock-throttle messages are covered by TestFieldsClockThrottleReasons.
+			// Odd and large SXID codes are included on purpose: they are values a
+			// naive encoding of the field value would not round-trip.
 			{
 				dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_NVSWITCH_FATAL_ERRORS}, 2,
 				fmt.Sprintf(`DCGM detected fieldID %d with statusCode -1: SXID Fatal Error Code 2`, dcgmapi.DCGM_FI_DEV_NVSWITCH_FATAL_ERRORS),
 			},
 			{
+				dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_NVSWITCH_FATAL_ERRORS}, 3,
+				fmt.Sprintf(`DCGM detected fieldID %d with statusCode -1: SXID Fatal Error Code 3`, dcgmapi.DCGM_FI_DEV_NVSWITCH_FATAL_ERRORS),
+			},
+			{
+				dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_NVSWITCH_FATAL_ERRORS}, 1000,
+				fmt.Sprintf(`DCGM detected fieldID %d with statusCode -1: SXID Fatal Error Code 1000`, dcgmapi.DCGM_FI_DEV_NVSWITCH_FATAL_ERRORS),
+			},
+			{
 				dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_NVSWITCH_NON_FATAL_ERRORS}, 2,
 				fmt.Sprintf(`DCGM detected fieldID %d with statusCode -1: SXID Non-Fatal Error Code 2`, dcgmapi.DCGM_FI_DEV_NVSWITCH_NON_FATAL_ERRORS),
 			},
+			{
+				dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_NVSWITCH_NON_FATAL_ERRORS}, 3,
+				fmt.Sprintf(`DCGM detected fieldID %d with statusCode -1: SXID Non-Fatal Error Code 3`, dcgmapi.DCGM_FI_DEV_NVSWITCH_NON_FATAL_ERRORS),
+			},
+			{
+				dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_NVSWITCH_NON_FATAL_ERRORS}, 1000,
+				fmt.Sprintf(`DCGM detected fieldID %d with statusCode -1: SXID Non-Fatal Error Code 1000`, dcgmapi.DCGM_FI_DEV_NVSWITCH_NON_FATAL_ERRORS),
+			},
 		} {
-			t.Run(fmt.Sprintf("FI_%d", test.fieldValue.FieldID), func(t *testing.T) {
+			t.Run(fmt.Sprintf("FI_%d/%d", test.fieldValue.FieldID, test.value), func(t *testing.T) {
 				fieldValue := test.fieldValue
 				// force the issue to be picked up with a bad status
 				fieldValue.Status = dcgmapi.DCGM_ST_BADPARAM
-				// embed the int representation of the value into the field
-				// TODO: temporary hack because the transformation on uint64 in
-				// PutVarint. we should verify whether this is accurate
-				// behavior at runtime, but not blocking.
-				binary.PutVarint(fieldValue.Value[:], test.value>>1)
+				// embed the value the way FieldValue_v2.Int64() reads it: the
+				// first 8 bytes of Value as a little-endian int64.
+				binary.LittleEndian.PutUint64(fieldValue.Value[:], uint64(test.value))
 				mockDcgm := &fake.FakeDcgm{
 					FieldValues: []dcgmapi.FieldValue_v2{fieldValue},
 				}
