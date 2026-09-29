@@ -177,3 +177,67 @@ func TestFields(t *testing.T) {
 		}
 	})
 }
+
+// TestFieldsClockThrottleReasons pins the message for the clock-throttle field
+// (DCGM_FI_DEV_CLOCKS_EVENT_REASONS) when DCGM reports a bad read status. Each
+// defined reason bit on its own is named exactly; a mask with no defined bit set
+// carries no reason suffix. The masks are the raw bit values from DCGM's
+// dcgm_fields.h (named DCGM_CLOCKS_EVENT_REASON_* in current headers) rather
+// than NMA's dcgm.DCGM_CLOCKS_THROTTLE_REASON_* constants named in each row, so
+// the test also checks that those constants match DCGM.
+//
+// Known issue: with more than one reason bit set, the reported reason is chosen
+// by iterating a Go map, so it varies between runs for the same mask. This test
+// only asserts what holds today (the message names one of the set reasons). A
+// fix would either always report the same reason for a given mask, or list every
+// set reason; both change the message for multi-bit masks.
+func TestFieldsClockThrottleReasons(t *testing.T) {
+	const prefix = "DCGM detected fieldID 112 with statusCode -1"
+	watch := func(t *testing.T, mask uint64) []monitor.Condition {
+		t.Helper()
+		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_CLOCKS_EVENT_REASONS, Status: dcgmapi.DCGM_ST_BADPARAM}
+		binary.LittleEndian.PutUint64(fieldValue.Value[:], mask)
+		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}}
+		conditions, err := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType()).WatchFields(context.TODO())
+		assert.NoError(t, err)
+		return conditions
+	}
+	condition := func(message string) []monitor.Condition {
+		return []monitor.Condition{{Reason: "DCGMFieldError112", Message: message, Severity: monitor.SeverityWarning}}
+	}
+
+	for _, tc := range []struct {
+		mask   uint64
+		reason string // "" => no reason suffix
+	}{
+		{0x0, ""},                 // no reason bit set
+		{0x1, "gpu_idle"},         // DCGM_CLOCKS_THROTTLE_REASON_GPU_IDLE
+		{0x2, "clocks_setting"},   // DCGM_CLOCKS_THROTTLE_REASON_CLOCKS_SETTING
+		{0x4, "sw_power_cap"},     // DCGM_CLOCKS_THROTTLE_REASON_SW_POWER_CAP
+		{0x8, "hw_slowdown"},      // DCGM_CLOCKS_THROTTLE_REASON_HW_SLOWDOWN
+		{0x10, "sync_boost"},      // DCGM_CLOCKS_THROTTLE_REASON_SYNC_BOOST
+		{0x20, "sw_thermal"},      // DCGM_CLOCKS_THROTTLE_REASON_SW_THERMAL
+		{0x40, "hw_thermal"},      // DCGM_CLOCKS_THROTTLE_REASON_HW_THERMAL
+		{0x80, "hw_power_brake"},  // DCGM_CLOCKS_THROTTLE_REASON_HW_POWER_BRAKE
+		{0x100, "display_clocks"}, // DCGM_CLOCKS_THROTTLE_REASON_DISPLAY_CLOCKS
+		{0x200, ""},               // not a defined reason bit
+	} {
+		t.Run(fmt.Sprintf("mask 0x%x", tc.mask), func(t *testing.T) {
+			want := prefix
+			if tc.reason != "" {
+				want += fmt.Sprintf(": Clocks Throttle Reason %q", tc.reason)
+			}
+			assert.Equal(t, condition(want), watch(t, tc.mask))
+		})
+	}
+
+	t.Run("multiple reasons names one of them", func(t *testing.T) {
+		// DCGM_CLOCKS_THROTTLE_REASON_HW_SLOWDOWN (0x8) + DCGM_CLOCKS_THROTTLE_REASON_SW_THERMAL
+		// (0x20); which one is named varies today.
+		got := watch(t, 0x28)
+		assert.Contains(t, []any{
+			condition(prefix + `: Clocks Throttle Reason "hw_slowdown"`),
+			condition(prefix + `: Clocks Throttle Reason "sw_thermal"`),
+		}, any(got))
+	})
+}
