@@ -13,19 +13,29 @@ import (
 // NormalizedSignals is a source-agnostic snapshot of GPU health signals.
 //
 // It is the seam between signal *acquisition* and signal *classification*.
-// Today the DCGM reader (dcgm_policies.go / dcgm_watchfield.go) is the only
+// Today the DCGM reader (dcgm_policies.go / dcgm_watchfield.go / dcgm_devices.go) is the only
 // producer, but additional signal sources may populate it in the future.
 // Because Classify is a pure function over this struct, the classification
-// policy and its unit tests bind to any source unchanged.
+// policy and its unit tests bind to any source unchanged, provided the source
+// fills each field in its documented encoding. Some fields use a DCGM-specific
+// encoding: FabricManagerStatus is a dcgmFabricManagerStatus_t, so a non-DCGM
+// source (e.g. NVML, which reports fabric state and status separately) must
+// translate its values to that enum, and the resulting messages name DCGM's
+// statuses.
 type NormalizedSignals struct {
-	XIDs             []uint  // observed XID error codes (DCGM XidPolicy today)
-	FabricHealthMask *uint64 // NVLink fabric health mask; nil when not applicable/observed
-	DoubleBitECC     bool    // DCGM DbePolicy
-	NVLinkError      bool    // DCGM NvlinkPolicy (hard NVLink error)
-	PageRetirement   bool    // DCGM MaxRtPgPolicy
-	PowerViolation   bool    // DCGM PowerPolicy
-	ThermalViolation bool    // DCGM ThermalPolicy
-	PCIeReplay       bool    // DCGM PCIePolicy
+	XIDs                []uint  // observed XID error codes (DCGM XidPolicy today)
+	FabricHealthMask    *uint64 // NVLink fabric health mask; nil when not applicable/observed
+	FabricManagerStatus *int64  // dcgmFabricManagerStatus_t (DCGM_FI_DEV_FABRIC_MANAGER_STATUS); nil when not observed
+	DoubleBitECC        bool    // DCGM DbePolicy
+	NVLinkError         bool    // DCGM NvlinkPolicy (hard NVLink error)
+	PageRetirement      bool    // DCGM MaxRtPgPolicy
+	PowerViolation      bool    // DCGM PowerPolicy
+	ThermalViolation    bool    // DCGM ThermalPolicy
+	PCIeReplay          bool    // DCGM PCIePolicy
+	GPUCount            *uint   // GPUs visible to DCGM; nil when not observed
+	GPUDeviceFileCount  *uint   // /dev/nvidia<N> device files on the host; nil when not observed
+	GPUDeviceFilePath   string  // directory the device files were counted in (/dev or the GPU Operator driver root)
+	ExpectedGPUCount    *uint   // GPUs expected for the EC2 instance type; nil when unknown
 }
 
 // Classify maps a source-agnostic signal snapshot to node conditions. It is
@@ -59,6 +69,23 @@ func Classify(s NormalizedSignals) []monitor.Condition {
 		}
 	}
 
+	// Fabric Manager status: see handleFabricField (dcgm_watchfield.go) for why
+	// NotSupported, NotStarted, InProgress, and Success are treated as healthy.
+	if s.FabricManagerStatus != nil {
+		switch status := *s.FabricManagerStatus; status {
+		case DcgmFMStatusSuccess, DcgmFMStatusNotSupported, DcgmFMStatusInProgress, DcgmFMStatusNotStarted:
+			// Healthy or not applicable: no condition.
+		default:
+			name := fabricManagerStatusNames[status]
+			if name == "" {
+				name = fmt.Sprintf("Unknown(%d)", status)
+			}
+			out = append(out, reasons.FabricManagerNotRunning.Builder().
+				Message(fmt.Sprintf("Fabric Manager status: %s", name)).
+				Build())
+		}
+	}
+
 	if s.DoubleBitECC {
 		out = append(out, reasons.NvidiaDoubleBitError.Builder().Message("detected NVIDIA double-bit ECC error").Build())
 	}
@@ -76,6 +103,21 @@ func Classify(s NormalizedSignals) []monitor.Condition {
 	}
 	if s.PCIeReplay {
 		out = append(out, reasons.NvidiaPCIeError.Builder().Message("GPU PCIe replay").Build())
+	}
+
+	// Device count: DCGM and the host's device files must agree, and DCGM must
+	// see at least as many GPUs as the instance type provides (see DeviceCount,
+	// dcgm_devices.go, for why both checks are needed).
+	if s.GPUCount != nil && s.GPUDeviceFileCount != nil && *s.GPUCount != *s.GPUDeviceFileCount {
+		out = append(out, reasons.NvidiaDeviceCountMismatch.Builder().
+			Message(fmt.Sprintf("DCGM detected %d GPUs but %d nvidia device files were detected at %s", *s.GPUCount, *s.GPUDeviceFileCount, s.GPUDeviceFilePath)).
+			Build())
+	}
+	if s.GPUCount != nil && s.ExpectedGPUCount != nil && *s.GPUCount < *s.ExpectedGPUCount {
+		out = append(out, reasons.NvidiaDeviceCountMismatch.Builder().
+			Message(fmt.Sprintf("expected %d GPUs for this instance type but only %d were detected — possible hardware failure",
+				*s.ExpectedGPUCount, *s.GPUCount)).
+			Build())
 	}
 
 	return out
