@@ -16,5 +16,4 @@ pkg/log_collector/
 # detected file coverage ignore
 monitors/networking/exec/ip.go
 monitors/networking/ipamd/checkpoint.go
-monitors/networking/ipamd/endpoints.go
 monitors/nvidia/dcgm/dcgm_client.go
