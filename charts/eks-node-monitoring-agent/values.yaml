@@ -51,6 +51,9 @@ nodeAgent:
     - "--metrics-address=:8003"
   # -- Optional DCGM hostengine endpoint. When empty, the agent uses localhost:5555.
   dcgmAddress: ""
+  # -- Optional ipamd introspection API address (host:port). When empty, the agent uses localhost:61679.
+  # Set when the VPC CNI is configured with INTROSPECTION_BIND_ADDRESS, e.g. "169.254.1.1:61679".
+  ipamdIntrospectionAddress: ""
   # -- Optional pod DNS policy. Set to ClusterFirstWithHostNet when dcgmAddress uses a Kubernetes Service hostname.
   dnsPolicy: ""
   # -- Override for the NVIDIA driver root path. Only needed when the GPU Operator
