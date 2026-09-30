@@ -14,7 +14,6 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 	"github.com/aws/eks-node-monitoring-agent/internal/pkg/instanceinfo"
 	"github.com/aws/eks-node-monitoring-agent/pkg/config"
-	"github.com/aws/eks-node-monitoring-agent/pkg/reasons"
 )
 
 func (s *DCGMSystem) DeviceCount(ctx context.Context) ([]monitor.Condition, error) {
@@ -34,39 +33,25 @@ func (s *DCGMSystem) DeviceCount(ctx context.Context) ([]monitor.Condition, erro
 		return nil, fmt.Errorf("failed to get nvidia device count from %s", fsDevicePath)
 	}
 
-	var conditions []monitor.Condition
-
-	if gpuDeviceCount != fsDeviceCount {
-		conditions = append(conditions,
-			reasons.NvidiaDeviceCountMismatch.
-				Builder().
-				Message(fmt.Sprintf("DCGM detected %d GPUs but %d nvidia device files were detected at %s", gpuDeviceCount, fsDeviceCount, fsDevicePath)).
-				Build(),
-		)
-	}
+	signals := NormalizedSignals{GPUCount: &gpuDeviceCount, GPUDeviceFileCount: &fsDeviceCount, GPUDeviceFilePath: fsDevicePath}
 
 	// Compare the detected GPU count against the expected count for the EC2
 	// instance type. This catches cases where a GPU fails to enumerate on the
 	// PCIe bus at boot — both DCGM and /dev will agree on the (wrong) lower
 	// count, so the check above won't fire.
+	// Classification of both checks is delegated to Classify (classify.go).
 	if s.instanceTypeInfoProvider != nil {
 		info, err := s.instanceTypeInfoProvider.GetInstanceInfo(ctx)
 		if errors.Is(err, instanceinfo.ErrUnknownInstanceType) {
 			logger.V(4).Info("instance type not in embedded lookup, skipping GPU count validation", "error", err)
 		} else if err != nil {
 			logger.V(2).Info("could not determine expected GPU count for validation", "error", err)
-		} else if gpuDeviceCount < info.NvidiaGPUCount {
-			conditions = append(conditions,
-				reasons.NvidiaDeviceCountMismatch.
-					Builder().
-					Message(fmt.Sprintf("expected %d GPUs for this instance type but only %d were detected — possible hardware failure",
-						info.NvidiaGPUCount, gpuDeviceCount)).
-					Build(),
-			)
+		} else {
+			signals.ExpectedGPUCount = &info.NvidiaGPUCount
 		}
 	}
 
-	return conditions, nil
+	return Classify(signals), nil
 }
 
 // nvidiaDevDirs returns the candidate directories to search for nvidia device
