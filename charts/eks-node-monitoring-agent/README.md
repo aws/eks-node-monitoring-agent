@@ -129,6 +129,7 @@ The following table lists the configurable parameters for this chart and their d
 | nodeAgent.image.tag | string | `"v1.7.2-eksbuild.1"` | Image tag for the eks-node-monitoring-agent |
 | nodeAgent.monitors | object | `{}` | Per-monitor configuration keyed by plugin name. See the main README for details. |
 | nodeAgent.nodeSelector | object | `{}` | Node labels required for the eks-node-monitoring-agent to be scheduled on a node. |
+| nodeAgent.nvidiaDriverRoot | string | `""` | Override for the NVIDIA driver root path. Only needed when the GPU Operator uses a non standard driver install directory (default auto detects /run/nvidia/driver). |
 | nodeAgent.podAnnotations | object | `{}` | Pod annotations applied to the eks-node-monitoring-agent |
 | nodeAgent.podLabels | object | `{}` | Pod labels applied to the eks-node-monitoring-agent |
 | nodeAgent.priorityClassName | string | `"system-node-critical"` | PriorityClass for the eks-node-monitoring-agent. |
