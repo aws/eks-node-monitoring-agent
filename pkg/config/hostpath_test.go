@@ -26,3 +26,14 @@ func TestHostRoot(t *testing.T) {
 		assert.Equal(t, filepath.Join(config.HostRoot(), "cowsay"), config.ToHostPath("cowsay"))
 	})
 }
+
+func TestNvidiaDriverRoot(t *testing.T) {
+	t.Run("UnsetReturnsEmpty", func(t *testing.T) {
+		assert.Equal(t, "", config.NvidiaDriverRoot())
+	})
+
+	t.Run("ReturnsEnvValue", func(t *testing.T) {
+		t.Setenv(config.NVIDIA_DRIVER_ROOT_ENV, "/run/nvidia/driver")
+		assert.Equal(t, "/run/nvidia/driver", config.NvidiaDriverRoot())
+	})
+}

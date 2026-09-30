@@ -53,6 +53,9 @@ nodeAgent:
   dcgmAddress: ""
   # -- Optional pod DNS policy. Set to ClusterFirstWithHostNet when dcgmAddress uses a Kubernetes Service hostname.
   dnsPolicy: ""
+  # -- Override for the NVIDIA driver root path. Only needed when the GPU Operator
+  # uses a non standard driver install directory (default auto detects /run/nvidia/driver).
+  nvidiaDriverRoot: ""
   # -- Map of pod affinities for the eks-node-monitoring-agent
   # @default -- see [`values.yaml`](./values.yaml)
   affinity:

@@ -6,6 +6,10 @@ import (
 )
 
 const HOST_ROOT_ENV = "HOST_ROOT"
+const NVIDIA_DRIVER_ROOT_ENV = "NVIDIA_DRIVER_ROOT"
+
+// Default path where the GPU Operator's containerized driver creates device files.
+const DefaultGPUOperatorDriverRoot = "/run/nvidia/driver"
 
 // HostRoot returns the root path for accessing host filesystem
 // Defaults to "/" if HOST_ROOT environment variable is not set
@@ -19,6 +23,15 @@ func HostRoot() string {
 // ToHostPath joins the host root with the given path
 func ToHostPath(path string) string {
 	return filepath.Join(HostRoot(), path)
+}
+
+// NvidiaDriverRoot returns a custom NVIDIA driver root path if set via
+// NVIDIA_DRIVER_ROOT. Returns empty string when unset.
+func NvidiaDriverRoot() string {
+	if root, exists := os.LookupEnv(NVIDIA_DRIVER_ROOT_ENV); exists {
+		return root
+	}
+	return ""
 }
 
 // Common paths
