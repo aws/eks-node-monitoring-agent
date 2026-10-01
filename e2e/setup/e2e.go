@@ -61,6 +61,17 @@ func Configure() (testenv env.Environment, setupFuncs []env.Func, finishFuncs []
 	if err != nil {
 		log.Fatalf("failed to initialize aws config: %v", err)
 	}
+	// the region is what requests get signed for, so it has to match the region
+	// the cluster under test lives in. the EKS Addon test harness publishes it
+	// as REGION, which the SDK does not read on its own.
+	if awsCfg.Region == "" {
+		awsCfg.Region = os.Getenv("REGION")
+	}
+	if awsCfg.Region == "" {
+		// not fatal: only the suites which call AWS APIs need a region.
+		log.Printf("WARNING: no aws region configured, AWS API calls will fail. set AWS_REGION")
+	}
+	log.Printf("using aws region %q for stage %q", awsCfg.Region, eksStage)
 
 	// this adds the manifests for the agent from the local config. If you are
 	// using a cluster that already installs the monitoring agent or does so

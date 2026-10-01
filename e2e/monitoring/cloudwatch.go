@@ -53,7 +53,7 @@ func CreateAssociation(ctx context.Context, awsCfg aws.Config, clusterName, stag
 	}
 
 	eksClient := eks.NewFromConfig(awsCfg, func(o *eks.Options) {
-		if endpoint := awshelper.GetEksEndpoint(stage, "noop"); endpoint != "" {
+		if endpoint := awshelper.GetEksEndpoint(stage, awsCfg.Region); endpoint != "" {
 			o.BaseEndpoint = &endpoint
 		}
 	})

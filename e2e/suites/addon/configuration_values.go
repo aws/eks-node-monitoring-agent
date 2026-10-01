@@ -30,7 +30,7 @@ var configurationValuesJson string
 
 func ConfigurationValues(stage string, awsCfg aws.Config) types.Feature {
 	eksClient := eks.NewFromConfig(awsCfg, func(o *eks.Options) {
-		if endpoint := awshelper.GetEksEndpoint(stage, "noop"); endpoint != "" {
+		if endpoint := awshelper.GetEksEndpoint(stage, awsCfg.Region); endpoint != "" {
 			o.BaseEndpoint = &endpoint
 		}
 	})

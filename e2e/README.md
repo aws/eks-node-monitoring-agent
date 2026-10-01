@@ -47,7 +47,8 @@ make build-e2e
 |------|---------|-------------|
 | `--install` | `true` | Install agent manifests before tests |
 | `--image` | (required) | NMA container image to deploy |
-| `--stage` | `prod` | EKS stage for running tests |
+| `--stage` | `prod` | EKS stage for running tests (`beta`, `gamma`, `prod`) |
+| `--eks-endpoint` | | EKS control-plane endpoint override, also read from `AWS_ENDPOINT_URL_EKS`/`EKS_ENDPOINT`. must be in the region requests are signed for |
 | `--test.run` | | Filter tests by name pattern |
 | `--test.timeout` | `10m` | Test timeout |
 
