@@ -15,7 +15,8 @@ const (
 	// httpCheckTimeout bounds a single HTTP check execution.
 	httpCheckTimeout = 5 * time.Second
 	// maxDetailBytes bounds how much of a response body is captured into the
-	// result detail for condition messages.
+	// result detail for condition messages. A longer body is cut off and
+	// marked as truncated.
 	maxDetailBytes = 1024
 )
 
@@ -56,10 +57,18 @@ func (t *HTTPLoopbackTransport) Do(ctx context.Context, check probe.Check) Resul
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return Result{Outcome: OutcomeHealthy}
 	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxDetailBytes))
+	// Read one byte past the limit to tell whether the body was cut off.
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxDetailBytes+1))
+	truncated := len(body) > maxDetailBytes
+	if truncated {
+		body = body[:maxDetailBytes]
+	}
 	detail := fmt.Sprintf("GET %s: %s", url, resp.Status)
 	if b := strings.TrimSpace(string(body)); b != "" {
 		detail += ": " + b
+		if truncated {
+			detail += " (truncated)"
+		}
 	}
 	return Result{Outcome: OutcomeUnhealthy, Detail: detail}
 }

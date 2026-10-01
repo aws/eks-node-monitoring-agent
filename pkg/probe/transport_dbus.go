@@ -13,14 +13,16 @@ import (
 // transport, extracted so tests can substitute a fake.
 type dbusConn interface {
 	GetUnitPropertyContext(ctx context.Context, unit string, propertyName string) (*dbus.Property, error)
+	GetServicePropertyContext(ctx context.Context, service string, propertyName string) (*dbus.Property, error)
 	Close()
 }
 
-// SystemdDBusTransport executes liveness checks by querying a systemd unit's
-// ActiveState over D-Bus. It generalizes the ActiveState query used by the
-// networking monitor's IPAMD and NPA handlers. Failure to reach D-Bus itself
-// is Unknown, not Unhealthy: the inability to ask the question is not
-// evidence about the agent.
+// SystemdDBusTransport executes liveness checks by querying a systemd
+// service's ActiveState over D-Bus. It generalizes the ActiveState query used
+// by the networking monitor's IPAMD and NPA handlers. Failure to reach D-Bus
+// itself is Unknown, not Unhealthy: the inability to ask the question is not
+// evidence about the agent. A unit that does not exist is not an error:
+// systemd reports it inactive with LoadState "not-found", so it is unhealthy.
 type SystemdDBusTransport struct {
 	newConn func(ctx context.Context) (dbusConn, error)
 }
@@ -46,20 +48,30 @@ func (t *SystemdDBusTransport) Do(ctx context.Context, check probe.Check) Result
 	if err != nil {
 		return Result{Outcome: OutcomeUnknown, Detail: fmt.Sprintf("querying ActiveState of %s: %v", check.Address, err)}
 	}
-	activeState, ok := property.Value.Value().(string)
+	value := property.Value.Value()
+	activeState, ok := value.(string)
 	if !ok {
-		return Result{Outcome: OutcomeUnknown, Detail: fmt.Sprintf("unexpected ActiveState type for %s", check.Address)}
+		return Result{Outcome: OutcomeUnknown, Detail: fmt.Sprintf("unexpected ActiveState type for %s: got %T %v, want string", check.Address, value, value)}
 	}
 	if activeState == "active" {
 		return Result{Outcome: OutcomeHealthy}
 	}
 
 	// Best-effort diagnostic enrichment: why/how the unit is in its state.
+	// Result is defined on systemd's Service interface, not the Unit
+	// interface; validation guarantees the unit is a service.
 	detail := fmt.Sprintf("unit %s ActiveState=%q", check.Address, activeState)
-	for _, prop := range []string{"SubState", "Result"} {
-		if p, err := conn.GetUnitPropertyContext(ctx, check.Address, prop); err == nil {
+	for _, prop := range []struct {
+		name string
+		get  func(ctx context.Context, unit string, propertyName string) (*dbus.Property, error)
+	}{
+		{"LoadState", conn.GetUnitPropertyContext},
+		{"SubState", conn.GetUnitPropertyContext},
+		{"Result", conn.GetServicePropertyContext},
+	} {
+		if p, err := prop.get(ctx, check.Address, prop.name); err == nil {
 			if s, ok := p.Value.Value().(string); ok {
-				detail += fmt.Sprintf(" %s=%q", prop, s)
+				detail += fmt.Sprintf(" %s=%q", prop.name, s)
 			}
 		}
 	}

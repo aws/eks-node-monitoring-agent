@@ -45,6 +45,34 @@ func TestHTTPLoopbackTransport_UnhealthyStatusWithBodyDetail(t *testing.T) {
 	}
 }
 
+func TestHTTPLoopbackTransport_MarksTruncatedBody(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		bodyLen       int
+		wantTruncated bool
+	}{
+		{"body at the limit", maxDetailBytes, false},
+		{"body past the limit", maxDetailBytes + 1, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				w.Write([]byte(strings.Repeat("x", tc.bodyLen)))
+			}))
+			defer ts.Close()
+
+			result := NewHTTPLoopbackTransport().Do(context.Background(), httpCheck(strings.TrimPrefix(ts.URL, "http://")))
+			kept := strings.Repeat("x", maxDetailBytes)
+			if !strings.Contains(result.Detail, kept) || strings.Contains(result.Detail, kept+"x") {
+				t.Errorf("detail should keep exactly %d body bytes, got %q", maxDetailBytes, result.Detail)
+			}
+			if got := strings.HasSuffix(result.Detail, " (truncated)"); got != tc.wantTruncated {
+				t.Errorf("truncation marker = %v, want %v: %q", got, tc.wantTruncated, result.Detail)
+			}
+		})
+	}
+}
+
 func TestHTTPLoopbackTransport_ConnectionRefusedIsUnhealthy(t *testing.T) {
 	// Reserve a port, then close the listener so the connection is refused.
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
