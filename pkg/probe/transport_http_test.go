@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/aws/eks-node-monitoring-agent/api/probe"
@@ -70,6 +71,30 @@ func TestHTTPLoopbackTransport_MarksTruncatedBody(t *testing.T) {
 				t.Errorf("truncation marker = %v, want %v: %q", got, tc.wantTruncated, result.Detail)
 			}
 		})
+	}
+}
+
+func TestHTTPLoopbackTransport_RedirectIsUnhealthyAndNotFollowed(t *testing.T) {
+	var followed atomic.Bool
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		followed.Store(true)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer target.Close()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/healthz", http.StatusFound)
+	}))
+	defer ts.Close()
+
+	result := NewHTTPLoopbackTransport().Do(context.Background(), httpCheck(strings.TrimPrefix(ts.URL, "http://")))
+	if result.Outcome != OutcomeUnhealthy {
+		t.Fatalf("outcome = %q (%s), want Unhealthy for a redirect", result.Outcome, result.Detail)
+	}
+	if !strings.Contains(result.Detail, "302") {
+		t.Errorf("detail %q should show the redirect status", result.Detail)
+	}
+	if followed.Load() {
+		t.Error("the transport followed the redirect")
 	}
 }
 

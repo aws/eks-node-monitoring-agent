@@ -20,13 +20,13 @@ type TransportKind string
 const (
 	// TransportHTTPLoopback performs an HTTP GET against a loopback address
 	// and port, such as 127.0.0.1:8173 or localhost:8173. A 2xx response is
-	// healthy; any other response, including a refused connection, is
-	// unhealthy.
+	// healthy; any other response, including a redirect or a refused
+	// connection, is unhealthy.
 	TransportHTTPLoopback TransportKind = "http-loopback"
 	// TransportSystemdDBus queries the ActiveState of a systemd service unit
 	// over D-Bus. Liveness only: "active" is healthy, anything else is
 	// unhealthy, including a unit that does not exist. A failure to reach
-	// D-Bus itself is unknown, not unhealthy.
+	// D-Bus, including a call that times out, is unknown, not unhealthy.
 	TransportSystemdDBus TransportKind = "systemd-dbus"
 )
 

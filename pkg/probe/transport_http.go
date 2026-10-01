@@ -23,16 +23,24 @@ const (
 // HTTPLoopbackTransport executes checks as HTTP GET requests against
 // local-only addresses. A 2xx response is healthy. Any non-2xx response or a
 // failure to connect to the agent's endpoint is unhealthy — an agent that is
-// not answering its own health surface is not healthy.
+// not answering its own health surface is not healthy. Redirects are not
+// followed, so a check never leaves the node and a 3xx response is unhealthy.
 type HTTPLoopbackTransport struct {
 	client *http.Client
 }
 
 // NewHTTPLoopbackTransport returns an HTTP transport with a bounded
-// per-check timeout.
+// per-check timeout that does not follow redirects.
 func NewHTTPLoopbackTransport() *HTTPLoopbackTransport {
 	return &HTTPLoopbackTransport{
-		client: &http.Client{Timeout: httpCheckTimeout},
+		client: &http.Client{
+			Timeout: httpCheckTimeout,
+			// Return a redirect as the response instead of following it:
+			// address validation only covers the first request.
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
 	}
 }
 

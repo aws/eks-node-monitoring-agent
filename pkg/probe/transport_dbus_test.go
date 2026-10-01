@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/coreos/go-systemd/v22/dbus"
 	godbus "github.com/godbus/dbus/v5"
@@ -20,18 +21,23 @@ type fakeDBusConn struct {
 	unitProps    map[string]any // org.freedesktop.systemd1.Unit properties
 	serviceProps map[string]any // org.freedesktop.systemd1.Service properties
 	propErr      error
+	hang         bool // never answer, like a stuck systemd; returns when ctx ends
 	closed       bool
 }
 
-func (f *fakeDBusConn) GetUnitPropertyContext(_ context.Context, _ string, propertyName string) (*dbus.Property, error) {
-	return f.property("org.freedesktop.systemd1.Unit", f.unitProps, propertyName)
+func (f *fakeDBusConn) GetUnitPropertyContext(ctx context.Context, _ string, propertyName string) (*dbus.Property, error) {
+	return f.property(ctx, "org.freedesktop.systemd1.Unit", f.unitProps, propertyName)
 }
 
-func (f *fakeDBusConn) GetServicePropertyContext(_ context.Context, _ string, propertyName string) (*dbus.Property, error) {
-	return f.property("org.freedesktop.systemd1.Service", f.serviceProps, propertyName)
+func (f *fakeDBusConn) GetServicePropertyContext(ctx context.Context, _ string, propertyName string) (*dbus.Property, error) {
+	return f.property(ctx, "org.freedesktop.systemd1.Service", f.serviceProps, propertyName)
 }
 
-func (f *fakeDBusConn) property(iface string, props map[string]any, name string) (*dbus.Property, error) {
+func (f *fakeDBusConn) property(ctx context.Context, iface string, props map[string]any, name string) (*dbus.Property, error) {
+	if f.hang {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	if f.propErr != nil {
 		return nil, f.propErr
 	}
@@ -54,6 +60,7 @@ func dbusTransport(conn dbusConn, connErr error) *SystemdDBusTransport {
 			}
 			return conn, nil
 		},
+		timeout: dbusCheckTimeout,
 	}
 }
 
@@ -116,6 +123,31 @@ func TestSystemdDBusTransport_ConnectionErrorIsUnknown(t *testing.T) {
 	result := dbusTransport(nil, errors.New("socket unavailable")).Do(context.Background(), dbusCheck())
 	if result.Outcome != OutcomeUnknown {
 		t.Fatalf("outcome = %q, want Unknown for D-Bus connection failure", result.Outcome)
+	}
+}
+
+func TestSystemdDBusTransport_HungSystemdIsBoundedAndUnknown(t *testing.T) {
+	// A systemd that never answers must not hang the check. Running out of
+	// time says nothing about the agent, so the check is Unknown.
+	conn := &fakeDBusConn{hang: true}
+	transport := dbusTransport(conn, nil)
+	transport.timeout = 10 * time.Millisecond
+
+	done := make(chan Result, 1)
+	go func() { done <- transport.Do(context.Background(), dbusCheck()) }()
+	select {
+	case result := <-done:
+		if result.Outcome != OutcomeUnknown {
+			t.Fatalf("outcome = %q (%s), want Unknown when systemd does not answer", result.Outcome, result.Detail)
+		}
+		if !strings.Contains(result.Detail, context.DeadlineExceeded.Error()) {
+			t.Errorf("detail %q should say the check ran out of time", result.Detail)
+		}
+		if !conn.closed {
+			t.Error("connection was not closed")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the check did not return: the D-Bus call is not bounded")
 	}
 }
 

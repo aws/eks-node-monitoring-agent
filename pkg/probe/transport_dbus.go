@@ -3,11 +3,16 @@ package probe
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/coreos/go-systemd/v22/dbus"
 
 	"github.com/aws/eks-node-monitoring-agent/api/probe"
 )
+
+// dbusCheckTimeout bounds a single systemd-dbus check, from connecting to the
+// bus through the last property read.
+const dbusCheckTimeout = 5 * time.Second
 
 // dbusConn is the subset of the go-systemd dbus connection used by the
 // transport, extracted so tests can substitute a fake.
@@ -19,25 +24,35 @@ type dbusConn interface {
 
 // SystemdDBusTransport executes liveness checks by querying a systemd
 // service's ActiveState over D-Bus. It generalizes the ActiveState query used
-// by the networking monitor's IPAMD and NPA handlers. Failure to reach D-Bus
-// itself is Unknown, not Unhealthy: the inability to ask the question is not
-// evidence about the agent. A unit that does not exist is not an error:
-// systemd reports it inactive with LoadState "not-found", so it is unhealthy.
+// by the networking monitor's IPAMD and NPA handlers. Failure to reach D-Bus,
+// including a check that runs out of time, is Unknown, not Unhealthy: the
+// inability to ask the question is not evidence about the agent. A unit that
+// does not exist is not an error: systemd reports it inactive with LoadState
+// "not-found", so it is unhealthy.
 type SystemdDBusTransport struct {
 	newConn func(ctx context.Context) (dbusConn, error)
+	// timeout bounds each check, so a systemd or bus that never answers
+	// cannot hang the probe.
+	timeout time.Duration
 }
 
 // NewSystemdDBusTransport returns a transport backed by real D-Bus
-// connections.
+// connections, with a bounded per-check timeout.
 func NewSystemdDBusTransport() *SystemdDBusTransport {
 	return &SystemdDBusTransport{
 		newConn: func(ctx context.Context) (dbusConn, error) {
 			return dbus.NewWithContext(ctx)
 		},
+		timeout: dbusCheckTimeout,
 	}
 }
 
 func (t *SystemdDBusTransport) Do(ctx context.Context, check probe.Check) Result {
+	// The deadline also bounds connecting to the bus: the connection closes
+	// when its context ends, which ends any call still waiting on it.
+	ctx, cancel := context.WithTimeout(ctx, t.timeout)
+	defer cancel()
+
 	conn, err := t.newConn(ctx)
 	if err != nil {
 		return Result{Outcome: OutcomeUnknown, Detail: fmt.Sprintf("connecting to D-Bus: %v", err)}
