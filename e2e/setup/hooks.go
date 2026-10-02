@@ -89,7 +89,7 @@ func makeCloudwatchAgentHooks() (setupFn, finishFn types.EnvFunc) {
 		if err := frameworkext.ApplyManifests(cfg.Client().RESTConfig(), cwAgentInfraManifest); err != nil {
 			return ctx, err
 		}
-		cleanupAssociationFn, err = monitoring.CreateAssociation(ctx, awsCfg, *clusterName, eksStage)
+		cleanupAssociationFn, err = monitoring.CreateAssociation(ctx, awsCfg, *clusterName)
 		if err != nil {
 			return ctx, err
 		}
