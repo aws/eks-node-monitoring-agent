@@ -2,7 +2,7 @@ package probe
 
 import (
 	"context"
-	"strings"
+	"slices"
 	"testing"
 	"time"
 
@@ -14,9 +14,30 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/api/probe"
 )
 
-// fakeManager records notified conditions.
+// The reasons the test spec's checks report under.
+const (
+	livenessReason  = "IPAMDNotRunning"
+	readinessReason = "IPAMDNotReady"
+)
+
+// testInterval is the spec interval. The test clock advances one interval
+// per round.
+const testInterval = 30 * time.Second
+
+// note is one notification as the manager sees it, and the round it was sent
+// in.
+type note struct {
+	round    int
+	reason   string
+	severity monitor.Severity
+	resolved bool
+}
+
+// fakeManager records each notification, tagged with the round in progress.
 type fakeManager struct {
-	conditions []monitor.Condition
+	round    int
+	notes    []note
+	messages []string
 }
 
 func (m *fakeManager) Subscribe(resource.Type, []resource.Part) (<-chan string, error) {
@@ -24,300 +45,261 @@ func (m *fakeManager) Subscribe(resource.Type, []resource.Part) (<-chan string, 
 }
 
 func (m *fakeManager) Notify(_ context.Context, c monitor.Condition) error {
-	m.conditions = append(m.conditions, c)
+	m.notes = append(m.notes, note{round: m.round, reason: c.Reason, severity: c.Severity, resolved: c.Resolved})
+	m.messages = append(m.messages, c.Message)
 	return nil
 }
 
-// scriptedTransport returns canned results in sequence, repeating the last.
-type scriptedTransport struct {
-	results []Result
-	i       int
+// scriptedCheck answers a check from a script with one letter per run: U is
+// unhealthy, H is healthy, and ? is a check that could not run.
+type scriptedCheck struct {
+	t      *testing.T
+	name   string
+	script string
+	ran    int
 }
 
-func (t *scriptedTransport) Do(context.Context, probe.Check) Result {
-	r := t.results[min(t.i, len(t.results)-1)]
-	t.i++
-	return r
-}
+// scriptedTransport answers the liveness (/healthz) and readiness (/readyz)
+// checks from separate scripts.
+type scriptedTransport map[string]*scriptedCheck
 
-func min(a, b int) int {
-	if a < b {
-		return a
+func (s scriptedTransport) Do(_ context.Context, check probe.Check) Result {
+	c := s[check.Path]
+	if c.ran == len(c.script) {
+		c.t.Fatalf("%s check ran more than the %d times its script covers", c.name, len(c.script))
 	}
-	return b
+	c.ran++
+	switch c.script[c.ran-1] {
+	case 'U':
+		return Result{Outcome: OutcomeUnhealthy, Detail: "503 Service Unavailable"}
+	case 'H':
+		return Result{Outcome: OutcomeHealthy}
+	case '?':
+		return Result{Outcome: OutcomeUnknown, Detail: "check canceled"}
+	}
+	c.t.Fatalf("%s script %q: use only U, H and ?", c.name, c.script)
+	return Result{}
 }
 
-func newTestRunner(t *testing.T, spec probe.Spec, mgr *fakeManager, results ...Result) *Runner {
+// testSpec returns a spec whose liveness check reports livenessReason and,
+// if withReadiness is set, whose readiness check reports readinessReason.
+// Both reasons default to Fatal. The caller sets the thresholds.
+func testSpec(withReadiness bool) probe.Spec {
+	spec := probe.Spec{
+		Subsystem: "ipamd",
+		Checks: probe.Checks{
+			Liveness: probe.Check{Transport: probe.TransportHTTPLoopback, Address: "127.0.0.1:8173", Path: "/healthz", ReasonOnFail: livenessReason},
+		},
+		Interval: metav1.Duration{Duration: testInterval},
+	}
+	if withReadiness {
+		spec.Checks.Readiness = &probe.Check{Transport: probe.TransportHTTPLoopback, Address: "127.0.0.1:8173", Path: "/readyz", ReasonOnFail: readinessReason}
+	}
+	return spec
+}
+
+// runScript runs one round per letter of the liveness script and returns the
+// manager with everything the runner sent. Readiness runs only in rounds where
+// liveness is healthy, so its script covers just those rounds. A check that
+// runs more or fewer times than its script fails the test.
+func runScript(t *testing.T, spec probe.Spec, liveness, readiness string) *fakeManager {
 	t.Helper()
+	mgr := &fakeManager{}
 	r, err := NewRunner(spec, mgr, logr.Discard())
 	if err != nil {
 		t.Fatalf("NewRunner: %v", err)
 	}
-	r.transports[spec.Checks.Liveness.Transport] = &scriptedTransport{results: results}
-	r.startedAt = time.Now() // grace period baseline for direct runOnce calls
-	return r
+	checks := scriptedTransport{
+		"/healthz": {t: t, name: livenessCheck, script: liveness},
+		"/readyz":  {t: t, name: readinessCheck, script: readiness},
+	}
+	r.transports[probe.TransportHTTPLoopback] = checks
+	r.startedAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	clock := r.startedAt
+	r.now = func() time.Time {
+		clock = clock.Add(spec.Interval.Duration)
+		return clock
+	}
+	for round := 1; round <= len(liveness); round++ {
+		mgr.round = round
+		if err := r.runOnce(context.Background()); err != nil {
+			t.Fatalf("round %d: %v", round, err)
+		}
+	}
+	for _, c := range checks {
+		if c.ran != len(c.script) {
+			t.Errorf("%s check ran %d times, but its script covers %d", c.name, c.ran, len(c.script))
+		}
+	}
+	return mgr
 }
 
-func runnerSpec(threshold int, grace time.Duration) probe.Spec {
-	return probe.Spec{
-		Subsystem: "ipamd",
-		Checks: probe.Checks{
-			Liveness: probe.Check{
-				Transport:       probe.TransportSystemdDBus,
-				Address:         "ipamd.service",
-				ReasonOnFail:    "IPAMDNotRunning",
-				FailureSeverity: monitor.SeverityFatal,
+func TestRunner(t *testing.T) {
+	fatal, warning, info := monitor.SeverityFatal, monitor.SeverityWarning, monitor.SeverityInfo
+	tests := []struct {
+		name      string
+		threshold int           // FailureThreshold
+		recovery  int           // RecoveryThreshold
+		grace     time.Duration // StartupGracePeriod; rounds are 30s apart
+		// The checks' FailureSeverity; empty uses the reason's default, Fatal.
+		livenessSeverity, readinessSeverity monitor.Severity
+		// Each check's script (see scriptedCheck). There is one round per
+		// liveness letter. An empty readiness script means no readiness check.
+		liveness, readiness string
+		want                []note
+	}{
+		{
+			name:      "fires at the threshold, once per episode",
+			threshold: 3,
+			liveness:  "UUUUUU",
+			want:      []note{{round: 3, reason: livenessReason, severity: fatal}},
+		},
+		{
+			name:      "a healthy round resets the count, and the short streak gets a summary",
+			threshold: 3,
+			liveness:  "UUHUU",
+			want:      []note{{round: 3, reason: livenessReason, severity: warning}},
+		},
+		{
+			name:      "resolves when the check recovers",
+			threshold: 2,
+			liveness:  "UUHH",
+			want: []note{
+				{round: 2, reason: livenessReason, severity: fatal},
+				{round: 3, reason: livenessReason, severity: fatal, resolved: true},
 			},
 		},
-		Interval:           metav1.Duration{Duration: 30 * time.Second},
-		FailureThreshold:   threshold,
-		StartupGracePeriod: metav1.Duration{Duration: grace},
+		{
+			name:      "resolves after RecoveryThreshold healthy rounds in a row",
+			threshold: 3,
+			recovery:  2,
+			liveness:  "UUUHUHH", // the failure in round 5 restarts the recovery count
+			want: []note{
+				{round: 3, reason: livenessReason, severity: fatal},
+				{round: 7, reason: livenessReason, severity: fatal, resolved: true},
+			},
+		},
+		{
+			name:      "an Unknown round leaves the failure count alone",
+			threshold: 3,
+			liveness:  "UU?U",
+			want:      []note{{round: 4, reason: livenessReason, severity: fatal}},
+		},
+		{
+			name:      "an Unknown round leaves the recovery count alone",
+			threshold: 1,
+			recovery:  2,
+			liveness:  "UH?H",
+			want: []note{
+				{round: 1, reason: livenessReason, severity: fatal},
+				{round: 4, reason: livenessReason, severity: fatal, resolved: true},
+			},
+		},
+		{
+			name:      "startup grace holds a failure back until it ends",
+			threshold: 1,
+			grace:     75 * time.Second, // covers rounds 1 and 2
+			liveness:  "UUU",
+			want:      []note{{round: 3, reason: livenessReason, severity: fatal}},
+		},
+		{
+			name:      "a streak that began in grace gets no summary",
+			threshold: 3,
+			grace:     75 * time.Second, // covers rounds 1 and 2
+			liveness:  "UUHUH",
+			want:      []note{{round: 5, reason: livenessReason, severity: warning}},
+		},
+		{
+			name:              "readiness reports under its own reason and severity",
+			threshold:         1,
+			readinessSeverity: warning,
+			liveness:          "H",
+			readiness:         "U",
+			want:              []note{{round: 1, reason: readinessReason, severity: warning}},
+		},
+		{
+			// Three failed rounds in a row, but no check failed three times
+			// in a row. Liveness's one-failure streak gets its summary.
+			name:      "each check counts its own failures",
+			threshold: 3,
+			liveness:  "UHU",
+			readiness: "U",
+			want:      []note{{round: 2, reason: livenessReason, severity: warning}},
+		},
+		{
+			// Readiness fires in round 1 and is not asked in round 2, when
+			// liveness fires. Both recover in round 3.
+			name:      "readiness is not asked while liveness fails",
+			threshold: 1,
+			liveness:  "HUH",
+			readiness: "UH",
+			want: []note{
+				{round: 1, reason: readinessReason, severity: fatal},
+				{round: 2, reason: livenessReason, severity: fatal},
+				{round: 3, reason: livenessReason, severity: fatal, resolved: true},
+				{round: 3, reason: readinessReason, severity: fatal, resolved: true},
+			},
+		},
+		{
+			name:             "a Warning check notifies once per episode and sends no resolve",
+			threshold:        1,
+			livenessSeverity: warning,
+			liveness:         "UUHU",
+			want: []note{
+				{round: 1, reason: livenessReason, severity: warning},
+				{round: 4, reason: livenessReason, severity: warning},
+			},
+		},
+		{
+			name:             "an Info check's summary is Info",
+			threshold:        3,
+			livenessSeverity: info,
+			liveness:         "UH",
+			want:             []note{{round: 2, reason: livenessReason, severity: info}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			spec := testSpec(tc.readiness != "")
+			spec.FailureThreshold = tc.threshold
+			spec.RecoveryThreshold = tc.recovery
+			spec.StartupGracePeriod = metav1.Duration{Duration: tc.grace}
+			spec.Checks.Liveness.FailureSeverity = tc.livenessSeverity
+			if spec.Checks.Readiness != nil {
+				spec.Checks.Readiness.FailureSeverity = tc.readinessSeverity
+			}
+			if got := runScript(t, spec, tc.liveness, tc.readiness).notes; !slices.Equal(got, tc.want) {
+				t.Errorf("notifications:\n got %+v\nwant %+v", got, tc.want)
+			}
+		})
 	}
 }
 
-func healthy() Result   { return Result{Outcome: OutcomeHealthy} }
-func unhealthy() Result { return Result{Outcome: OutcomeUnhealthy, Detail: "ActiveState=failed"} }
-func unknown() Result   { return Result{Outcome: OutcomeUnknown, Detail: "dbus down"} }
-
-func TestRunner_EmitsAfterConsecutiveFailures(t *testing.T) {
-	mgr := &fakeManager{}
-	r := newTestRunner(t, runnerSpec(3, 0), mgr, unhealthy())
-
-	for i := 0; i < 2; i++ {
-		if err := r.runOnce(context.Background()); err != nil {
-			t.Fatal(err)
-		}
+func TestRunner_Messages(t *testing.T) {
+	spec := testSpec(true)
+	spec.FailureThreshold = 3
+	// Liveness fails in rounds 1 and 3 and recovers in round 4. The Unknown
+	// round 2 is not a failure but still takes time, so the summary reports
+	// 90s since the first failure. Readiness then fails in rounds 4 to 6,
+	// fires, and recovers in round 7.
+	got := runScript(t, spec, "U?UHHHH", "UUUH").messages
+	want := []string{
+		"ipamd liveness check failed 2 times and recovered 1m30s after the first failure",
+		"ipamd readiness check: 503 Service Unavailable",
+		"The ipamd readiness check is healthy again",
 	}
-	if len(mgr.conditions) != 0 {
-		t.Fatalf("emitted before threshold: %+v", mgr.conditions)
-	}
-
-	if err := r.runOnce(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if len(mgr.conditions) != 1 {
-		t.Fatalf("expected 1 condition after threshold, got %d", len(mgr.conditions))
-	}
-	c := mgr.conditions[0]
-	if c.Reason != "IPAMDNotRunning" || c.Severity != monitor.SeverityFatal || c.Resolved {
-		t.Errorf("unexpected condition: %+v", c)
-	}
-	if !strings.Contains(c.Message, "ipamd liveness check") || !strings.Contains(c.Message, "ActiveState=failed") {
-		t.Errorf("message should identify the check and detail, got %q", c.Message)
-	}
-}
-
-func TestRunner_SuccessResetsCounter(t *testing.T) {
-	mgr := &fakeManager{}
-	// U U H U U — never 3 consecutive, so the failure condition may not be
-	// emitted. The completed below-threshold episode (U U H) emits exactly
-	// one Warning summary; the trailing in-progress streak emits nothing.
-	r := newTestRunner(t, runnerSpec(3, 0), mgr, unhealthy(), unhealthy(), healthy(), unhealthy(), unhealthy())
-
-	for i := 0; i < 5; i++ {
-		if err := r.runOnce(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if len(mgr.conditions) != 1 {
-		t.Fatalf("expected exactly the episode summary, got %+v", mgr.conditions)
-	}
-	c := mgr.conditions[0]
-	if c.Severity != monitor.SeverityWarning || c.Resolved {
-		t.Errorf("episode summary must be a non-resolved Warning: %+v", c)
-	}
-	if c.Reason != "IPAMDNotRunning" {
-		t.Errorf("episode summary must use the probe's reason, got %q", c.Reason)
-	}
-	if !strings.Contains(c.Message, "ipamd liveness check") || !strings.Contains(c.Message, "2 consecutive checks") || !strings.Contains(c.Message, "recovered") {
-		t.Errorf("episode summary message should carry check, streak length, and recovery, got %q", c.Message)
-	}
-}
-
-func TestRunner_RecoveryEmitsResolvedCondition(t *testing.T) {
-	mgr := &fakeManager{}
-	r := newTestRunner(t, runnerSpec(2, 0), mgr, unhealthy(), unhealthy(), healthy(), healthy())
-
-	for i := 0; i < 4; i++ {
-		if err := r.runOnce(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// Expect: failure at tick 2, resolution at tick 3, nothing at tick 4.
-	if len(mgr.conditions) != 2 {
-		t.Fatalf("expected exactly failure+resolution, got %+v", mgr.conditions)
-	}
-	if mgr.conditions[0].Resolved {
-		t.Error("first condition should be the failure")
-	}
-	c := mgr.conditions[1]
-	if !c.Resolved || c.Reason != "IPAMDNotRunning" {
-		t.Errorf("second condition should resolve the reason: %+v", c)
-	}
-}
-
-func TestRunner_RecoveryHysteresis(t *testing.T) {
-	mgr := &fakeManager{}
-	spec := runnerSpec(3, 0)
-	spec.RecoveryThreshold = 2
-	// U U U → failure fires; H counts 1 of 2 healthy; U resets the recovery
-	// counter (below the failure threshold, so no re-notification, and no
-	// episode summary while the failure is fired); H counts 1; H counts 2 →
-	// resolution.
-	r := newTestRunner(t, spec, mgr,
-		unhealthy(), unhealthy(), unhealthy(), healthy(), unhealthy(), healthy(), healthy())
-
-	for i := 0; i < 6; i++ {
-		if err := r.runOnce(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// After 6 ticks: only the failure. A premature resolution here means the
-	// mid-recovery failure did not reset the counter; a Warning here means an
-	// episode summary was emitted while the failure was fired.
-	if len(mgr.conditions) != 1 || mgr.conditions[0].Resolved {
-		t.Fatalf("expected only the fired failure after 6 ticks, got %+v", mgr.conditions)
-	}
-
-	if err := r.runOnce(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if len(mgr.conditions) != 2 || !mgr.conditions[1].Resolved {
-		t.Fatalf("expected resolution on 2nd consecutive healthy tick, got %+v", mgr.conditions)
-	}
-}
-
-func TestRunner_UnknownDoesNotCountTowardRecovery(t *testing.T) {
-	mgr := &fakeManager{}
-	spec := runnerSpec(1, 0)
-	spec.RecoveryThreshold = 2
-	// U → failure fires; H counts 1 of 2; ? leaves the recovery counter
-	// untouched; H counts 2 → resolution.
-	r := newTestRunner(t, spec, mgr, unhealthy(), healthy(), unknown(), healthy())
-
-	for i := 0; i < 3; i++ {
-		if err := r.runOnce(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// A resolution here would mean the unknown tick counted as healthy.
-	if len(mgr.conditions) != 1 {
-		t.Fatalf("expected only the fired failure after unknown tick, got %+v", mgr.conditions)
-	}
-
-	if err := r.runOnce(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	// A missing resolution here would mean the unknown tick reset the counter.
-	if len(mgr.conditions) != 2 || !mgr.conditions[1].Resolved {
-		t.Fatalf("expected resolution on 2nd countable healthy tick, got %+v", mgr.conditions)
-	}
-}
-
-func TestRunner_EpisodeInGraceEmitsNoSummary(t *testing.T) {
-	mgr := &fakeManager{}
-	r := newTestRunner(t, runnerSpec(3, 5*time.Minute), mgr,
-		unhealthy(), unhealthy(), healthy(), unhealthy(), healthy())
-
-	// U U H inside grace: a completed below-threshold episode, but it began
-	// during startup grace — boot noise, no summary.
-	for i := 0; i < 3; i++ {
-		if err := r.runOnce(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if len(mgr.conditions) != 0 {
-		t.Fatalf("episode that began in grace must not emit, got %+v", mgr.conditions)
-	}
-
-	// Past grace: U H is a completed below-threshold episode — one summary.
-	r.now = func() time.Time { return r.startedAt.Add(10 * time.Minute) }
-	for i := 0; i < 2; i++ {
-		if err := r.runOnce(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if len(mgr.conditions) != 1 || mgr.conditions[0].Severity != monitor.SeverityWarning {
-		t.Fatalf("expected exactly one summary Warning for the post-grace episode, got %+v", mgr.conditions)
-	}
-}
-
-func TestRunner_UnknownDoesNotCountOrReset(t *testing.T) {
-	mgr := &fakeManager{}
-	// U U ? U — unknown neither increments nor resets, so the 4th tick is the
-	// 3rd consecutive failure and emits.
-	r := newTestRunner(t, runnerSpec(3, 0), mgr, unhealthy(), unhealthy(), unknown(), unhealthy())
-
-	for i := 0; i < 3; i++ {
-		if err := r.runOnce(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if len(mgr.conditions) != 0 {
-		t.Fatalf("unknown tick must not emit: %+v", mgr.conditions)
-	}
-	if err := r.runOnce(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if len(mgr.conditions) != 1 {
-		t.Fatalf("expected emission on 3rd consecutive failure after unknown, got %d", len(mgr.conditions))
-	}
-}
-
-func TestRunner_StartupGraceSuppressesEmission(t *testing.T) {
-	mgr := &fakeManager{}
-	r := newTestRunner(t, runnerSpec(1, 5*time.Minute), mgr, unhealthy())
-
-	// Within grace: failures counted but suppressed.
-	for i := 0; i < 3; i++ {
-		if err := r.runOnce(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if len(mgr.conditions) != 0 {
-		t.Fatalf("expected suppression during grace period, got %+v", mgr.conditions)
-	}
-
-	// After grace: the accumulated failures emit on the next cycle.
-	r.now = func() time.Time { return r.startedAt.Add(10 * time.Minute) }
-	if err := r.runOnce(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if len(mgr.conditions) != 1 {
-		t.Fatalf("expected emission after grace period, got %d", len(mgr.conditions))
-	}
-}
-
-func TestRunner_ReadinessFailureCounts(t *testing.T) {
-	mgr := &fakeManager{}
-	spec := runnerSpec(1, 0)
-	spec.Checks.Liveness = probe.Check{Transport: probe.TransportHTTPLoopback, Address: "127.0.0.1:8173", Path: "/healthz", ReasonOnFail: "IPAMDNotRunning"}
-	spec.Checks.Readiness = &probe.Check{Transport: probe.TransportHTTPLoopback, Address: "127.0.0.1:8173", Path: "/readyz", ReasonOnFail: "IPAMDNotReady"}
-
-	r, err := NewRunner(spec, mgr, logr.Discard())
-	if err != nil {
-		t.Fatal(err)
-	}
-	r.startedAt = time.Now()
-	// Liveness healthy, readiness unhealthy.
-	r.transports[probe.TransportHTTPLoopback] = &scriptedTransport{results: []Result{
-		healthy(), {Outcome: OutcomeUnhealthy, Detail: "GET /readyz: 503"},
-	}}
-
-	if err := r.runOnce(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if len(mgr.conditions) != 1 {
-		t.Fatalf("expected readiness failure to emit, got %d", len(mgr.conditions))
-	}
-	if !strings.Contains(mgr.conditions[0].Message, "readiness check") {
-		t.Errorf("message should attribute the readiness check, got %q", mgr.conditions[0].Message)
+	if !slices.Equal(got, want) {
+		t.Errorf("messages:\n got %q\nwant %q", got, want)
 	}
 }
 
 func TestRunner_StartExitsOnContextCancel(t *testing.T) {
-	mgr := &fakeManager{}
-	r := newTestRunner(t, runnerSpec(1, 0), mgr, healthy())
+	spec := testSpec(false)
+	spec.FailureThreshold = 1
+	r, err := NewRunner(spec, &fakeManager{}, logr.Discard())
+	if err != nil {
+		t.Fatalf("NewRunner: %v", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
