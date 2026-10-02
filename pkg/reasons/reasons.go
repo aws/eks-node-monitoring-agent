@@ -30,6 +30,10 @@ var (
 		template:        "FabricManagerNotRunning",
 		defaultSeverity: "Fatal",
 	}
+	FabricManagerNotRunningWarning = ReasonMeta{
+		template:        "FabricManagerNotRunning",
+		defaultSeverity: "Warning",
+	}
 	NeuronDMAError = ReasonMeta{
 		template:        "NeuronDMAError",
 		defaultSeverity: "Fatal",
@@ -350,6 +354,7 @@ var byName = map[string]ReasonMeta{
 	"DCGMHealthCode":                       DCGMHealthCode,
 	"DCGMHealthCodeFatal":                  DCGMHealthCodeFatal,
 	"FabricManagerNotRunning":              FabricManagerNotRunning,
+	"FabricManagerNotRunningWarning":       FabricManagerNotRunningWarning,
 	"NeuronDMAError":                       NeuronDMAError,
 	"NeuronHBMUncorrectableError":          NeuronHBMUncorrectableError,
 	"NeuronNCUncorrectableError":           NeuronNCUncorrectableError,

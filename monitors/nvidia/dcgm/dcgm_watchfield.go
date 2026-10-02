@@ -86,6 +86,8 @@ func handleFabricField(fv dcgmapi.FieldValue_v2) (*monitor.Condition, bool) {
 		// where FM is not needed but DCGM doesn't report NotSupported (e.g. GB200/GB300).
 		// InProgress: FM is still performing fabric training during boot.
 		// Success: FM is running and healthy.
+		// Unrecognized, NvmlTooOld, and -1 (DCGM_ST_BADPARAM) mean the driver/NVML
+		// and DCGM versions do not match; they are reported as a Warning.
 		// Blank values (DCGM could not read the field) produce no condition.
 		// Classification is delegated to Classify (classify.go), which applies
 		// these rules.
@@ -157,11 +159,15 @@ const (
 )
 
 // Fabric Manager status values from dcgmFabricManagerStatus_t (dcgm_structs.h).
+// ref: https://github.com/NVIDIA/DCGM/blob/64df9f894541e426e416131a9820cae97aa4dd81/dcgmlib/dcgm_structs.h#L4310-L4316 (v4.6.1)
 const (
 	DcgmFMStatusNotSupported int64 = 0
 	DcgmFMStatusNotStarted   int64 = 1
 	DcgmFMStatusInProgress   int64 = 2
 	DcgmFMStatusSuccess      int64 = 3
+	DcgmFMStatusFailure      int64 = 4
+	DcgmFMStatusUnrecognized int64 = 5
+	DcgmFMStatusNvmlTooOld   int64 = 6
 )
 
 // fabricHealthSubField describes one sub-field packed into the
@@ -211,13 +217,13 @@ var clockThrottleReasons = map[int64]string{
 }
 
 var fabricManagerStatusNames = map[int64]string{
-	0: "NotSupported",
-	1: "NotStarted",
-	2: "InProgress",
-	3: "Success",
-	4: "Failure",
-	5: "Unrecognized",
-	6: "NvmlTooOld",
+	DcgmFMStatusNotSupported: "NotSupported",
+	DcgmFMStatusNotStarted:   "NotStarted",
+	DcgmFMStatusInProgress:   "InProgress",
+	DcgmFMStatusSuccess:      "Success",
+	DcgmFMStatusFailure:      "Failure",
+	DcgmFMStatusUnrecognized: "Unrecognized",
+	DcgmFMStatusNvmlTooOld:   "NvmlTooOld",
 }
 
 var fieldValueMappers = map[dcgmapi.Short]func(dcgmapi.FieldValue_v2) (bool, string){
