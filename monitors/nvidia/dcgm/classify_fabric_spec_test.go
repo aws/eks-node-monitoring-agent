@@ -33,6 +33,13 @@ func TestClassify_fabricHealthMaskSpec(t *testing.T) {
 		{"0x40 access_timeout_recovery=True", 0x40, true, ""},
 		{"0x200 incorrect_configuration=2 (incorrect)", 0x200, true, ""},
 		{"0x11 degraded_bw + route_unhealthy (multi-fault)", 0x11, true, "GPU fabric health mask 0x11: degraded_bw=1, route_unhealthy=1"},
+		// DCGM's blank values mean the mask could not be read. Decoded as a mask
+		// they would show faults (e.g. incorrect_configuration=15), so they must
+		// be skipped rather than decoded.
+		{"blank", 0x7ffffffffffffff0, false, ""},                // DCGM_FT_INT64_BLANK
+		{"blank: not found", 0x7ffffffffffffff1, false, ""},     // DCGM_FT_INT64_NOT_FOUND
+		{"blank: not supported", 0x7ffffffffffffff2, false, ""}, // DCGM_FT_INT64_NOT_SUPPORTED
+		{"blank: no permission", 0x7ffffffffffffff3, false, ""}, // DCGM_FT_INT64_NOT_PERMISSIONED
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -77,7 +84,8 @@ func fabricConditionMessage(conds []monitor.Condition) string {
 // TestClassify_fabricManagerStatusSpec covers every dcgmFabricManagerStatus_t
 // value (dcgm_structs.h) plus out-of-range values. NotSupported, NotStarted,
 // InProgress, and Success are healthy (see handleFabricField for why NotStarted
-// is suppressed); anything else is a Fatal FabricManagerNotRunning naming the
+// is suppressed), and DCGM's blank values (the status could not be read)
+// produce no condition; anything else is a Fatal FabricManagerNotRunning naming the
 // status, or Unknown(<n>) for a value outside the enum.
 func TestClassify_fabricManagerStatusSpec(t *testing.T) {
 	cases := []struct {
@@ -94,6 +102,10 @@ func TestClassify_fabricManagerStatusSpec(t *testing.T) {
 		{"6 NvmlTooOld", 6, "Fabric Manager status: NvmlTooOld"},     // DcgmFMStatusNvmlTooOld in dcgm_structs.h (no NMA constant)
 		{"7 out of range", 7, "Fabric Manager status: Unknown(7)"},   // DcgmFMStatusCount: the enum size, not a status
 		{"-1 out of range", -1, "Fabric Manager status: Unknown(-1)"},
+		{"blank", 0x7ffffffffffffff0, ""},                // DCGM_FT_INT64_BLANK
+		{"blank: not found", 0x7ffffffffffffff1, ""},     // DCGM_FT_INT64_NOT_FOUND
+		{"blank: not supported", 0x7ffffffffffffff2, ""}, // DCGM_FT_INT64_NOT_SUPPORTED
+		{"blank: no permission", 0x7ffffffffffffff3, ""}, // DCGM_FT_INT64_NOT_PERMISSIONED
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
