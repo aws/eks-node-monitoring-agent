@@ -73,3 +73,46 @@ func fabricConditionMessage(conds []monitor.Condition) string {
 	}
 	return ""
 }
+
+// TestClassify_fabricManagerStatusSpec covers every dcgmFabricManagerStatus_t
+// value (dcgm_structs.h) plus out-of-range values. NotSupported, NotStarted,
+// InProgress, and Success are healthy (see handleFabricField for why NotStarted
+// is suppressed); anything else is a Fatal FabricManagerNotRunning naming the
+// status, or Unknown(<n>) for a value outside the enum.
+func TestClassify_fabricManagerStatusSpec(t *testing.T) {
+	cases := []struct {
+		name        string
+		status      int64
+		wantMessage string // "" => healthy, no condition
+	}{
+		{"0 NotSupported", 0, ""},                                    // DcgmFMStatusNotSupported
+		{"1 NotStarted", 1, ""},                                      // DcgmFMStatusNotStarted
+		{"2 InProgress", 2, ""},                                      // DcgmFMStatusInProgress
+		{"3 Success", 3, ""},                                         // DcgmFMStatusSuccess
+		{"4 Failure", 4, "Fabric Manager status: Failure"},           // DcgmFMStatusFailure in dcgm_structs.h (no NMA constant)
+		{"5 Unrecognized", 5, "Fabric Manager status: Unrecognized"}, // DcgmFMStatusUnrecognized in dcgm_structs.h (no NMA constant)
+		{"6 NvmlTooOld", 6, "Fabric Manager status: NvmlTooOld"},     // DcgmFMStatusNvmlTooOld in dcgm_structs.h (no NMA constant)
+		{"7 out of range", 7, "Fabric Manager status: Unknown(7)"},   // DcgmFMStatusCount: the enum size, not a status
+		{"-1 out of range", -1, "Fabric Manager status: Unknown(-1)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			status := tc.status
+			got := Classify(NormalizedSignals{FabricManagerStatus: &status})
+			if tc.wantMessage == "" {
+				if len(got) != 0 {
+					t.Fatalf("status %d: expected no condition (healthy), got %+v", tc.status, got)
+				}
+				return
+			}
+			want := []monitor.Condition{{
+				Reason:   "FabricManagerNotRunning",
+				Message:  tc.wantMessage,
+				Severity: monitor.SeverityFatal,
+			}}
+			if len(got) != 1 || got[0].Reason != want[0].Reason || got[0].Message != want[0].Message || got[0].Severity != want[0].Severity {
+				t.Fatalf("status %d: want %+v, got %+v", tc.status, want, got)
+			}
+		})
+	}
+}
