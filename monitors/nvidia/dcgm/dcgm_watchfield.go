@@ -86,6 +86,7 @@ func handleFabricField(fv dcgmapi.FieldValue_v2) (*monitor.Condition, bool) {
 		// where FM is not needed but DCGM doesn't report NotSupported (e.g. GB200/GB300).
 		// InProgress: FM is still performing fabric training during boot.
 		// Success: FM is running and healthy.
+		// Blank values (DCGM could not read the field) produce no condition.
 		// Classification is delegated to Classify (classify.go), which applies
 		// these rules.
 		conds := Classify(NormalizedSignals{FabricManagerStatus: &status})
@@ -104,6 +105,7 @@ func handleFabricField(fv dcgmapi.FieldValue_v2) (*monitor.Condition, bool) {
 		// access_timeout_recovery=False). Only the True/fault state of a
 		// sub-field is flagged; this is what eliminates the false positives
 		// from the previous "any non-zero mask is a fault" logic.
+		// Blank values (DCGM could not read the field) produce no condition.
 		// Classification is delegated to Classify (classify.go), which applies
 		// this decode via fabricHealthMaskFaults.
 		conds := Classify(NormalizedSignals{FabricHealthMask: &mask})
