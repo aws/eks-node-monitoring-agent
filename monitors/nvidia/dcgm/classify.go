@@ -82,13 +82,18 @@ func Classify(s NormalizedSignals) []monitor.Condition {
 		switch status := *s.FabricManagerStatus; status {
 		case DcgmFMStatusSuccess, DcgmFMStatusNotSupported, DcgmFMStatusInProgress, DcgmFMStatusNotStarted:
 			// Healthy or not applicable: no condition.
+		case DcgmFMStatusUnrecognized, DcgmFMStatusNvmlTooOld, dcgmapi.DCGM_ST_BADPARAM:
+			// The driver/NVML and DCGM versions do not match, so the status is
+			// unknown rather than failed: NvmlTooOld means NVML has no fabric
+			// API, and DCGM stores DCGM_ST_BADPARAM (-1) instead of Unrecognized
+			// when NVML reports a fabric state DCGM does not know. A replacement
+			// node with the same AMI would report the same, so this is a Warning.
+			out = append(out, reasons.FabricManagerNotRunningWarning.Builder().
+				Message(fabricManagerStatusMessage(status)).
+				Build())
 		default:
-			name := fabricManagerStatusNames[status]
-			if name == "" {
-				name = fmt.Sprintf("Unknown(%d)", status)
-			}
 			out = append(out, reasons.FabricManagerNotRunning.Builder().
-				Message(fmt.Sprintf("Fabric Manager status: %s", name)).
+				Message(fabricManagerStatusMessage(status)).
 				Build())
 		}
 	}
@@ -128,6 +133,16 @@ func Classify(s NormalizedSignals) []monitor.Condition {
 	}
 
 	return out
+}
+
+// fabricManagerStatusMessage names a dcgmFabricManagerStatus_t value, or
+// Unknown(<n>) for a value outside the enum.
+func fabricManagerStatusMessage(status int64) string {
+	name := fabricManagerStatusNames[status]
+	if name == "" {
+		name = fmt.Sprintf("Unknown(%d)", status)
+	}
+	return fmt.Sprintf("Fabric Manager status: %s", name)
 }
 
 func isWellKnownXid(xid uint) bool {

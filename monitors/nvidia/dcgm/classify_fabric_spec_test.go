@@ -82,30 +82,35 @@ func fabricConditionMessage(conds []monitor.Condition) string {
 }
 
 // TestClassify_fabricManagerStatusSpec covers every dcgmFabricManagerStatus_t
-// value (dcgm_structs.h) plus out-of-range values. NotSupported, NotStarted,
-// InProgress, and Success are healthy (see handleFabricField for why NotStarted
-// is suppressed), and DCGM's blank values (the status could not be read)
-// produce no condition; anything else is a Fatal FabricManagerNotRunning naming the
-// status, or Unknown(<n>) for a value outside the enum.
+// value (dcgm_structs.h), the values DCGM stores outside that enum, and
+// out-of-range values. NotSupported, NotStarted, InProgress, and Success are
+// healthy (see handleFabricField for why NotStarted is suppressed), and DCGM's
+// blank values (the status could not be read) produce no condition.
+// Unrecognized, NvmlTooOld, and -1 (DCGM_ST_BADPARAM, which DCGM stores for a
+// fabric state it does not know) mean the driver/NVML and DCGM versions do not
+// match and are a Warning. Anything else is a Fatal FabricManagerNotRunning
+// naming the status, or Unknown(<n>) for a value outside the enum.
 func TestClassify_fabricManagerStatusSpec(t *testing.T) {
 	cases := []struct {
 		name        string
 		status      int64
 		wantMessage string // "" => healthy, no condition
+		wantSev     monitor.Severity
 	}{
-		{"0 NotSupported", 0, ""},                                    // DcgmFMStatusNotSupported
-		{"1 NotStarted", 1, ""},                                      // DcgmFMStatusNotStarted
-		{"2 InProgress", 2, ""},                                      // DcgmFMStatusInProgress
-		{"3 Success", 3, ""},                                         // DcgmFMStatusSuccess
-		{"4 Failure", 4, "Fabric Manager status: Failure"},           // DcgmFMStatusFailure in dcgm_structs.h (no NMA constant)
-		{"5 Unrecognized", 5, "Fabric Manager status: Unrecognized"}, // DcgmFMStatusUnrecognized in dcgm_structs.h (no NMA constant)
-		{"6 NvmlTooOld", 6, "Fabric Manager status: NvmlTooOld"},     // DcgmFMStatusNvmlTooOld in dcgm_structs.h (no NMA constant)
-		{"7 out of range", 7, "Fabric Manager status: Unknown(7)"},   // DcgmFMStatusCount: the enum size, not a status
-		{"-1 out of range", -1, "Fabric Manager status: Unknown(-1)"},
-		{"blank", 0x7ffffffffffffff0, ""},                // DCGM_FT_INT64_BLANK
-		{"blank: not found", 0x7ffffffffffffff1, ""},     // DCGM_FT_INT64_NOT_FOUND
-		{"blank: not supported", 0x7ffffffffffffff2, ""}, // DCGM_FT_INT64_NOT_SUPPORTED
-		{"blank: no permission", 0x7ffffffffffffff3, ""}, // DCGM_FT_INT64_NOT_PERMISSIONED
+		{"0 NotSupported", 0, "", ""}, // DcgmFMStatusNotSupported
+		{"1 NotStarted", 1, "", ""},   // DcgmFMStatusNotStarted
+		{"2 InProgress", 2, "", ""},   // DcgmFMStatusInProgress
+		{"3 Success", 3, "", ""},      // DcgmFMStatusSuccess
+		{"4 Failure", 4, "Fabric Manager status: Failure", monitor.SeverityFatal},                      // DcgmFMStatusFailure
+		{"5 Unrecognized", 5, "Fabric Manager status: Unrecognized", monitor.SeverityWarning},          // DcgmFMStatusUnrecognized
+		{"6 NvmlTooOld", 6, "Fabric Manager status: NvmlTooOld", monitor.SeverityWarning},              // DcgmFMStatusNvmlTooOld
+		{"7 out of range", 7, "Fabric Manager status: Unknown(7)", monitor.SeverityFatal},              // DcgmFMStatusCount: the enum size, not a status
+		{"-1 unknown fabric state", -1, "Fabric Manager status: Unknown(-1)", monitor.SeverityWarning}, // dcgmapi.DCGM_ST_BADPARAM
+		{"-2 out of range", -2, "Fabric Manager status: Unknown(-2)", monitor.SeverityFatal},
+		{"blank", 0x7ffffffffffffff0, "", ""},                // DCGM_FT_INT64_BLANK
+		{"blank: not found", 0x7ffffffffffffff1, "", ""},     // DCGM_FT_INT64_NOT_FOUND
+		{"blank: not supported", 0x7ffffffffffffff2, "", ""}, // DCGM_FT_INT64_NOT_SUPPORTED
+		{"blank: no permission", 0x7ffffffffffffff3, "", ""}, // DCGM_FT_INT64_NOT_PERMISSIONED
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -120,7 +125,7 @@ func TestClassify_fabricManagerStatusSpec(t *testing.T) {
 			want := []monitor.Condition{{
 				Reason:   "FabricManagerNotRunning",
 				Message:  tc.wantMessage,
-				Severity: monitor.SeverityFatal,
+				Severity: tc.wantSev,
 			}}
 			if len(got) != 1 || got[0].Reason != want[0].Reason || got[0].Message != want[0].Message || got[0].Severity != want[0].Severity {
 				t.Fatalf("status %d: want %+v, got %+v", tc.status, want, got)
