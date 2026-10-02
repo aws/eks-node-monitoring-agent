@@ -90,6 +90,39 @@ func TestValidate(t *testing.T) {
 			wantErr: "does not use a path",
 		},
 		{
+			name:    "systemd-dbus needs a unit suffix",
+			mutate:  func(s *probe.Spec) { s.Checks.Liveness.Address = "ipamd" },
+			wantErr: "must be a systemd service unit name",
+		},
+		{
+			name:    "systemd-dbus needs a service unit",
+			mutate:  func(s *probe.Spec) { s.Checks.Liveness.Address = "ipamd.socket" },
+			wantErr: "must be a systemd service unit name",
+		},
+		{
+			name:    "systemd-dbus rejects characters systemd does not allow",
+			mutate:  func(s *probe.Spec) { s.Checks.Liveness.Address = "ipamd/agent.service" },
+			wantErr: "must be a systemd service unit name",
+		},
+		{
+			name:   "systemd-dbus accepts the longest name systemd allows",
+			mutate: func(s *probe.Spec) { s.Checks.Liveness.Address = strings.Repeat("a", 247) + ".service" },
+		},
+		{
+			name:    "systemd-dbus rejects a name too long for systemd",
+			mutate:  func(s *probe.Spec) { s.Checks.Liveness.Address = strings.Repeat("a", 248) + ".service" },
+			wantErr: "must be a systemd service unit name",
+		},
+		{
+			name:    "systemd-dbus rejects a template unit",
+			mutate:  func(s *probe.Spec) { s.Checks.Liveness.Address = "ipamd@.service" },
+			wantErr: "template unit with no instance",
+		},
+		{
+			name:   "systemd-dbus accepts a template instance",
+			mutate: func(s *probe.Spec) { s.Checks.Liveness.Address = "ipamd@eth0.service" },
+		},
+		{
 			name: "invalid readiness check",
 			mutate: func(s *probe.Spec) {
 				s.Checks.Readiness = &probe.Check{Transport: probe.TransportHTTPLoopback, Address: ""}

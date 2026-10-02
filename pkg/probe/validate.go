@@ -98,6 +98,9 @@ func validateCheck(name string, c probe.Check) error {
 		if name != livenessCheck {
 			return fmt.Errorf("%s check: systemd-dbus only reports whether a unit is running, so only the liveness check can use it", name)
 		}
+		if err := validateServiceUnit(c.Address); err != nil {
+			return fmt.Errorf("%s check: %w", name, err)
+		}
 		if c.Path != "" {
 			return fmt.Errorf("%s check: systemd-dbus does not use a path, got %q", name, c.Path)
 		}
@@ -120,6 +123,33 @@ func validateLoopbackAddress(address string) error {
 	}
 	if n, err := strconv.ParseUint(port, 10, 16); err != nil || n == 0 {
 		return fmt.Errorf("http-loopback address %q has an invalid port", address)
+	}
+	return nil
+}
+
+// Unit names follow systemd's own rules (unit_name_is_valid): shorter than
+// maxUnitNameLength bytes, and using only unitNameChars before the type
+// suffix.
+const (
+	maxUnitNameLength = 256
+	unitNameChars     = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789:-_.\\@"
+)
+
+// validateServiceUnit requires a systemd service unit name for a
+// systemd-dbus check. systemd rejects an invalid name on every query, so a
+// typo such as "ipamd" would leave the probe Unknown forever instead of
+// failing at startup. The unit must be a service because the transport
+// reads Result from systemd's Service interface.
+func validateServiceUnit(unit string) error {
+	prefix, ok := strings.CutSuffix(unit, ".service")
+	invalidChar := func(r rune) bool { return !strings.ContainsRune(unitNameChars, r) }
+	if !ok || prefix == "" || prefix[0] == '@' || len(unit) >= maxUnitNameLength || strings.ContainsFunc(prefix, invalidChar) {
+		return fmt.Errorf("systemd-dbus address %q must be a systemd service unit name such as ipamd.service", unit)
+	}
+	// systemd only looks at the first "@". A name that ends with it is a
+	// template, which has no instance to query.
+	if strings.IndexByte(prefix, '@') == len(prefix)-1 {
+		return fmt.Errorf("systemd-dbus address %q is a template unit with no instance", unit)
 	}
 	return nil
 }

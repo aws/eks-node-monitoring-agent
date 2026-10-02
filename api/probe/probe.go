@@ -20,12 +20,13 @@ type TransportKind string
 const (
 	// TransportHTTPLoopback performs an HTTP GET against a loopback address
 	// and port, such as 127.0.0.1:8173 or localhost:8173. A 2xx response is
-	// healthy; any other response, including a refused connection, is
-	// unhealthy.
+	// healthy; any other response, including a redirect or a refused
+	// connection, is unhealthy.
 	TransportHTTPLoopback TransportKind = "http-loopback"
-	// TransportSystemdDBus queries the ActiveState of a systemd unit over
-	// D-Bus. Liveness only: "active" is healthy, anything else is unhealthy.
-	// A failure to reach D-Bus itself is unknown, not unhealthy.
+	// TransportSystemdDBus queries the ActiveState of a systemd service unit
+	// over D-Bus. Liveness only: "active" is healthy, anything else is
+	// unhealthy, including a unit that does not exist. A failure to reach
+	// D-Bus, including a call that times out, is unknown, not unhealthy.
 	TransportSystemdDBus TransportKind = "systemd-dbus"
 )
 
@@ -77,7 +78,8 @@ type Check struct {
 	// Transport selects how the target is reached.
 	Transport TransportKind `json:"transport"`
 	// Address is the transport-specific target, e.g. "127.0.0.1:8901" for
-	// http-loopback or "ipamd.service" for systemd-dbus.
+	// http-loopback or a service unit name such as "ipamd.service" for
+	// systemd-dbus.
 	Address string `json:"address"`
 	// Path is the HTTP request path, e.g. "/healthz". Required for
 	// http-loopback and must be empty for systemd-dbus.
