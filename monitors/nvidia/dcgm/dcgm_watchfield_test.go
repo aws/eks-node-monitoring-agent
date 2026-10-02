@@ -134,6 +134,24 @@ func TestFields(t *testing.T) {
 		assert.Empty(t, conditions)
 	})
 
+	// DCGM stores a blank value (DCGM_FT_INT64_BLANK, with status OK) when it
+	// could not read a fabric field. This covers reading the blank from the raw
+	// value bytes through WatchFields for both fabric fields; the Classify spec
+	// tables cover every blank value.
+	t.Run("FabricFieldsBlank", func(t *testing.T) {
+		var fieldValues []dcgmapi.FieldValue_v2
+		for _, id := range []dcgmapi.Short{dcgmapi.DCGM_FI_DEV_FABRIC_MANAGER_STATUS, dcgmapi.DCGM_FI_DEV_FABRIC_HEALTH_MASK} {
+			fieldValue := dcgmapi.FieldValue_v2{FieldID: id, Status: dcgmapi.DCGM_ST_OK}
+			binary.LittleEndian.PutUint64(fieldValue.Value[:], uint64(dcgmapi.DCGM_FT_INT64_BLANK))
+			fieldValues = append(fieldValues, fieldValue)
+		}
+		mockDcgm := &fake.FakeDcgm{FieldValues: fieldValues}
+		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
+		conditions, err := dcgmSystem.WatchFields(context.TODO())
+		assert.NoError(t, err)
+		assert.Empty(t, conditions)
+	})
+
 	t.Run("GetResultForBadStatus", func(t *testing.T) {
 		for _, test := range []struct {
 			fieldValue      dcgmapi.FieldValue_v2

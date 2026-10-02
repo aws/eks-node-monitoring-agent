@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 
+	dcgmapi "github.com/NVIDIA/go-dcgm/pkg/dcgm"
+
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 	"github.com/aws/eks-node-monitoring-agent/pkg/reasons"
 )
@@ -21,7 +23,9 @@ import (
 // encoding: FabricManagerStatus is a dcgmFabricManagerStatus_t, so a non-DCGM
 // source (e.g. NVML, which reports fabric state and status separately) must
 // translate its values to that enum, and the resulting messages name DCGM's
-// statuses.
+// statuses. FabricHealthMask and FabricManagerStatus may also hold DCGM's blank
+// values (dcgmapi.IsInt64Blank), which mean DCGM could not read the field;
+// Classify treats them as not observed.
 type NormalizedSignals struct {
 	XIDs                []uint  // observed XID error codes (DCGM XidPolicy today)
 	FabricHealthMask    *uint64 // NVLink fabric health mask; nil when not applicable/observed
@@ -60,8 +64,9 @@ func Classify(s NormalizedSignals) []monitor.Condition {
 
 	// Fabric health mask: decoded via the shared fabricHealthMaskFaults.
 	// Reusing it keeps the 0x80-is-healthy semantics in one spec-backed,
-	// driver-version-aware place that tests can pin.
-	if s.FabricHealthMask != nil {
+	// driver-version-aware place that tests can pin. A blank value means DCGM
+	// could not read the mask, so there is nothing to decode.
+	if s.FabricHealthMask != nil && !dcgmapi.IsInt64Blank(int64(*s.FabricHealthMask)) {
 		if faults := fabricHealthMaskFaults(int64(*s.FabricHealthMask)); len(faults) > 0 {
 			out = append(out, reasons.NvidiaFabricError.Builder().
 				Message(fmt.Sprintf("GPU fabric health mask 0x%x: %s", *s.FabricHealthMask, strings.Join(faults, ", "))).
@@ -71,7 +76,9 @@ func Classify(s NormalizedSignals) []monitor.Condition {
 
 	// Fabric Manager status: see handleFabricField (dcgm_watchfield.go) for why
 	// NotSupported, NotStarted, InProgress, and Success are treated as healthy.
-	if s.FabricManagerStatus != nil {
+	// A blank value means DCGM could not read the status, so there is nothing to
+	// classify.
+	if s.FabricManagerStatus != nil && !dcgmapi.IsInt64Blank(*s.FabricManagerStatus) {
 		switch status := *s.FabricManagerStatus; status {
 		case DcgmFMStatusSuccess, DcgmFMStatusNotSupported, DcgmFMStatusInProgress, DcgmFMStatusNotStarted:
 			// Healthy or not applicable: no condition.
