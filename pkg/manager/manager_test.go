@@ -44,10 +44,10 @@ func (e *mockExporter) notify() error {
 	e.notifyChan <- struct{}{}
 	return nil
 }
-func (e *mockExporter) Info(context.Context, monitor.Condition, corev1.NodeConditionType) error {
+func (e *mockExporter) Info(context.Context, monitor.Condition, corev1.NodeConditionType, string) error {
 	return e.notify()
 }
-func (e *mockExporter) Warning(_ context.Context, condition monitor.Condition, _ corev1.NodeConditionType) error {
+func (e *mockExporter) Warning(_ context.Context, condition monitor.Condition, _ corev1.NodeConditionType, _ string) error {
 	if e.warningChan != nil {
 		e.warningChan <- condition
 		return nil
@@ -57,7 +57,7 @@ func (e *mockExporter) Warning(_ context.Context, condition monitor.Condition, _
 func (e *mockExporter) Fatal(context.Context, monitor.Condition, corev1.NodeConditionType) error {
 	return e.notify()
 }
-func (e *mockExporter) Resolve(_ context.Context, condition monitor.Condition, _ corev1.NodeConditionType) (bool, error) {
+func (e *mockExporter) Resolve(_ context.Context, condition monitor.Condition, _ corev1.NodeConditionType, _ string) (bool, error) {
 	if e.resolveChan != nil {
 		e.resolveChan <- condition
 	}
