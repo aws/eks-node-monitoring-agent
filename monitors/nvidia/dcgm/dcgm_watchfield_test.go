@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"testing"
+	"time"
 
 	dcgmapi "github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
@@ -93,6 +94,55 @@ func TestFields(t *testing.T) {
 		conditions, err := dcgmSystem.WatchFields(context.TODO())
 		assert.NoError(t, err)
 		assert.Empty(t, conditions)
+	})
+
+	// A version-mismatch Fabric Manager status is reported on every call and for
+	// every GPU, so its Warning is rate-limited: reported once, not again while
+	// unchanged until WarningReNotifyInterval has passed, and right away again
+	// once it has cleared and comes back. A Failure is a Fatal condition and is
+	// not rate-limited.
+	t.Run("FabricManagerStatusWarningRateLimited", func(t *testing.T) {
+		statuses := func(values ...uint64) []dcgmapi.FieldValue_v2 {
+			var fieldValues []dcgmapi.FieldValue_v2
+			for _, status := range values {
+				fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_FABRIC_MANAGER_STATUS, Status: dcgmapi.DCGM_ST_OK}
+				binary.LittleEndian.PutUint64(fieldValue.Value[:], status)
+				fieldValues = append(fieldValues, fieldValue)
+			}
+			return fieldValues
+		}
+		mockDcgm := &fake.FakeDcgm{FieldValues: statuses(6, 6, 4)} // DcgmFMStatusNvmlTooOld on two GPUs, DcgmFMStatusFailure
+		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
+		now := time.Unix(0, 0)
+		dcgm.SetClock(dcgmSystem, func() time.Time { return now })
+		failure := monitor.Condition{Reason: "FabricManagerNotRunning", Message: "Fabric Manager status: Failure", Severity: monitor.SeverityFatal}
+		nvmlTooOld := monitor.Condition{Reason: "FabricManagerNotRunning", Message: "Fabric Manager status: NvmlTooOld", Severity: monitor.SeverityWarning}
+		watch := func() []monitor.Condition {
+			t.Helper()
+			conditions, err := dcgmSystem.WatchFields(context.TODO())
+			assert.NoError(t, err)
+			return conditions
+		}
+
+		// First call: the Warning once (not once per GPU), and the Failure.
+		assert.Equal(t, []monitor.Condition{nvmlTooOld, failure}, watch())
+
+		// Next call, unchanged: only the Failure.
+		now = now.Add(5 * time.Minute)
+		assert.Equal(t, []monitor.Condition{failure}, watch())
+
+		// Still unchanged once WarningReNotifyInterval has passed: reported again.
+		now = now.Add(dcgm.WarningReNotifyInterval - 5*time.Minute)
+		assert.Equal(t, []monitor.Condition{nvmlTooOld, failure}, watch())
+
+		// Cleared (DcgmFMStatusSuccess), then back a minute later: reported right
+		// away rather than after WarningReNotifyInterval.
+		mockDcgm.FieldValues = statuses(3, 3, 4)
+		now = now.Add(time.Minute)
+		assert.Equal(t, []monitor.Condition{failure}, watch())
+		mockDcgm.FieldValues = statuses(6, 6, 4)
+		now = now.Add(time.Minute)
+		assert.Equal(t, []monitor.Condition{nvmlTooOld, failure}, watch())
 	})
 
 	// A mask with a sub-field in the True/fault state is flagged, and the
