@@ -31,6 +31,7 @@ func makeSpec() Spec {
 		},
 		Interval:           metav1.Duration{Duration: 30 * time.Second},
 		FailureThreshold:   3,
+		RecoveryThreshold:  2,
 		StartupGracePeriod: metav1.Duration{Duration: 5 * time.Minute},
 	}
 }
@@ -51,7 +52,7 @@ func TestSpecJSONRoundTrip(t *testing.T) {
 	if out.Checks.Readiness == nil || *out.Checks.Readiness != *in.Checks.Readiness {
 		t.Errorf("readiness check did not round-trip: got %+v, want %+v", out.Checks.Readiness, in.Checks.Readiness)
 	}
-	if out.Subsystem != in.Subsystem || out.Checks.Liveness != in.Checks.Liveness || out.FailureThreshold != in.FailureThreshold {
+	if out.Subsystem != in.Subsystem || out.Checks.Liveness != in.Checks.Liveness || out.FailureThreshold != in.FailureThreshold || out.RecoveryThreshold != in.RecoveryThreshold {
 		t.Errorf("spec did not round-trip: got %+v, want %+v", out, in)
 	}
 }

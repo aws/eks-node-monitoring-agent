@@ -45,10 +45,19 @@ type Spec struct {
 	// Interval is the time between check rounds.
 	Interval metav1.Duration `json:"interval"`
 
-	// FailureThreshold is the number of consecutive unhealthy results
-	// required before the failure condition is emitted. The counter resets
-	// on any healthy result. Must be at least 1.
+	// FailureThreshold is the number of consecutive unhealthy results a
+	// check needs before its failure is emitted. Each check counts its own
+	// results, and the count resets on that check's next healthy result.
+	// Must be at least 1.
 	FailureThreshold int `json:"failureThreshold"`
+
+	// RecoveryThreshold is the number of consecutive healthy results a check
+	// needs before its emitted failure is resolved.
+	// It damps condition flapping: every False→True transition resets Auto
+	// Repair's wait clock, so a flapping agent would otherwise never be
+	// repaired. If zero, it defaults to 1, which resolves on the first
+	// healthy result and preserves the pre-hysteresis behavior.
+	RecoveryThreshold int `json:"recoveryThreshold,omitempty"`
 
 	// StartupGracePeriod suppresses failure emission for this duration after
 	// the runner starts, tolerating agents that come up after the monitoring
@@ -64,7 +73,8 @@ type Checks struct {
 	// Liveness answers "is the agent running".
 	Liveness Check `json:"liveness"`
 	// Readiness answers "is the agent performing its function". The depth of
-	// the readiness answer is owned by the agent, not by this contract.
+	// the readiness answer is owned by the agent, not by this contract. It is
+	// asked only while liveness is healthy.
 	Readiness *Check `json:"readiness,omitempty"`
 	// Diagnostics optionally returns free-form structured detail that is
 	// surfaced as informational events, never as condition flips. It has no
