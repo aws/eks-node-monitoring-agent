@@ -70,7 +70,12 @@ func (s *DCGMSystem) WatchFields(ctx context.Context) ([]monitor.Condition, erro
 		)
 	}
 
-	return conditions, nil
+	// A version-mismatch Fabric Manager status is reported as a Warning on
+	// every call (and once per GPU) for as long as the node is up, so repeats
+	// are rate-limited.
+	return suppressRepeatedWarnings(s.fieldWarnings, s.now(), conditions, func(c monitor.Condition) bool {
+		return c.Reason == reasons.FabricManagerNotRunningWarning.Template()
+	}), nil
 }
 
 // handleFabricField checks whether the field is a fabric-related field and

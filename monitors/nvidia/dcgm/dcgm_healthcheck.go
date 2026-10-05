@@ -116,5 +116,11 @@ func (s *DCGMSystem) HealthCheck(ctx context.Context) ([]monitor.Condition, erro
 		)
 	}
 
-	return conditions, nil
+	// DCGM reports the fabric probe state on every call (and once per GPU) for
+	// as long as the Fabric Manager status is unchanged, so repeats of its
+	// Warning are rate-limited.
+	fabricProbeState := reasons.DCGMHealthCode.Builder(dcgmapi.DCGM_FR_FABRIC_PROBE_STATE).Build().Reason
+	return suppressRepeatedWarnings(s.healthWarnings, s.now(), conditions, func(c monitor.Condition) bool {
+		return c.Reason == fabricProbeState
+	}), nil
 }
