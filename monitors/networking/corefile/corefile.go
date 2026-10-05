@@ -35,6 +35,7 @@ import (
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 	"github.com/aws/eks-node-monitoring-agent/pkg/reasons"
+	"github.com/aws/eks-node-monitoring-agent/pkg/util/renotify"
 )
 
 const (
@@ -94,8 +95,7 @@ type Detector struct {
 	// A failure stays unchanged until the customer edits the ConfigMap, and
 	// every NMA Warning on a node shares one client-go spam-filter bucket, so
 	// notify only on change or after reNotifyInterval.
-	lastKey      notifyKey
-	lastNotified time.Time
+	notified *renotify.Tracker[notifyKey]
 }
 
 type notifyKey struct {
@@ -115,8 +115,9 @@ func New(manager monitor.Manager, log logr.Logger) *Detector {
 			Timeout:   probeTimeout,
 			Transport: &http.Transport{Proxy: nil},
 		},
-		url: ReadyzURL,
-		now: time.Now,
+		url:      ReadyzURL,
+		now:      time.Now,
+		notified: renotify.New[notifyKey](reNotifyInterval),
 	}
 }
 
@@ -162,7 +163,7 @@ func (d *Detector) HandleState() error {
 	// 200 covers Applied and CoreDNSCorefileConfigMapNotFound, both healthy
 	// per the agent's ReadyzHandler.
 	if resp.StatusCode == http.StatusOK {
-		d.lastKey, d.lastNotified = notifyKey{}, time.Time{}
+		d.notified.Reset()
 		return nil
 	}
 
@@ -184,7 +185,7 @@ func (d *Detector) HandleState() error {
 
 	key := notifyKey{body503.Reason, body503.AppliedSHA, body503.FailedSHA}
 	now := d.now()
-	if key == d.lastKey && now.Sub(d.lastNotified) < reNotifyInterval {
+	if !d.notified.ShouldNotify(key, now) {
 		return nil
 	}
 
@@ -196,6 +197,6 @@ func (d *Detector) HandleState() error {
 	if err := d.manager.Notify(ctx, meta.Builder().Message(msg).Build()); err != nil {
 		return err
 	}
-	d.lastKey, d.lastNotified = key, now
+	d.notified.Notified(key, now)
 	return nil
 }
