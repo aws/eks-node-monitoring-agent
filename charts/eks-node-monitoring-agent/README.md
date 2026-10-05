@@ -126,7 +126,7 @@ The following table lists the configurable parameters for this chart and their d
 | nodeAgent.image.endpoint | string | `"ecr"` | ECR repository endpoint for the eks-node-monitoring-agent |
 | nodeAgent.image.pullPolicy | string | `"IfNotPresent"` | Container pull policyfor the eks-node-monitoring-agent |
 | nodeAgent.image.region | string | `"us-west-2"` | ECR repository region for the eks-node-monitoring-agent |
-| nodeAgent.image.tag | string | `"v1.7.2-eksbuild.1"` | Image tag for the eks-node-monitoring-agent |
+| nodeAgent.image.tag | string | `"v1.7.3-eksbuild.1"` | Image tag for the eks-node-monitoring-agent |
 | nodeAgent.ipamdIntrospectionAddress | string | `""` | Optional ipamd introspection API address (host:port). When empty, the agent uses localhost:61679. Set when the VPC CNI is configured with INTROSPECTION_BIND_ADDRESS, e.g. "169.254.1.1:61679". |
 | nodeAgent.monitors | object | `{}` | Per-monitor configuration keyed by plugin name. See the main README for details. |
 | nodeAgent.nodeSelector | object | `{}` | Node labels required for the eks-node-monitoring-agent to be scheduled on a node. |
