@@ -3,8 +3,10 @@ package collect
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"github.com/aws/eks-node-monitoring-agent/pkg/log_collector/system"
@@ -98,7 +100,20 @@ func procs(acc *Accessor) error {
 
 func sysctl(acc *Accessor) error {
 	// TODO(pod): output is different from instance
-	return acc.CommandOutput([]string{"sysctl", "--all"}, "sysctls/sysctl_all.txt", CommandOptionsNone)
+	output, err := acc.CombinedOutput("sysctl", "--all")
+	// since procps 4.0.7, 'sysctl --all' exits 1 when any single key cannot be
+	// read, even though every other key was printed. the unset ipv6
+	// stable_secret keys fail with EIO on every host, so this is the steady
+	// state rather than a failed capture: keep the dump and do not report it.
+	// see https://gitlab.com/procps-ng/procps/-/commit/6860675ae33420741c5264785becc21ea15439d4
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 && len(output) > 0 {
+		err = nil
+	}
+	if err != nil {
+		return fmt.Errorf("executing command %q: %w", "sysctl --all", err)
+	}
+	return acc.WriteOutput("sysctls/sysctl_all.txt", output)
 }
 
 func pkgs(acc *Accessor) error {
