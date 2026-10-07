@@ -2,16 +2,21 @@ name: "Update Go Dependencies"
 on:
   workflow_dispatch:
   schedule:
-    # Every Monday at 00:00 UTC
-    - cron: "0 0 * * 1"
+    # Every Monday at 00:17 UTC
+    - cron: "17 0 * * 1"
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 jobs:
   update-deps:
     if: ${{ github.repository == 'aws/eks-node-monitoring-agent' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: write
       pull-requests: write
@@ -61,6 +66,7 @@ jobs:
     needs: update-deps
     if: ${{ needs.update-deps.outputs.pr_number != '' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       actions: write
       contents: read

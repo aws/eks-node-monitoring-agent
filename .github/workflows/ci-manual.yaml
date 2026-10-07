@@ -55,6 +55,7 @@ permissions:
 jobs:
   setup:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     outputs:
       git_sha_short: ${{ steps.variables.outputs.git_sha_short }}
       workflow_run_url: ${{ steps.variables.outputs.workflow_run_url }}
@@ -66,6 +67,7 @@ jobs:
 
   notify-start:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     needs:
       - setup
     steps:
@@ -99,6 +101,7 @@ jobs:
   notify-outcome:
     if: ${{ always() }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     needs:
       - setup
       - ci
