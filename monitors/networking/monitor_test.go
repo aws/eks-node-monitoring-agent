@@ -67,6 +67,21 @@ func (m *mockManager) Notify(ctx context.Context, condition monitor.Condition) e
 	return nil
 }
 
+// failingNotifyManager returns a distinct error from every Notify call.
+type failingNotifyManager struct {
+	errs []error
+}
+
+func (m *failingNotifyManager) Subscribe(resource.Type, []resource.Part) (<-chan string, error) {
+	return nil, nil
+}
+
+func (m *failingNotifyManager) Notify(_ context.Context, condition monitor.Condition) error {
+	err := fmt.Errorf("notify %d failed for %s", len(m.errs), condition.Reason)
+	m.errs = append(m.errs, err)
+	return err
+}
+
 func TestNetworkingMonitor(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -384,6 +399,26 @@ func TestNetworkingPeriodic(t *testing.T) {
 			"LinkLocalExceeded",
 			"PPSExceeded",
 		}, gotReasons, "a spike between ticks should raise a condition for each allowance-exceeded stat")
+	})
+
+	t.Run("EthtoolCheckJoinsAllNotifyErrors", func(t *testing.T) {
+		ethtoolBytes, err := os.ReadFile("testdata/ethtool-ens5.txt")
+		require.NoError(t, err)
+		stats, err := parseEthtool(ethtoolBytes)
+		require.NoError(t, err)
+
+		mgr := &failingNotifyManager{}
+		ethtoolMonitor := makeEthtoolMonitor(mgr)
+		require.NoError(t, ethtoolMonitor.checkEthtool("ens5", stats)) // baseline
+		for statKey := range statLimiterConstructors {
+			stats[statKey] += 100000
+		}
+
+		err = ethtoolMonitor.checkEthtool("ens5", stats)
+		require.Len(t, mgr.errs, len(statLimiterConstructors))
+		for _, notifyErr := range mgr.errs {
+			assert.ErrorIs(t, err, notifyErr, "every Notify error should be returned, not just the last")
+		}
 	})
 
 	t.Run("NetworkSysctl", func(t *testing.T) {
