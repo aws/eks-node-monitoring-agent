@@ -590,9 +590,12 @@ func makeEthtoolMonitor(manager monitor.Manager) *ethtoolMonitor {
 type ethtoolStatsReader func() (map[string]map[string]int, error)
 
 // ethtoolTickHandler returns the periodic handler that runs the ethtool check
-// on each tick.
+// on each tick. The monitor is created once so its stat cache and rate
+// limiters persist across ticks; otherwise every reading looks like the first
+// and allowance-exceeded spikes are never detected.
 func ethtoolTickHandler(mgr monitor.Manager, readStats ethtoolStatsReader) func(time.Time) error {
-	return func(time.Time) error { return makeEthtoolMonitor(mgr).handleEthtool(readStats) }
+	m := makeEthtoolMonitor(mgr)
+	return func(time.Time) error { return m.handleEthtool(readStats) }
 }
 
 func (m *ethtoolMonitor) handleEthtool(readStats ethtoolStatsReader) error {
@@ -643,7 +646,7 @@ func (m *ethtoolMonitor) checkEthtool(interfaceName string, stats map[string]int
 				// doesn't directly indicate any issues. instead, the approach here is to only
 				// emit the event when there is a noticeable spike in the exceeded stats.
 				if exceededCntDelta := statValue - statCache.recorded; !statCache.rateLimiter.AllowN(time.Now(), exceededCntDelta) {
-					merr = errors.Join(m.manager.Notify(context.TODO(),
+					merr = errors.Join(merr, m.manager.Notify(context.TODO(),
 						statReasons[statKey].
 							Builder().
 							Message(fmt.Sprintf("%s increased on interface %q from %d to %d", statKey, interfaceName, statCache.recorded, statValue)).
