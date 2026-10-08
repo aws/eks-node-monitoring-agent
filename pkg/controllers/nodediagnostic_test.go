@@ -15,7 +15,11 @@ import (
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/tools/cache"
 	"pgregory.net/rapid"
+	crcache "sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
@@ -529,4 +533,163 @@ func TestHandleDelete_WrongNodeName_NoCancelCalled(t *testing.T) {
 	c.handleDelete(logr.Discard(), nd)
 
 	assert.NoError(t, ctx.Err())
+}
+
+// TestRegister_GetInformerTransientFailure verifies that a transient error from
+// GetInformer at startup (e.g. API-discovery i/o timeout before kube-proxy has
+// programmed the kubernetes service DNAT rule) does not cause the runnable to
+// return a fatal error. The runnable must retry and succeed once the API server
+// becomes reachable, without panicking or entering CrashLoopBackOff (issue #193).
+func TestRegister_GetInformerTransientFailure_ThenSucceeds(t *testing.T) {
+	// fakeCache fails the first call to GetInformer, then succeeds on all
+	// subsequent calls. This mirrors a transient API-discovery timeout at boot.
+	attempts := 0
+	var addedHandler bool
+
+	fc := &fakeRetryCache{
+		getInformerFn: func(ctx context.Context) (crcache.Informer, error) {
+			attempts++
+			if attempts == 1 {
+				return nil, fmt.Errorf("i/o timeout: API server unreachable (attempt %d)", attempts)
+			}
+			return &fakeInformer{onAdd: func() { addedHandler = true }}, nil
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- runCaptureCancelWatcher(ctx, fc, logr.Discard(), func(_, _ interface{}) {}, func(_ interface{}) {})
+	}()
+
+	// Cancel the context (simulates manager shutdown) after a short wait to
+	// allow at least one retry cycle to complete.
+	time.Sleep(3 * getInformerRetryInterval)
+	cancel()
+
+	select {
+	case err := <-errCh:
+		require.NoError(t, err, "a transient GetInformer failure must not be returned as a fatal error")
+	case <-time.After(5 * time.Second):
+		t.Fatal("runCaptureCancelWatcher did not return after context cancellation")
+	}
+
+	assert.GreaterOrEqual(t, attempts, 2, "GetInformer must have been retried at least once")
+	assert.True(t, addedHandler, "AddEventHandler must have been called after a successful GetInformer")
+}
+
+// TestRegister_GetInformerCancelledBeforeSuccess verifies that if the context
+// is cancelled before GetInformer ever succeeds (e.g. fast shutdown at boot),
+// the runnable returns nil rather than an error — shutdown is not a failure.
+func TestRegister_GetInformerCancelledBeforeSuccess(t *testing.T) {
+	fc := &fakeRetryCache{
+		getInformerFn: func(ctx context.Context) (crcache.Informer, error) {
+			return nil, fmt.Errorf("API server still unreachable")
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	// Cancel immediately so the poll loop exits before any retry succeeds.
+	cancel()
+
+	err := runCaptureCancelWatcher(ctx, fc, logr.Discard(), func(_, _ interface{}) {}, func(_ interface{}) {})
+	require.NoError(t, err, "context cancellation before GetInformer succeeds must not be returned as an error")
+}
+
+// runCaptureCancelWatcher is the extracted core of the capture-cancel-watcher
+// runnable, used in tests to exercise the retry loop without a full manager.
+func runCaptureCancelWatcher(
+	ctx context.Context,
+	mgrCache interface {
+		GetInformer(context.Context, client.Object, ...crcache.InformerGetOption) (crcache.Informer, error)
+	},
+	logger logr.Logger,
+	onUpdate func(oldObj, newObj interface{}),
+	onDelete func(obj interface{}),
+) error {
+	var informer crcache.Informer
+	if err := wait.PollUntilContextCancel(ctx, getInformerRetryInterval, true,
+		func(ctx context.Context) (bool, error) {
+			var err error
+			informer, err = mgrCache.GetInformer(ctx, &v1alpha1.NodeDiagnostic{})
+			if err != nil {
+				logger.Error(err, "transient failure getting NodeDiagnostic informer; will retry")
+				return false, nil
+			}
+			return true, nil
+		},
+	); err != nil {
+		return nil // context cancelled — not a real error
+	}
+
+	_, err := informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		UpdateFunc: onUpdate,
+		DeleteFunc: onDelete,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to add event handler: %w", err)
+	}
+
+	<-ctx.Done()
+	return nil
+}
+
+// fakeRetryCache is a minimal cache.Cache stand-in for the retry tests.
+type fakeRetryCache struct {
+	getInformerFn func(ctx context.Context) (crcache.Informer, error)
+}
+
+func (f *fakeRetryCache) GetInformer(ctx context.Context, obj client.Object, opts ...crcache.InformerGetOption) (crcache.Informer, error) {
+	return f.getInformerFn(ctx)
+}
+
+// fakeInformer is a minimal crcache.Informer that records AddEventHandler calls.
+type fakeInformer struct {
+	onAdd func()
+}
+
+func (f *fakeInformer) AddEventHandler(handler cache.ResourceEventHandler) (cache.ResourceEventHandlerRegistration, error) {
+	if f.onAdd != nil {
+		f.onAdd()
+	}
+	return &fakeRegistration{}, nil
+}
+
+func (f *fakeInformer) AddEventHandlerWithResyncPeriod(handler cache.ResourceEventHandler, resyncPeriod time.Duration) (cache.ResourceEventHandlerRegistration, error) {
+	return &fakeRegistration{}, nil
+}
+
+func (f *fakeInformer) AddEventHandlerWithOptions(handler cache.ResourceEventHandler, options cache.HandlerOptions) (cache.ResourceEventHandlerRegistration, error) {
+	return &fakeRegistration{}, nil
+}
+
+func (f *fakeInformer) RemoveEventHandler(reg cache.ResourceEventHandlerRegistration) error {
+	return nil
+}
+
+func (f *fakeInformer) AddIndexers(indexers cache.Indexers) error { return nil }
+
+func (f *fakeInformer) HasSynced() bool { return true }
+
+func (f *fakeInformer) HasSyncedChecker() cache.DoneChecker { return &fakeDoneChecker{} }
+
+func (f *fakeInformer) IsStopped() bool { return false }
+
+// fakeRegistration is a stub for cache.ResourceEventHandlerRegistration.
+type fakeRegistration struct{}
+
+func (r *fakeRegistration) HasSynced() bool { return true }
+
+func (r *fakeRegistration) HasSyncedChecker() cache.DoneChecker { return &fakeDoneChecker{} }
+
+// fakeDoneChecker is a stub for cache.DoneChecker that reports immediate completion.
+type fakeDoneChecker struct{}
+
+func (d *fakeDoneChecker) Name() string        { return "fake" }
+func (d *fakeDoneChecker) Done() <-chan struct{} {
+	ch := make(chan struct{})
+	close(ch)
+	return ch
 }
