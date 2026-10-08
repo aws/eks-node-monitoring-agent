@@ -338,6 +338,54 @@ func TestNetworkingPeriodic(t *testing.T) {
 		}
 	})
 
+	// Exercises the production tick handler (the one wired up in Register)
+	// rather than a hand-held ethtoolMonitor, so state must survive between
+	// ticks for a spike to be detected.
+	t.Run("EthtoolTickHandlerDetectsSpikeAcrossTicks", func(t *testing.T) {
+		ethtoolBytes, err := os.ReadFile("testdata/ethtool-ens5.txt")
+		require.NoError(t, err)
+		baseline, err := parseEthtool(ethtoolBytes)
+		require.NoError(t, err)
+
+		// Spike every allowance-exceeded counter well beyond its burst.
+		spiked := make(map[string]int, len(baseline))
+		for k, v := range baseline {
+			spiked[k] = v
+		}
+		for statKey := range statLimiterConstructors {
+			spiked[statKey] = baseline[statKey] + 100000
+		}
+
+		readings := []map[string]int{baseline, spiked}
+		tick := 0
+		fakeReader := func() (map[string]map[string]int, error) {
+			stats := readings[tick]
+			tick++
+			return map[string]map[string]int{"ens5": stats}, nil
+		}
+
+		mockManager := &mockManager{
+			obs: observer.BaseObserver{},
+			res: make(chan monitor.Condition, len(statLimiterConstructors)),
+		}
+		handler := ethtoolTickHandler(mockManager, fakeReader)
+
+		require.NoError(t, handler(time.Now())) // tick 1: establishes baseline
+		require.NoError(t, handler(time.Now())) // tick 2: should detect spike
+
+		var gotReasons []string
+		for len(mockManager.res) > 0 {
+			gotReasons = append(gotReasons, (<-mockManager.res).Reason)
+		}
+		assert.ElementsMatch(t, []string{
+			"BandwidthInExceeded",
+			"BandwidthOutExceeded",
+			"ConntrackExceeded",
+			"LinkLocalExceeded",
+			"PPSExceeded",
+		}, gotReasons, "a spike between ticks should raise a condition for each allowance-exceeded stat")
+	})
+
 	t.Run("NetworkSysctl", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 		defer cancel()

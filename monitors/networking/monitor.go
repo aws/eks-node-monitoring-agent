@@ -235,7 +235,7 @@ func (m *NetworkingMonitor) Register(ctx context.Context, mgr monitor.Manager) e
 	}
 
 	for _, handler := range []interface{ Start(context.Context) error }{
-		util.NewChannelHandler(func(time.Time) error { return makeEthtoolMonitor(mgr).handleEthtool() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
+		util.NewChannelHandler(ethtoolTickHandler(mgr, readEthtoolStats), util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleIPRulesAndRoutes() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleIPTables() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleInterfaces() }, util.TimeTickWithJitterContext(ctx, interfaceMonitorPeriod)),
@@ -585,11 +585,31 @@ func makeEthtoolMonitor(manager monitor.Manager) *ethtoolMonitor {
 	}
 }
 
-func (m *ethtoolMonitor) handleEthtool() (merr error) {
+// ethtoolStatsReader returns ethtool stats keyed by interface name. A non-nil
+// error may accompany partial results for the interfaces that succeeded.
+type ethtoolStatsReader func() (map[string]map[string]int, error)
+
+// ethtoolTickHandler returns the periodic handler that runs the ethtool check
+// on each tick.
+func ethtoolTickHandler(mgr monitor.Manager, readStats ethtoolStatsReader) func(time.Time) error {
+	return func(time.Time) error { return makeEthtoolMonitor(mgr).handleEthtool(readStats) }
+}
+
+func (m *ethtoolMonitor) handleEthtool(readStats ethtoolStatsReader) error {
+	statsByInterface, merr := readStats()
+	for interfaceName, stats := range statsByInterface {
+		merr = errors.Join(merr, m.checkEthtool(interfaceName, stats))
+	}
+	return merr
+}
+
+// readEthtoolStats runs `ethtool -S` on every host interface.
+func readEthtoolStats() (_ map[string]map[string]int, merr error) {
 	netInterfaces, err := net.Interfaces()
 	if err != nil {
-		return err
+		return nil, err
 	}
+	statsByInterface := make(map[string]map[string]int, len(netInterfaces))
 	for _, netInterface := range netInterfaces {
 		ethtoolCmd := []string{"ethtool", "-S", netInterface.Name}
 		ethtoolOut, err := osext.NewExec(config.HostRoot()).Command(ethtoolCmd[0], ethtoolCmd[1:]...).CombinedOutput()
@@ -606,9 +626,9 @@ func (m *ethtoolMonitor) handleEthtool() (merr error) {
 			merr = errors.Join(merr, err)
 			continue
 		}
-		merr = errors.Join(merr, m.checkEthtool(netInterface.Name, stats))
+		statsByInterface[netInterface.Name] = stats
 	}
-	return merr
+	return statsByInterface, merr
 }
 
 // checkEthtool checks whether the allowance exceeded metrics from ethtool are
