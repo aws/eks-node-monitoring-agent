@@ -189,6 +189,10 @@ func TestWrapper(t *testing.T, Testenv env.Environment) {
 		)
 	})
 
+	// saturates the target node's link-local allowance (DNS, IMDS, NTP), so it
+	// runs alone to avoid disturbing other tests on the node.
+	Testenv.Test(t, monitors.NetworkingMonitor())
+
 	// test the addon configuration if the agent is installed as an EKS Addon.
 	// this is disruptive, so it must run alone.
 	Testenv.Test(t, addon.ConfigurationValues(awsCfg))
