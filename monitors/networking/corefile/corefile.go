@@ -7,7 +7,7 @@
 // surface under the networking monitor's NetworkingReady node condition.
 // Corefile detection runs on Auto Mode nodes only.
 //
-// The agent exposes its apply outcome as JSON at http://localhost:8092/readyz.
+// The agent exposes its apply outcome as JSON at http://localhost:62350/readyz.
 // HTTP 200 means the customer Corefile is live (`Applied`), or DNS is healthy
 // without one (`CoreDNSCorefileConfigMapNotFound`: not opted in, or the
 // ConfigMap was deleted and the last applied Corefile keeps serving). HTTP 503
@@ -40,7 +40,7 @@ import (
 const (
 	// ReadyzURL is the agent's readiness endpoint on the node. Loopback +
 	// fixed port; the agent is a systemd unit local to the node.
-	ReadyzURL = "http://localhost:8092/readyz"
+	ReadyzURL = "http://localhost:62350/readyz"
 
 	// probeTimeout bounds a single HTTP GET so the periodic ticker cannot
 	// stall on a hung endpoint.
