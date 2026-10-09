@@ -92,6 +92,19 @@ func (s *DCGMSystem) HealthCheck(ctx context.Context) ([]monitor.Condition, erro
 			severity = monitor.SeverityWarning
 		}
 
+		// DCGM_FR_FABRIC_PROBE_STATE (123) is DCGM's verdict on the Fabric
+		// Manager status field (DCGM_FI_DEV_FABRIC_MANAGER_STATUS), which
+		// WatchFields already classifies through Classify. DCGM fails on
+		// statuses NMA deliberately does not treat as fatal (NotStarted, and the
+		// driver/DCGM version mismatches NvmlTooOld, Unrecognized, and unknown
+		// values), so report it as a Warning and leave the Fatal decision to the
+		// field check, which still reports a fabric training Failure as Fatal.
+		// ref: https://github.com/NVIDIA/DCGM/blob/64df9f894541e426e416131a9820cae97aa4dd81/modules/health/DcgmHealthWatch.cpp#L3676-L3734 (v4.6.1)
+		if incidents.Health == dcgmapi.DCGM_HEALTH_RESULT_FAIL && incidents.Error.Code == dcgmapi.DCGM_FR_FABRIC_PROBE_STATE {
+			logger.V(2).Info("downgrading fabric probe state incident to Warning", "message", incidents.Error.Message)
+			severity = monitor.SeverityWarning
+		}
+
 		// health check codes comes from the following:
 		// https://github.com/NVIDIA/DCGM/blob/d47c0b77920f8dbfef588eaac2cbbea3401ef463/dcgmlib/dcgm_errors.h#L31
 		conditions = append(conditions,
@@ -103,5 +116,11 @@ func (s *DCGMSystem) HealthCheck(ctx context.Context) ([]monitor.Condition, erro
 		)
 	}
 
-	return conditions, nil
+	// DCGM reports the fabric probe state on every call (and once per GPU) for
+	// as long as the Fabric Manager status is unchanged, so repeats of its
+	// Warning are rate-limited.
+	fabricProbeState := reasons.DCGMHealthCode.Builder(dcgmapi.DCGM_FR_FABRIC_PROBE_STATE).Build().Reason
+	return suppressRepeatedWarnings(s.healthWarnings, s.now(), conditions, func(c monitor.Condition) bool {
+		return c.Reason == fabricProbeState
+	}), nil
 }
