@@ -1,6 +1,4 @@
-//go:build !darwin
-
-package dcgm
+package classify
 
 import (
 	"slices"
@@ -11,17 +9,17 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/pkg/util/renotify"
 )
 
-// warningReNotifyInterval keeps an unchanged Warning's Event from aging out
+// WarningReNotifyInterval keeps an unchanged Warning's Event from aging out
 // under the apiserver's default 1h event TTL, matching the networking
 // Corefile detector.
-const warningReNotifyInterval = 30 * time.Minute
+const WarningReNotifyInterval = 30 * time.Minute
 
-// suppressRepeatedWarnings applies the re-notify rule to the Warnings in conds
-// that selected picks: they are kept, once each (DCGM reports the same one for
-// every GPU), when that set of Warnings changes or warningReNotifyInterval has
-// passed since it was last kept, and dropped otherwise. Other conditions are
-// returned unchanged and in order.
-func suppressRepeatedWarnings(notified *renotify.Tracker[string], now time.Time, conds []monitor.Condition, selected func(monitor.Condition) bool) []monitor.Condition {
+// SuppressRepeatedWarnings applies the re-notify rule to the Warnings in conds
+// that selected picks: they are kept, once each (a reader reports the same one
+// for every GPU), when that set of Warnings changes or WarningReNotifyInterval
+// has passed since it was last kept, and dropped otherwise. Other conditions
+// are returned unchanged and in order.
+func SuppressRepeatedWarnings(notified *renotify.Tracker[string], now time.Time, conds []monitor.Condition, selected func(monitor.Condition) bool) []monitor.Condition {
 	// Only Warnings are rate-limited: a Fatal condition is node state that the
 	// exporter keeps current, not an event, so it always passes through.
 	isSelected := func(c monitor.Condition) bool {
@@ -49,7 +47,7 @@ func suppressRepeatedWarnings(notified *renotify.Tracker[string], now time.Time,
 	slices.Sort(keys)
 	key := strings.Join(slices.Compact(keys), "\n")
 
-	// Report the set if it changed or warningReNotifyInterval has passed, and
+	// Report the set if it changed or WarningReNotifyInterval has passed, and
 	// record it. Unlike the Corefile detector, nothing here learns whether the
 	// event was sent (the caller notifies the manager later), so it is
 	// recorded now.
