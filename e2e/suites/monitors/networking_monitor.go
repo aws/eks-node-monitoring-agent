@@ -79,7 +79,7 @@ func NetworkingMonitor() types.Feature {
 				t.Fatal(err)
 			}
 			targetNode = &nodeList.Items[0]
-			t.Logf("targetting node %q for test", targetNode.Name)
+			t.Logf("targeting node %q for test", targetNode.Name)
 			pod.Spec.NodeName = targetNode.Name
 			return ctx
 		}).
