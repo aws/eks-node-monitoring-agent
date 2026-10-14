@@ -47,6 +47,7 @@ on:
 jobs:
   setup:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     outputs:
       kubernetes_versions: ${{ steps.variables.outputs.kubernetes_versions }}
       ci_step_name_prefix: ${{ steps.variables.outputs.ci_step_name_prefix }}
@@ -73,6 +74,7 @@ jobs:
   # This runs once and the resulting image URI is shared across all test matrix jobs.
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     needs:
       - setup
     outputs:
@@ -124,6 +126,7 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     name: ${{ matrix.k8s_version }}
     needs:
       - setup

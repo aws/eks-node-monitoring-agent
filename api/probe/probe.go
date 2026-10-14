@@ -20,12 +20,13 @@ type TransportKind string
 const (
 	// TransportHTTPLoopback performs an HTTP GET against a loopback address
 	// and port, such as 127.0.0.1:8173 or localhost:8173. A 2xx response is
-	// healthy; any other response, including a refused connection, is
-	// unhealthy.
+	// healthy; any other response, including a redirect or a refused
+	// connection, is unhealthy.
 	TransportHTTPLoopback TransportKind = "http-loopback"
-	// TransportSystemdDBus queries the ActiveState of a systemd unit over
-	// D-Bus. Liveness only: "active" is healthy, anything else is unhealthy.
-	// A failure to reach D-Bus itself is unknown, not unhealthy.
+	// TransportSystemdDBus queries the ActiveState of a systemd service unit
+	// over D-Bus. Liveness only: "active" is healthy, anything else is
+	// unhealthy, including a unit that does not exist. A failure to reach
+	// D-Bus, including a call that times out, is unknown, not unhealthy.
 	TransportSystemdDBus TransportKind = "systemd-dbus"
 )
 
@@ -44,10 +45,19 @@ type Spec struct {
 	// Interval is the time between check rounds.
 	Interval metav1.Duration `json:"interval"`
 
-	// FailureThreshold is the number of consecutive unhealthy results
-	// required before the failure condition is emitted. The counter resets
-	// on any healthy result. Must be at least 1.
+	// FailureThreshold is the number of consecutive unhealthy results a
+	// check needs before its failure is emitted. Each check counts its own
+	// results, and the count resets on that check's next healthy result.
+	// Must be at least 1.
 	FailureThreshold int `json:"failureThreshold"`
+
+	// RecoveryThreshold is the number of consecutive healthy results a check
+	// needs before its emitted failure is resolved.
+	// It damps condition flapping: every False→True transition resets Auto
+	// Repair's wait clock, so a flapping agent would otherwise never be
+	// repaired. If zero, it defaults to 1, which resolves on the first
+	// healthy result and preserves the pre-hysteresis behavior.
+	RecoveryThreshold int `json:"recoveryThreshold,omitempty"`
 
 	// StartupGracePeriod suppresses failure emission for this duration after
 	// the runner starts, tolerating agents that come up after the monitoring
@@ -63,7 +73,8 @@ type Checks struct {
 	// Liveness answers "is the agent running".
 	Liveness Check `json:"liveness"`
 	// Readiness answers "is the agent performing its function". The depth of
-	// the readiness answer is owned by the agent, not by this contract.
+	// the readiness answer is owned by the agent, not by this contract. It is
+	// asked only while liveness is healthy.
 	Readiness *Check `json:"readiness,omitempty"`
 	// Diagnostics optionally returns free-form structured detail that is
 	// surfaced as informational events, never as condition flips. It has no
@@ -77,7 +88,8 @@ type Check struct {
 	// Transport selects how the target is reached.
 	Transport TransportKind `json:"transport"`
 	// Address is the transport-specific target, e.g. "127.0.0.1:8901" for
-	// http-loopback or "ipamd.service" for systemd-dbus.
+	// http-loopback or a service unit name such as "ipamd.service" for
+	// systemd-dbus.
 	Address string `json:"address"`
 	// Path is the HTTP request path, e.g. "/healthz". Required for
 	// http-loopback and must be empty for systemd-dbus.

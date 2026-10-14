@@ -61,6 +61,23 @@ func Configure() (testenv env.Environment, setupFuncs []env.Func, finishFuncs []
 	if err != nil {
 		log.Fatalf("failed to initialize aws config: %v", err)
 	}
+	// the region is what requests get signed for, so it has to match the region
+	// the cluster under test lives in. REGION is read as a fallback because the
+	// test harness exports it, and the SDK does not look at it.
+	if awsCfg.Region == "" {
+		awsCfg.Region = os.Getenv("REGION")
+	}
+	if awsCfg.Region == "" {
+		log.Printf("WARNING: no aws region configured, AWS API calls will fail. set AWS_REGION")
+	}
+	if err := awshelper.CheckStageEndpoint(eksStage); err != nil {
+		log.Printf("WARNING: %v", err)
+	}
+	eksEndpoint := awshelper.GetEksEndpoint()
+	if eksEndpoint == "" {
+		eksEndpoint = "default for region"
+	}
+	log.Printf("using aws region %q for stage %q, eks endpoint %q", awsCfg.Region, eksStage, eksEndpoint)
 
 	// this adds the manifests for the agent from the local config. If you are
 	// using a cluster that already installs the monitoring agent or does so
@@ -174,7 +191,7 @@ func TestWrapper(t *testing.T, Testenv env.Environment) {
 
 	// test the addon configuration if the agent is installed as an EKS Addon.
 	// this is disruptive, so it must run alone.
-	Testenv.Test(t, addon.ConfigurationValues(eksStage, awsCfg))
+	Testenv.Test(t, addon.ConfigurationValues(awsCfg))
 
 	// log collection runs at the end, which effectively makes it collects logs
 	// and data from prior tests.

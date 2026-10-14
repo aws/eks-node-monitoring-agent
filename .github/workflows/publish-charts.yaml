@@ -13,7 +13,8 @@ permissions:
   contents: write
 jobs:
   publish-charts:
-    runs-on: ubuntu-latest
+    runs-on: aws-release-4-core
+    timeout-minutes: 60
     if: github.repository == 'aws/eks-node-monitoring-agent'
     steps:
       - name: "Checkout"

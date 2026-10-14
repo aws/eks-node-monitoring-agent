@@ -3,16 +3,21 @@ name: "Update NVIDIA GPU Instance Types"
 on:
   workflow_dispatch:
   schedule:
-    # Every Monday at 14:00 UTC
-    - cron: "0 14 * * 1"
+    # Every Monday at 14:37 UTC
+    - cron: "37 14 * * 1"
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 jobs:
   update-gpu-list:
     if: ${{ github.repository == 'aws/eks-node-monitoring-agent' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: write
       pull-requests: write

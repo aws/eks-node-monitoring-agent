@@ -105,3 +105,48 @@ func assertSingleCondition(t *testing.T, got []monitor.Condition, wantReason str
 		t.Errorf("want %s/%s, got %s/%s", wantReason, wantSev, got[0].Reason, got[0].Severity)
 	}
 }
+
+// TestClassify_deviceCount covers both device-count checks: DCGM's GPU count
+// must match the host's /dev/nvidia<N> device files, and must be at least the
+// instance type's expected count when that is known. Each mismatch is its own
+// Fatal NvidiaDeviceCountMismatch condition with an exact message.
+func TestClassify_deviceCount(t *testing.T) {
+	u := func(v uint) *uint { return &v }
+	const (
+		fileMismatch  = "DCGM detected %d GPUs but %d nvidia device files were detected at /dev"
+		belowExpected = "expected %d GPUs for this instance type but only %d were detected — possible hardware failure"
+	)
+	for _, tc := range []struct {
+		name     string
+		in       NormalizedSignals
+		wantMsgs []string
+	}{
+		{"all agree", NormalizedSignals{GPUCount: u(4), GPUDeviceFilePath: "/dev", GPUDeviceFileCount: u(4), ExpectedGPUCount: u(4)}, nil},
+		{"expected unknown, counts agree", NormalizedSignals{GPUCount: u(4), GPUDeviceFilePath: "/dev", GPUDeviceFileCount: u(4)}, nil},
+		{"DCGM sees fewer than device files", NormalizedSignals{GPUCount: u(3), GPUDeviceFilePath: "/dev", GPUDeviceFileCount: u(4)}, []string{fmt.Sprintf(fileMismatch, 3, 4)}},
+		{"device files under the GPU Operator driver root", NormalizedSignals{GPUCount: u(3), GPUDeviceFilePath: "/run/nvidia/driver/dev", GPUDeviceFileCount: u(4)},
+			[]string{"DCGM detected 3 GPUs but 4 nvidia device files were detected at /run/nvidia/driver/dev"}},
+		{"DCGM sees more than device files", NormalizedSignals{GPUCount: u(5), GPUDeviceFilePath: "/dev", GPUDeviceFileCount: u(4)}, []string{fmt.Sprintf(fileMismatch, 5, 4)}},
+		{"both agree but below expected", NormalizedSignals{GPUCount: u(3), GPUDeviceFilePath: "/dev", GPUDeviceFileCount: u(3), ExpectedGPUCount: u(4)}, []string{fmt.Sprintf(belowExpected, 4, 3)}},
+		{"above expected is not flagged", NormalizedSignals{GPUCount: u(5), GPUDeviceFilePath: "/dev", GPUDeviceFileCount: u(5), ExpectedGPUCount: u(4)}, nil},
+		{"none detected", NormalizedSignals{GPUCount: u(0), GPUDeviceFilePath: "/dev", GPUDeviceFileCount: u(0), ExpectedGPUCount: u(4)}, []string{fmt.Sprintf(belowExpected, 4, 0)}},
+		{"both checks fire, in order", NormalizedSignals{GPUCount: u(3), GPUDeviceFilePath: "/dev", GPUDeviceFileCount: u(4), ExpectedGPUCount: u(4)},
+			[]string{fmt.Sprintf(fileMismatch, 3, 4), fmt.Sprintf(belowExpected, 4, 3)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var want []monitor.Condition
+			for _, m := range tc.wantMsgs {
+				want = append(want, monitor.Condition{Reason: "NvidiaDeviceCountMismatch", Message: m, Severity: monitor.SeverityFatal})
+			}
+			got := Classify(tc.in)
+			if len(got) != len(want) {
+				t.Fatalf("want %d conditions %+v, got %+v", len(want), want, got)
+			}
+			for i := range want {
+				if got[i].Reason != want[i].Reason || got[i].Message != want[i].Message || got[i].Severity != want[i].Severity {
+					t.Errorf("condition %d: want %+v, got %+v", i, want[i], got[i])
+				}
+			}
+		})
+	}
+}

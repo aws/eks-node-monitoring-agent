@@ -47,13 +47,13 @@ func RenderCloudwatchAgentManifest() ([]byte, error) {
 	return []byte(cloudwatchAgentManifest), nil
 }
 
-func CreateAssociation(ctx context.Context, awsCfg aws.Config, clusterName, stage string) (cleanupFn func() error, err error) {
+func CreateAssociation(ctx context.Context, awsCfg aws.Config, clusterName string) (cleanupFn func() error, err error) {
 	if metricsRoleArn == "" {
 		return nil, fmt.Errorf("--metrics-role-arn cannot be empty when metrics are enabled!")
 	}
 
 	eksClient := eks.NewFromConfig(awsCfg, func(o *eks.Options) {
-		if endpoint := awshelper.GetEksEndpoint(stage, "noop"); endpoint != "" {
+		if endpoint := awshelper.GetEksEndpoint(); endpoint != "" {
 			o.BaseEndpoint = &endpoint
 		}
 	})

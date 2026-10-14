@@ -5,6 +5,31 @@ All notable changes to the EKS Node Monitoring Agent will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.7.3] - 2026-10-05
+
+### What's Changed
+
+#### Features
+- Add the probe runner and its failure semantics ([3cd9607](https://github.com/aws/eks-node-monitoring-agent/commit/3cd9607ace2ae5214ced90d632ba2c1cf04ad62d))
+- Add http-loopback and systemd-dbus transports ([42dedf0](https://github.com/aws/eks-node-monitoring-agent/commit/42dedf083689b849fd9d01bd000a2921893c285c))
+- Add an eks-networking-config-agent readyz monitor ([c1cd067](https://github.com/aws/eks-node-monitoring-agent/commit/c1cd067dd68f654045b4c2da0d406b0c53c0347a))
+- Make the ipamd introspection address configurable via env var ([35abf7d](https://github.com/aws/eks-node-monitoring-agent/commit/35abf7ddf7e6e6c329e2606b21b0a9eae44edf1a))
+- Add probe spec types and startup validation ([ddf9804](https://github.com/aws/eks-node-monitoring-agent/commit/ddf98048150e9ae1587f3b365f650f7ebc598a73))
+- Support condition recovery in the node exporter ([405d7cc](https://github.com/aws/eks-node-monitoring-agent/commit/405d7cc54e32dfaaf1d759aabc1aa0553b94bc4a))
+- Collect pstore files in the log-collector bundle ([53b8307](https://github.com/aws/eks-node-monitoring-agent/commit/53b830716afe03fab8789dcb10aca2808a17ecaa))
+- Configure the DCGM power policy threshold ([d9a2874](https://github.com/aws/eks-node-monitoring-agent/commit/d9a287426cc832a163b31babadfb0b972fe0671f))
+
+#### Bug Fixes
+- Resolve the EKS endpoint per region for pre-prod stages in e2e ([8d4ad96](https://github.com/aws/eks-node-monitoring-agent/commit/8d4ad9620c3276787442e695839ae2de776f1dd5))
+- Detect the GPU Operator device path for device count ([4953677](https://github.com/aws/eks-node-monitoring-agent/commit/49536778b56ce6bdcc737a280fee21ea18615d89))
+- Clean up the fault-injection node in the neuron test ([907b88b](https://github.com/aws/eks-node-monitoring-agent/commit/907b88bb8f7dfc4048f2dfab1cf46b24cd96a312))
+- Tolerate the NVIDIA GPU taint on the dcgm-server DaemonSet ([c8581aa](https://github.com/aws/eks-node-monitoring-agent/commit/c8581aadc46d4b91767898e8b2f3da770ab3da01))
+
+#### CI & Build
+- Route fabric manager status and device count through Classify; pin field messages ([a6078ee](https://github.com/aws/eks-node-monitoring-agent/commit/a6078eec07c47722e56a40d8d048ea624de40250))
+- Extract a pure Classify seam with spec-derived tests in dcgm ([0119f1a](https://github.com/aws/eks-node-monitoring-agent/commit/0119f1a92154b6c7796ee1ff93ed4560b66a76b6))
+- Add a containerized target for running checks on Linux ([a561e75](https://github.com/aws/eks-node-monitoring-agent/commit/a561e75486b3c797fccabd2e4600ab035ab8a2fa))
+
 ## [v1.7.2] - 2026-09-18
 
 ### What's Changed
@@ -247,6 +272,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### What's Changed
 - Update base DCGM image to 4.5.2-4.8.1-ubuntu22.04 to resolve CVEs ([1a2cda4](https://github.com/aws/eks-node-monitoring-agent/commit/1a2cda4))
 
+[v1.7.3]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.7.2...v1.7.3
 [v1.7.2]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.7.1...v1.7.2
 [v1.7.1]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.7.0...v1.7.1
 [v1.7.0]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.6.7...v1.7.0

@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"testing"
+	"time"
 
 	dcgmapi "github.com/NVIDIA/go-dcgm/pkg/dcgm"
 	"github.com/stretchr/testify/assert"
@@ -64,39 +65,11 @@ func TestFields(t *testing.T) {
 		assert.Empty(t, conditions)
 	})
 
-	t.Run("FabricManagerStatusSuccess", func(t *testing.T) {
-		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_FABRIC_MANAGER_STATUS}
-		fieldValue.Status = dcgmapi.DCGM_ST_OK
-		binary.LittleEndian.PutUint64(fieldValue.Value[:], 3) // DcgmFMStatusSuccess
-		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}}
-		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
-		conditions, err := dcgmSystem.WatchFields(context.TODO())
-		assert.NoError(t, err)
-		assert.Empty(t, conditions)
-	})
-
-	t.Run("FabricManagerStatusNotSupported", func(t *testing.T) {
-		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_FABRIC_MANAGER_STATUS}
-		fieldValue.Status = dcgmapi.DCGM_ST_OK
-		binary.LittleEndian.PutUint64(fieldValue.Value[:], 0) // DcgmFMStatusNotSupported
-		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}}
-		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
-		conditions, err := dcgmSystem.WatchFields(context.TODO())
-		assert.NoError(t, err)
-		assert.Empty(t, conditions)
-	})
-
-	t.Run("FabricManagerStatusInProgress", func(t *testing.T) {
-		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_FABRIC_MANAGER_STATUS}
-		fieldValue.Status = dcgmapi.DCGM_ST_OK
-		binary.LittleEndian.PutUint64(fieldValue.Value[:], 2) // DcgmFMStatusInProgress
-		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}}
-		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
-		conditions, err := dcgmSystem.WatchFields(context.TODO())
-		assert.NoError(t, err)
-		assert.Empty(t, conditions)
-	})
-
+	// The two FabricManagerStatus cases below cover the read + routing path through
+	// WatchFields (FieldID recognition and reading the status from the raw value
+	// bytes) for a fault and a healthy status. The decode of every
+	// dcgmFabricManagerStatus_t value is covered by
+	// TestClassify_fabricManagerStatusSpec (classify_fabric_spec_test.go).
 	t.Run("FabricManagerStatusFailure", func(t *testing.T) {
 		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_FABRIC_MANAGER_STATUS}
 		fieldValue.Status = dcgmapi.DCGM_ST_OK
@@ -121,6 +94,55 @@ func TestFields(t *testing.T) {
 		conditions, err := dcgmSystem.WatchFields(context.TODO())
 		assert.NoError(t, err)
 		assert.Empty(t, conditions)
+	})
+
+	// A version-mismatch Fabric Manager status is reported on every call and for
+	// every GPU, so its Warning is rate-limited: reported once, not again while
+	// unchanged until WarningReNotifyInterval has passed, and right away again
+	// once it has cleared and comes back. A Failure is a Fatal condition and is
+	// not rate-limited.
+	t.Run("FabricManagerStatusWarningRateLimited", func(t *testing.T) {
+		statuses := func(values ...uint64) []dcgmapi.FieldValue_v2 {
+			var fieldValues []dcgmapi.FieldValue_v2
+			for _, status := range values {
+				fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_FABRIC_MANAGER_STATUS, Status: dcgmapi.DCGM_ST_OK}
+				binary.LittleEndian.PutUint64(fieldValue.Value[:], status)
+				fieldValues = append(fieldValues, fieldValue)
+			}
+			return fieldValues
+		}
+		mockDcgm := &fake.FakeDcgm{FieldValues: statuses(6, 6, 4)} // DcgmFMStatusNvmlTooOld on two GPUs, DcgmFMStatusFailure
+		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
+		now := time.Unix(0, 0)
+		dcgm.SetClock(dcgmSystem, func() time.Time { return now })
+		failure := monitor.Condition{Reason: "FabricManagerNotRunning", Message: "Fabric Manager status: Failure", Severity: monitor.SeverityFatal}
+		nvmlTooOld := monitor.Condition{Reason: "FabricManagerNotRunning", Message: "Fabric Manager status: NvmlTooOld", Severity: monitor.SeverityWarning}
+		watch := func() []monitor.Condition {
+			t.Helper()
+			conditions, err := dcgmSystem.WatchFields(context.TODO())
+			assert.NoError(t, err)
+			return conditions
+		}
+
+		// First call: the Warning once (not once per GPU), and the Failure.
+		assert.Equal(t, []monitor.Condition{nvmlTooOld, failure}, watch())
+
+		// Next call, unchanged: only the Failure.
+		now = now.Add(5 * time.Minute)
+		assert.Equal(t, []monitor.Condition{failure}, watch())
+
+		// Still unchanged once WarningReNotifyInterval has passed: reported again.
+		now = now.Add(dcgm.WarningReNotifyInterval - 5*time.Minute)
+		assert.Equal(t, []monitor.Condition{nvmlTooOld, failure}, watch())
+
+		// Cleared (DcgmFMStatusSuccess), then back a minute later: reported right
+		// away rather than after WarningReNotifyInterval.
+		mockDcgm.FieldValues = statuses(3, 3, 4)
+		now = now.Add(time.Minute)
+		assert.Equal(t, []monitor.Condition{failure}, watch())
+		mockDcgm.FieldValues = statuses(6, 6, 4)
+		now = now.Add(time.Minute)
+		assert.Equal(t, []monitor.Condition{nvmlTooOld, failure}, watch())
 	})
 
 	// A mask with a sub-field in the True/fault state is flagged, and the
@@ -162,34 +184,65 @@ func TestFields(t *testing.T) {
 		assert.Empty(t, conditions)
 	})
 
+	// DCGM stores a blank value (DCGM_FT_INT64_BLANK, with status OK) when it
+	// could not read a fabric field. This covers reading the blank from the raw
+	// value bytes through WatchFields for both fabric fields; the Classify spec
+	// tables cover every blank value.
+	t.Run("FabricFieldsBlank", func(t *testing.T) {
+		var fieldValues []dcgmapi.FieldValue_v2
+		for _, id := range []dcgmapi.Short{dcgmapi.DCGM_FI_DEV_FABRIC_MANAGER_STATUS, dcgmapi.DCGM_FI_DEV_FABRIC_HEALTH_MASK} {
+			fieldValue := dcgmapi.FieldValue_v2{FieldID: id, Status: dcgmapi.DCGM_ST_OK}
+			binary.LittleEndian.PutUint64(fieldValue.Value[:], uint64(dcgmapi.DCGM_FT_INT64_BLANK))
+			fieldValues = append(fieldValues, fieldValue)
+		}
+		mockDcgm := &fake.FakeDcgm{FieldValues: fieldValues}
+		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
+		conditions, err := dcgmSystem.WatchFields(context.TODO())
+		assert.NoError(t, err)
+		assert.Empty(t, conditions)
+	})
+
 	t.Run("GetResultForBadStatus", func(t *testing.T) {
 		for _, test := range []struct {
 			fieldValue      dcgmapi.FieldValue_v2
 			value           int64
 			expectedMessage string
 		}{
-			{
-				dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_CLOCKS_EVENT_REASONS}, dcgm.DCGM_CLOCKS_THROTTLE_REASON_CLOCKS_SETTING,
-				fmt.Sprintf(`DCGM detected fieldID %d with statusCode -1: Clocks Throttle Reason "clocks_setting"`, dcgmapi.DCGM_FI_DEV_CLOCKS_EVENT_REASONS),
-			},
+			// Clock-throttle messages are covered by TestFieldsClockThrottleReasons.
+			// Odd and large SXID codes are included on purpose: they are values a
+			// naive encoding of the field value would not round-trip.
 			{
 				dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_NVSWITCH_FATAL_ERRORS}, 2,
 				fmt.Sprintf(`DCGM detected fieldID %d with statusCode -1: SXID Fatal Error Code 2`, dcgmapi.DCGM_FI_DEV_NVSWITCH_FATAL_ERRORS),
 			},
 			{
+				dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_NVSWITCH_FATAL_ERRORS}, 3,
+				fmt.Sprintf(`DCGM detected fieldID %d with statusCode -1: SXID Fatal Error Code 3`, dcgmapi.DCGM_FI_DEV_NVSWITCH_FATAL_ERRORS),
+			},
+			{
+				dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_NVSWITCH_FATAL_ERRORS}, 1000,
+				fmt.Sprintf(`DCGM detected fieldID %d with statusCode -1: SXID Fatal Error Code 1000`, dcgmapi.DCGM_FI_DEV_NVSWITCH_FATAL_ERRORS),
+			},
+			{
 				dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_NVSWITCH_NON_FATAL_ERRORS}, 2,
 				fmt.Sprintf(`DCGM detected fieldID %d with statusCode -1: SXID Non-Fatal Error Code 2`, dcgmapi.DCGM_FI_DEV_NVSWITCH_NON_FATAL_ERRORS),
 			},
+			{
+				dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_NVSWITCH_NON_FATAL_ERRORS}, 3,
+				fmt.Sprintf(`DCGM detected fieldID %d with statusCode -1: SXID Non-Fatal Error Code 3`, dcgmapi.DCGM_FI_DEV_NVSWITCH_NON_FATAL_ERRORS),
+			},
+			{
+				dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_NVSWITCH_NON_FATAL_ERRORS}, 1000,
+				fmt.Sprintf(`DCGM detected fieldID %d with statusCode -1: SXID Non-Fatal Error Code 1000`, dcgmapi.DCGM_FI_DEV_NVSWITCH_NON_FATAL_ERRORS),
+			},
 		} {
-			t.Run(fmt.Sprintf("FI_%d", test.fieldValue.FieldID), func(t *testing.T) {
+			t.Run(fmt.Sprintf("FI_%d/%d", test.fieldValue.FieldID, test.value), func(t *testing.T) {
 				fieldValue := test.fieldValue
 				// force the issue to be picked up with a bad status
 				fieldValue.Status = dcgmapi.DCGM_ST_BADPARAM
-				// embed the int representation of the value into the field
-				// TODO: temporary hack because the transformation on uint64 in
-				// PutVarint. we should verify whether this is accurate
-				// behavior at runtime, but not blocking.
-				binary.PutVarint(fieldValue.Value[:], test.value>>1)
+				// embed the value the way FieldValue_v2.Int64() reads it: the
+				// first 8 bytes of Value as a little-endian int64.
+				binary.LittleEndian.PutUint64(fieldValue.Value[:], uint64(test.value))
 				mockDcgm := &fake.FakeDcgm{
 					FieldValues: []dcgmapi.FieldValue_v2{fieldValue},
 				}
@@ -203,5 +256,69 @@ func TestFields(t *testing.T) {
 				}}, conditions)
 			})
 		}
+	})
+}
+
+// TestFieldsClockThrottleReasons pins the message for the clock-throttle field
+// (DCGM_FI_DEV_CLOCKS_EVENT_REASONS) when DCGM reports a bad read status. Each
+// defined reason bit on its own is named exactly; a mask with no defined bit set
+// carries no reason suffix. The masks are the raw bit values from DCGM's
+// dcgm_fields.h (named DCGM_CLOCKS_EVENT_REASON_* in current headers) rather
+// than NMA's dcgm.DCGM_CLOCKS_THROTTLE_REASON_* constants named in each row, so
+// the test also checks that those constants match DCGM.
+//
+// Known issue: with more than one reason bit set, the reported reason is chosen
+// by iterating a Go map, so it varies between runs for the same mask. This test
+// only asserts what holds today (the message names one of the set reasons). A
+// fix would either always report the same reason for a given mask, or list every
+// set reason; both change the message for multi-bit masks.
+func TestFieldsClockThrottleReasons(t *testing.T) {
+	const prefix = "DCGM detected fieldID 112 with statusCode -1"
+	watch := func(t *testing.T, mask uint64) []monitor.Condition {
+		t.Helper()
+		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_CLOCKS_EVENT_REASONS, Status: dcgmapi.DCGM_ST_BADPARAM}
+		binary.LittleEndian.PutUint64(fieldValue.Value[:], mask)
+		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}}
+		conditions, err := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType()).WatchFields(context.TODO())
+		assert.NoError(t, err)
+		return conditions
+	}
+	condition := func(message string) []monitor.Condition {
+		return []monitor.Condition{{Reason: "DCGMFieldError112", Message: message, Severity: monitor.SeverityWarning}}
+	}
+
+	for _, tc := range []struct {
+		mask   uint64
+		reason string // "" => no reason suffix
+	}{
+		{0x0, ""},                 // no reason bit set
+		{0x1, "gpu_idle"},         // DCGM_CLOCKS_THROTTLE_REASON_GPU_IDLE
+		{0x2, "clocks_setting"},   // DCGM_CLOCKS_THROTTLE_REASON_CLOCKS_SETTING
+		{0x4, "sw_power_cap"},     // DCGM_CLOCKS_THROTTLE_REASON_SW_POWER_CAP
+		{0x8, "hw_slowdown"},      // DCGM_CLOCKS_THROTTLE_REASON_HW_SLOWDOWN
+		{0x10, "sync_boost"},      // DCGM_CLOCKS_THROTTLE_REASON_SYNC_BOOST
+		{0x20, "sw_thermal"},      // DCGM_CLOCKS_THROTTLE_REASON_SW_THERMAL
+		{0x40, "hw_thermal"},      // DCGM_CLOCKS_THROTTLE_REASON_HW_THERMAL
+		{0x80, "hw_power_brake"},  // DCGM_CLOCKS_THROTTLE_REASON_HW_POWER_BRAKE
+		{0x100, "display_clocks"}, // DCGM_CLOCKS_THROTTLE_REASON_DISPLAY_CLOCKS
+		{0x200, ""},               // not a defined reason bit
+	} {
+		t.Run(fmt.Sprintf("mask 0x%x", tc.mask), func(t *testing.T) {
+			want := prefix
+			if tc.reason != "" {
+				want += fmt.Sprintf(": Clocks Throttle Reason %q", tc.reason)
+			}
+			assert.Equal(t, condition(want), watch(t, tc.mask))
+		})
+	}
+
+	t.Run("multiple reasons names one of them", func(t *testing.T) {
+		// DCGM_CLOCKS_THROTTLE_REASON_HW_SLOWDOWN (0x8) + DCGM_CLOCKS_THROTTLE_REASON_SW_THERMAL
+		// (0x20); which one is named varies today.
+		got := watch(t, 0x28)
+		assert.Contains(t, []any{
+			condition(prefix + `: Clocks Throttle Reason "hw_slowdown"`),
+			condition(prefix + `: Clocks Throttle Reason "sw_thermal"`),
+		}, any(got))
 	})
 }

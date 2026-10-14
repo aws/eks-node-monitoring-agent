@@ -9,18 +9,23 @@ name: "Bump DCGM Exporter Image"
 on:
   workflow_dispatch:
   schedule:
-    # Once a day at 09:00 UTC
-    - cron: "0 9 * * *"
+    # Once a day at 09:41 UTC
+    - cron: "41 9 * * *"
 
 permissions:
   id-token: write
   contents: write
   pull-requests: write
 
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   bump-dcgm-exporter:
     if: ${{ github.repository == 'aws/eks-node-monitoring-agent' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:

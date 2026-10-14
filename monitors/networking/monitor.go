@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coreos/go-systemd/v22/dbus"
 	"github.com/go-logr/logr"
 	"github.com/shirou/gopsutil/v4/process"
 	"golang.org/x/time/rate"
@@ -26,6 +25,7 @@ import (
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 	"github.com/aws/eks-node-monitoring-agent/api/monitor/resource"
+	"github.com/aws/eks-node-monitoring-agent/monitors/networking/corefile"
 	"github.com/aws/eks-node-monitoring-agent/monitors/networking/efa"
 	toolexec "github.com/aws/eks-node-monitoring-agent/monitors/networking/exec"
 	"github.com/aws/eks-node-monitoring-agent/monitors/networking/ipamd"
@@ -34,6 +34,7 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/monitors/networking/npa"
 	"github.com/aws/eks-node-monitoring-agent/pkg/config"
 	"github.com/aws/eks-node-monitoring-agent/pkg/osext"
+	"github.com/aws/eks-node-monitoring-agent/pkg/probe"
 	"github.com/aws/eks-node-monitoring-agent/pkg/reasons"
 	"github.com/aws/eks-node-monitoring-agent/pkg/util"
 )
@@ -247,11 +248,33 @@ func (m *NetworkingMonitor) Register(ctx context.Context, mgr monitor.Manager) e
 		go handler.Start(ctx)
 	}
 
+	// Subagent health probes (Auto Mode: IPAMD liveness). Runners emit
+	// through this monitor's manager, so probe findings surface under the
+	// NetworkingReady condition like any handler-derived condition.
+	for _, spec := range m.probeSpecs() {
+		runner, err := probe.NewRunner(spec, mgr, m.log)
+		if err != nil {
+			return err
+		}
+		go runner.Start(ctx)
+	}
+
 	// NPA (Network Policy Agent) D-Bus state monitoring (crash-loop + not-running) — Auto Mode only.
 	if npaEnabled {
 		go util.NewChannelHandler(
 			func(time.Time) error { return npaDetector.HandleState() },
 			util.TimeTickWithJitterContext(ctx, 5*time.Minute),
+		).Start(ctx)
+	}
+
+	// CoreDNS Corefile agent /readyz polling, Auto Mode only. Short cadence
+	// because the agent's outcome changes on a ConfigMap edit, not on
+	// long-lived resource state.
+	if slices.Contains(m.runtimeContext.Tags(), config.EKSAuto) {
+		corefileDetector := corefile.New(mgr, m.log)
+		go util.NewChannelHandler(
+			func(time.Time) error { return corefileDetector.HandleState() },
+			util.TimeTickWithJitterContext(ctx, 30*time.Second),
 		).Start(ctx)
 	}
 
@@ -328,21 +351,9 @@ func (m *NetworkingMonitor) handleIPAMDLogs(line string) error {
 
 func (m *NetworkingMonitor) handleIPAMD() error {
 	if slices.Contains(m.runtimeContext.Tags(), config.EKSAuto) {
-		// on the system, indicating ipamd should be running if there are no errors.
-		dbus, err := dbus.NewWithContext(context.Background())
-		if err != nil {
-			return err
-		}
-		defer dbus.Close()
-		property, err := dbus.GetUnitPropertyContext(context.Background(), "ipamd.service", "ActiveState")
-		if err != nil {
-			return err
-		}
-		ipamdRunning := false
-		if property.Value.Value().(string) == "active" {
-			ipamdRunning = true
-		}
-		return m.checkIPAMD(ipamdRunning)
+		// Liveness of ipamd.service is owned by the IPAMD probe registered in
+		// probeSpecs; only the checkpoint/CRI cross-check runs here.
+		return m.checkIPAMD(true)
 	} else {
 		ipamdRunning := false
 		podName, isInstalled, err := m.isVPCCNIInstalled()
