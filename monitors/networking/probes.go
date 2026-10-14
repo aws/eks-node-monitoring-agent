@@ -33,6 +33,10 @@ func (m *NetworkingMonitor) probeSpecs() []apiprobe.Spec {
 			},
 			Interval:         metav1.Duration{Duration: 30 * time.Second},
 			FailureThreshold: 3,
+			// Clear the condition only after four healthy checks in a row, so
+			// a crash-looping ipamd that passes an occasional check between
+			// restarts does not keep resetting Auto Repair's wait.
+			RecoveryThreshold: 4,
 			// Tolerate ipamd.service coming up after the monitoring agent
 			// during boot; systemd ordering does not sequence the two.
 			StartupGracePeriod: metav1.Duration{Duration: 5 * time.Minute},
