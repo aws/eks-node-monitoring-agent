@@ -1,0 +1,140 @@
+package scrape
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+
+	dto "github.com/prometheus/client_model/go"
+	"github.com/prometheus/common/expfmt"
+
+	"github.com/aws/eks-node-monitoring-agent/pkg/nodetelemetry"
+	"github.com/aws/eks-node-monitoring-agent/pkg/telemetry/config"
+)
+
+var errTooLarge = errors.New("scrape response too large")
+
+type Series struct {
+	Labels map[string]string
+	Value  float64
+}
+
+type Parsed struct {
+	Series      map[string][]Series
+	Problems    []nodetelemetry.Problem
+	SawIdentity bool
+}
+
+func Parse(contentType string, body io.Reader, allow map[string]config.MetricSpec, maxBytes int64, identity string) (Parsed, error) {
+	format := expfmt.ResponseFormat(http.Header{"Content-Type": {contentType}})
+	if format.FormatType() == expfmt.TypeUnknown {
+		format = expfmt.NewFormat(expfmt.TypeTextPlain)
+	}
+	dec := expfmt.NewDecoder(&limitReader{r: body, left: maxBytes}, format)
+	res := Parsed{Series: map[string][]Series{}}
+	for {
+		var mf dto.MetricFamily
+		err := dec.Decode(&mf)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return res, nil
+			} else if errors.Is(err, errTooLarge) {
+				return Parsed{}, errTooLarge
+			}
+			return Parsed{}, fmt.Errorf("decode exposition: %w", err)
+		}
+		name := mf.GetName()
+		if name == identity && len(mf.Metric) > 0 {
+			res.SawIdentity = true
+		}
+		spec, ok := allow[name]
+		switch {
+		case !ok:
+		case name == nodetelemetry.MetricEksProblem:
+			res.Problems = append(res.Problems, problems(&mf)...)
+		// TODO: count metrics dropped for exceeding MaxSeries.
+		case name != nodetelemetry.MetricEksNotReporting && (spec.MaxSeries == 0 || len(mf.Metric) <= spec.MaxSeries):
+			for _, m := range mf.Metric {
+				if v, ok := value(&mf, m); ok {
+					res.Series[name] = append(res.Series[name], Series{Labels: labels(m), Value: v})
+				}
+			}
+		}
+	}
+}
+
+func problems(mf *dto.MetricFamily) []nodetelemetry.Problem {
+	var out []nodetelemetry.Problem
+	for _, m := range mf.Metric {
+		if v, ok := value(mf, m); !ok || v != 1 {
+			continue
+		}
+		p := nodetelemetry.Problem{Resources: map[string]string{}}
+		for k, v := range labels(m) {
+			switch {
+			case k == "type":
+				p.Type = v
+			case k == "reason":
+				p.Reason = v
+			case strings.HasPrefix(k, "resource_"):
+				p.Resources[camelCase(strings.TrimPrefix(k, "resource_"))] = v
+			}
+		}
+		if p.Type != "" && p.Reason != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func value(mf *dto.MetricFamily, m *dto.Metric) (float64, bool) {
+	switch mf.GetType() {
+	case dto.MetricType_GAUGE:
+		return m.GetGauge().GetValue(), m.Gauge != nil
+	case dto.MetricType_COUNTER:
+		return m.GetCounter().GetValue(), m.Counter != nil
+	case dto.MetricType_UNTYPED:
+		return m.GetUntyped().GetValue(), m.Untyped != nil
+	}
+	return 0, false
+}
+
+func labels(m *dto.Metric) map[string]string {
+	out := make(map[string]string, len(m.Label))
+	for _, lp := range m.Label {
+		out[lp.GetName()] = lp.GetValue()
+	}
+	return out
+}
+
+func camelCase(s string) string {
+	parts := strings.Split(s, "_")
+	for i := 1; i < len(parts); i++ {
+		if parts[i] != "" {
+			parts[i] = strings.ToUpper(parts[i][:1]) + parts[i][1:]
+		}
+	}
+	return strings.Join(parts, "")
+}
+
+type limitReader struct {
+	r    io.Reader
+	left int64
+}
+
+func (l *limitReader) Read(p []byte) (int, error) {
+	if l.left < 0 {
+		return 0, errTooLarge
+	}
+	if int64(len(p)) > l.left+1 {
+		p = p[:l.left+1]
+	}
+	n, err := l.r.Read(p)
+	l.left -= int64(n)
+	if l.left < 0 {
+		return n, errTooLarge
+	}
+	return n, err
+}

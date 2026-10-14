@@ -1,0 +1,236 @@
+package telemetry
+
+import (
+	"cmp"
+	"context"
+	"hash/fnv"
+	"slices"
+	"sync"
+	"time"
+
+	"github.com/go-logr/logr"
+	"github.com/prometheus/client_golang/prometheus"
+	"k8s.io/utils/clock"
+
+	nmaconfig "github.com/aws/eks-node-monitoring-agent/pkg/config"
+	"github.com/aws/eks-node-monitoring-agent/pkg/nodetelemetry"
+	"github.com/aws/eks-node-monitoring-agent/pkg/telemetry/config"
+	"github.com/aws/eks-node-monitoring-agent/pkg/telemetry/scrape"
+)
+
+type Sender interface {
+	Send(ctx context.Context, r *nodetelemetry.Report) (nodetelemetry.Result, error)
+}
+
+type ManagerConfig struct {
+	Interval   time.Duration
+	NodeName   string
+	Node       nodetelemetry.NodeAttrs
+	Collectors []scrape.Collector
+	ScrapeWait time.Duration
+	Sender     Sender
+	Registerer prometheus.Registerer
+	Clock      clock.WithTicker
+	Logger     logr.Logger
+	Runtime    *nmaconfig.RuntimeContext
+}
+
+type Manager struct {
+	cfg      ManagerConfig
+	mu       sync.Mutex
+	inFlight map[int]bool
+	scrapes  *prometheus.CounterVec
+	reports  *prometheus.CounterVec
+}
+
+func NewManager(cfg ManagerConfig) *Manager {
+	if cfg.Clock == nil {
+		cfg.Clock = clock.RealClock{}
+	}
+	if cfg.Runtime == nil {
+		cfg.Runtime = nmaconfig.GetRuntimeContext()
+	}
+	m := &Manager{
+		cfg:      cfg,
+		inFlight: map[int]bool{},
+		scrapes: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "nma_telemetry_scrape_total",
+			Help: "Telemetry collector runs by component and result (ok, a not-reporting reason, skipped, late).",
+		}, []string{"component", "result"}),
+		reports: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "nma_telemetry_report_total",
+			Help: "Telemetry reports by outcome (accepted, dropped, hold, error).",
+		}, []string{"outcome"}),
+	}
+	if cfg.Registerer != nil {
+		cfg.Registerer.MustRegister(m.scrapes, m.reports)
+	}
+	return m
+}
+
+func (m *Manager) Start(ctx context.Context) error {
+	clk := m.cfg.Clock
+	prev := clk.Now()
+	timer := clk.NewTimer(FirstReportTime(prev, m.cfg.Interval, m.cfg.NodeName).Sub(prev))
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return nil
+	case <-timer.C():
+	}
+	ticker := clk.NewTicker(m.cfg.Interval)
+	defer ticker.Stop()
+	for {
+		now := clk.Now()
+		m.runInterval(ctx, prev, now)
+		prev = now
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C():
+		}
+	}
+}
+
+func FirstReportTime(now time.Time, interval time.Duration, nodeName string) time.Time {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(nodeName))
+	t := now.Truncate(interval).Add(time.Duration(h.Sum64() % uint64(interval)))
+	if t.Before(now) {
+		t = t.Add(interval)
+	}
+	return t
+}
+
+func (m *Manager) runInterval(ctx context.Context, start, end time.Time) {
+	results := m.collect(ctx)
+	node := m.cfg.Node
+	tags := m.cfg.Runtime.Tags()
+	if node.ComputeType == "" {
+		for _, t := range []string{nmaconfig.EKSAuto, nmaconfig.Hybrid} {
+			// the hybrid tag may be added with a delay, so we check for it on every
+			// interval until the compute-type's been discovered
+			if slices.Contains(tags, t) {
+				node.ComputeType = t
+				break
+			}
+		}
+	}
+	rep := nodetelemetry.NewReport(node, start, end)
+	for _, r := range results {
+		rep.AddScope(r.Scope)
+	}
+
+	res, err := m.cfg.Sender.Send(ctx, rep)
+	if err != nil {
+		m.cfg.Logger.Error(err, "telemetry report not sent")
+		m.reports.WithLabelValues("error").Inc()
+		return
+	}
+	m.reports.WithLabelValues(res.Outcome.String()).Inc()
+	if res.Outcome == nodetelemetry.Hold {
+		m.cfg.Logger.V(2).Info("telemetry report held until the next interval", "status", res.Status, "message", res.Message)
+		return
+	}
+	if res.Outcome == nodetelemetry.Dropped {
+		m.cfg.Logger.Info("telemetry report rejected", "status", res.Status, "message", res.Message)
+	}
+	// TODO: once reports are size-bounded, advance only the counters
+	// that were sent.
+	for _, r := range results {
+		if r.Advance != nil {
+			r.Advance()
+		}
+	}
+}
+
+func (m *Manager) collect(ctx context.Context) []scrape.Result {
+	type done struct {
+		i int
+		r scrape.Result
+	}
+	ch := make(chan done, len(m.cfg.Collectors))
+	launched := map[int]bool{}
+	for i, c := range m.cfg.Collectors {
+		m.mu.Lock()
+		busy := m.inFlight[i]
+		m.inFlight[i] = true
+		m.mu.Unlock()
+		if busy {
+			m.scrapes.WithLabelValues(c.Scope(), "skipped").Inc()
+			continue
+		}
+		launched[i] = true
+		go func() {
+			r := c.Scrape(ctx)
+			m.mu.Lock()
+			delete(m.inFlight, i)
+			m.mu.Unlock()
+			ch <- done{i, r}
+		}()
+	}
+
+	got := map[int]scrape.Result{}
+	timer := m.cfg.Clock.NewTimer(m.cfg.ScrapeWait)
+	defer timer.Stop()
+wait:
+	for len(got) < len(launched) {
+		select {
+		case d := <-ch:
+			got[d.i] = d.r
+		case <-timer.C():
+			break wait
+		case <-ctx.Done():
+			break wait
+		}
+	}
+
+	var out []scrape.Result
+	for i, c := range m.cfg.Collectors {
+		r, ok := got[i]
+		switch {
+		case ok:
+			m.scrapes.WithLabelValues(c.Scope(), cmp.Or(r.Failure, "ok")).Inc()
+			out = append(out, r)
+		case launched[i]:
+			m.scrapes.WithLabelValues(c.Scope(), "late").Inc()
+		}
+	}
+	return out
+}
+
+func BuildCollectors(cfg *config.Config, source FatalSource, resources map[string]string) ([]scrape.Collector, time.Duration) {
+	var out []scrape.Collector
+	var wait time.Duration
+	for _, t := range cfg.Targets {
+		if t.Endpoint == nil {
+			if slices.ContainsFunc(t.Metrics, func(m config.MetricSpec) bool { return m.Name == nodetelemetry.MetricEksProblem }) {
+				out = append(out, NewInProcessCollector(source, resources))
+			}
+			continue
+		}
+		s := cfg.Resolve(t)
+		metrics := make([]config.MetricSpec, 0, len(t.Metrics))
+		for _, m := range t.Metrics {
+			m.MaxSeries = cmp.Or(m.MaxSeries, s.MaxSeries)
+			metrics = append(metrics, m)
+		}
+		var identity string
+		if t.Identity != nil {
+			identity = t.Identity.RequireMetric
+		}
+		out = append(out, scrape.NewHTTPCollector(scrape.HTTPConfig{
+			Scope:             t.Component,
+			Endpoint:          *t.Endpoint,
+			Path:              s.Path,
+			Timeout:           s.Timeout,
+			MaxBytes:          s.MaxBytes,
+			Identity:          identity,
+			Metrics:           metrics,
+			NotReportingAfter: cfg.NotReportingThreshold(),
+			OnceSeen:          s.Expected == config.ExpectedOnceSeen,
+		}))
+		wait = max(wait, s.Timeout)
+	}
+	return out, wait + time.Second
+}

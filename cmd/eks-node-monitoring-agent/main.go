@@ -394,6 +394,10 @@ func run() error {
 
 		close(registered)
 
+		if monitorConfig.TelemetryEnabled() {
+			go runTelemetry(ctx, logger.WithName("telemetry"), monitorConfig.Telemetry, monitorCfg, monitoringKubeClient, monitorMgr)
+		}
+
 		return monitorMgr.Start(ctx)
 	})); err != nil {
 		logger.Error(err, "failed to add monitor startup runnable")
