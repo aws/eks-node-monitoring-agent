@@ -401,6 +401,50 @@ func TestNetworkingPeriodic(t *testing.T) {
 		}, gotReasons, "a spike between ticks should raise a condition for each allowance-exceeded stat")
 	})
 
+	t.Run("EthtoolCheckRateLimitsWarningsPerInterface", func(t *testing.T) {
+		ethtoolBytes, err := os.ReadFile("testdata/ethtool-ens5.txt")
+		require.NoError(t, err)
+		stats, err := parseEthtool(ethtoolBytes)
+		require.NoError(t, err)
+
+		mockManager := &mockManager{
+			obs: observer.BaseObserver{},
+			res: make(chan monitor.Condition, 10),
+		}
+		ethtoolMonitor := makeEthtoolMonitor(mockManager)
+		now := time.Now()
+		ethtoolMonitor.now = func() time.Time { return now }
+
+		drain := func() []string {
+			var got []string
+			for len(mockManager.res) > 0 {
+				got = append(got, (<-mockManager.res).Reason)
+			}
+			return got
+		}
+		spike := func(iface string) {
+			stats[BandwidthInExceeded] += 100000
+			require.NoError(t, ethtoolMonitor.checkEthtool(iface, stats))
+		}
+
+		require.NoError(t, ethtoolMonitor.checkEthtool("ens5", stats)) // baseline
+		require.NoError(t, ethtoolMonitor.checkEthtool("ens6", stats)) // baseline
+
+		spike("ens5")
+		assert.Equal(t, []string{"BandwidthInExceeded"}, drain(), "first spike should be reported")
+
+		now = now.Add(interfaceMonitorPeriod)
+		spike("ens5")
+		assert.Empty(t, drain(), "spike within the re-notify interval should be suppressed")
+
+		spike("ens6")
+		assert.Equal(t, []string{"BandwidthInExceeded"}, drain(), "other interfaces are rate-limited independently")
+
+		now = now.Add(ethtoolWarningReNotifyInterval)
+		spike("ens5")
+		assert.Equal(t, []string{"BandwidthInExceeded"}, drain(), "spike after the re-notify interval should be reported")
+	})
+
 	t.Run("EthtoolCheckJoinsAllNotifyErrors", func(t *testing.T) {
 		ethtoolBytes, err := os.ReadFile("testdata/ethtool-ens5.txt")
 		require.NoError(t, err)
