@@ -268,10 +268,9 @@ func (m *NetworkingMonitor) Register(ctx context.Context, mgr monitor.Manager) e
 		).Start(ctx)
 	}
 
-	// CoreDNS Corefile agent /readyz polling, Auto Mode only. Short cadence
-	// because the agent's outcome changes on a ConfigMap edit, not on
-	// long-lived resource state.
-	if slices.Contains(m.runtimeContext.Tags(), config.EKSAuto) {
+	// Corefile agent /readyz polling on Auto Mode nodes that have the agent.
+	// Short cadence because the outcome changes on a ConfigMap edit.
+	if slices.Contains(m.runtimeContext.Tags(), config.EKSAuto) && corefile.AgentInstalled(ctx, m.log) {
 		corefileDetector := corefile.New(mgr, m.log)
 		go util.NewChannelHandler(
 			func(time.Time) error { return corefileDetector.HandleState() },
