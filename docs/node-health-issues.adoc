@@ -77,6 +77,10 @@ If auto repair is enabled, the repair actions that are listed start 10 minutes a
 |Condition
 |One or more GPUs reported a non-success fabric status, indicating NVSwitch fabric training failure. Affected GPUs cannot participate in multi-GPU NVLink communication. This condition persists across reboots and requires instance replacement.
 
+|NvidiaLibraryNotFound
+|Event
+|The agent could not load the NVIDIA management library (libnvidia-ml.so.1) from the host, so it cannot read GPU health. This is an agent packaging or driver installation issue, not a GPU fault.
+
 |NvidiaNCCLError
 |Event
 |A segfault occurred in the NVIDIA Collective Communications library (`libnccl`).

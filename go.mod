@@ -4,6 +4,7 @@ go 1.27.2
 
 require (
 	github.com/NVIDIA/go-dcgm v1.4601.1
+	github.com/NVIDIA/go-nvml v0.13.4-1
 	github.com/aws/amazon-vpc-cni-k8s v1.23.0
 	github.com/aws/aws-sdk-go-v2 v1.47.3
 	github.com/aws/aws-sdk-go-v2/config v1.33.9
@@ -92,6 +93,7 @@ require (
 	github.com/google/nftables v0.3.1-0.20251119083706-1db35da82052 // indirect
 	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
+	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260216142805-b3301c5f2a88 // indirect
 	github.com/mdlayher/netlink v1.8.1-0.20251028132421-dcc6cab9a6eb // indirect
 	github.com/mdlayher/socket v0.5.1 // indirect
