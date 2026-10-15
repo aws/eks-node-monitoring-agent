@@ -17,8 +17,10 @@ import (
 	"github.com/google/uuid"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/cache"
 	controllerruntime "sigs.k8s.io/controller-runtime"
+	crcache "sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -106,13 +108,14 @@ func (c *nodeDiagnosticController) Register(ctx context.Context, m controllerrun
 	// so it runs after the cache has started. Calling GetInformer directly
 	// here would trigger synchronous API discovery against the cluster IP,
 	// which can block for ~30s on a TCP SYN timeout if kube-proxy has not yet
-	// programmed the DNAT rule for the kubernetes service. Deferring until
-	// the cache is ready avoids that startup race and the resulting panic.
+	// programmed the DNAT rule for the kubernetes service. Deferring alone
+	// does not avoid that race, so getInformerWithRetry retries until the
+	// API server is reachable.
 	mgrCache := m.GetCache()
 	return m.Add(manager.RunnableFunc(func(ctx context.Context) error {
 		logger := log.FromContext(ctx).WithName("capture-cancel-watcher")
 
-		informer, err := mgrCache.GetInformer(ctx, &v1alpha1.NodeDiagnostic{})
+		informer, err := getInformerWithRetry(ctx, logger, mgrCache, informerRetryInterval)
 		if err != nil {
 			return fmt.Errorf("failed to get informer for NodeDiagnostic: %w", err)
 		}
@@ -137,6 +140,37 @@ func (c *nodeDiagnosticController) Register(ctx context.Context, m controllerrun
 		<-ctx.Done()
 		return nil
 	}))
+}
+
+// informerRetryInterval matches the interval controller-runtime's source.Kind uses when retrying GetInformer.
+const informerRetryInterval = 10 * time.Second
+
+type informerGetter interface {
+	GetInformer(ctx context.Context, obj client.Object, opts ...crcache.InformerGetOption) (crcache.Informer, error)
+}
+
+// getInformerWithRetry retries GetInformer until it succeeds or ctx is done. Right after node boot the kubernetes
+// service cluster IP can be unreachable until kube-proxy programs its DNAT rule, and failing on the first attempt
+// stops the manager. The controller's own CacheSyncTimeout still bounds how long startup can stay broken.
+func getInformerWithRetry(
+	ctx context.Context, logger logr.Logger, getter informerGetter, interval time.Duration,
+) (crcache.Informer, error) {
+	var (
+		informer crcache.Informer
+		lastErr  error
+	)
+	err := wait.PollUntilContextCancel(ctx, interval, true, func(ctx context.Context) (bool, error) {
+		informer, lastErr = getter.GetInformer(ctx, &v1alpha1.NodeDiagnostic{})
+		if lastErr != nil {
+			logger.Error(lastErr, "failed to get informer for NodeDiagnostic, retrying", "interval", interval)
+			return false, nil
+		}
+		return true, nil
+	})
+	if err != nil && lastErr != nil {
+		return nil, lastErr
+	}
+	return informer, err
 }
 
 func (c *nodeDiagnosticController) Reconcile(ctx context.Context, nodeDiagnostic *v1alpha1.NodeDiagnostic) (reconcile.Result, error) {
