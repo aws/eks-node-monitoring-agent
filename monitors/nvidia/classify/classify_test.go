@@ -1,6 +1,4 @@
-//go:build !darwin
-
-package dcgm
+package classify
 
 import (
 	"fmt"
