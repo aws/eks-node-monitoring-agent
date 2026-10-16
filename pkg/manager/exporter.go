@@ -8,6 +8,11 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 )
 
+type ActiveFatalCondition struct {
+	ConditionType corev1.NodeConditionType
+	Reason        string
+}
+
 // Exporter handles propagating conditions from monitors to external systems
 type Exporter interface {
 	// Info exports informational conditions
@@ -24,4 +29,6 @@ type Exporter interface {
 	// no other fatal reasons remain for it. Resolving a reason that was
 	// never reported is a no-op.
 	Resolve(ctx context.Context, condition monitor.Condition, conditionType corev1.NodeConditionType) (bool, error)
+
+	ActiveFatalConditions() []ActiveFatalCondition
 }

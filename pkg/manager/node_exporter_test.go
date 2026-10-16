@@ -3,6 +3,7 @@ package manager_test
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -538,4 +539,70 @@ func TestNodeExporter_ReasonFollowsMostRecentReport(t *testing.T) {
 	// while messages keep their arrival order.
 	fatal("ErrorA", "MessageA2")
 	expectCondition("ErrorA", "MessageA2; MessageB")
+}
+
+func TestNodeExporter_ActiveFatalConditions(t *testing.T) {
+	ctx := context.TODO()
+
+	fakeClient := fake.NewFakeClient()
+	nodeName := "test-node"
+	initialNode := corev1.Node{ObjectMeta: v1.ObjectMeta{Name: nodeName}}
+	if err := fakeClient.Create(ctx, &initialNode); err != nil {
+		t.Fatalf("failed to create initial node: %v", err)
+	}
+	var recorder fakeEventRecorder
+	exporter := manager.NewNodeExporter(
+		&initialNode, fakeClient, &recorder,
+		map[corev1.NodeConditionType]manager.NodeConditionConfig{
+			corev1.NodeConditionType("NetworkingReady"): {ReadyReason: "NetworkingIsReady"},
+			corev1.NodeConditionType("StorageReady"):    {ReadyReason: "StorageIsReady"},
+		},
+	)
+
+	if got := exporter.ActiveFatalConditions(); got != nil {
+		t.Fatalf("ActiveFatalConditions before Fatal: want nil, got %v", got)
+	}
+
+	netType := corev1.NodeConditionType("NetworkingReady")
+	stoType := corev1.NodeConditionType("StorageReady")
+	for _, c := range []struct {
+		t corev1.NodeConditionType
+		r string
+	}{
+		{netType, "InterfaceNotRunning"},
+		{netType, "VPCCNIFailure"},
+		{stoType, "EBSThrottled"},
+	} {
+		if err := exporter.Fatal(ctx, monitor.Condition{Reason: c.r, Message: "msg", Severity: monitor.SeverityFatal}, c.t); err != nil {
+			t.Fatalf("Fatal: %v", err)
+		}
+	}
+
+	got := exporter.ActiveFatalConditions()
+	want := []manager.ActiveFatalCondition{
+		{ConditionType: netType, Reason: "InterfaceNotRunning"},
+		{ConditionType: netType, Reason: "VPCCNIFailure"},
+		{ConditionType: stoType, Reason: "EBSThrottled"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ActiveFatalConditions after 3 Fatals:\n  got  %+v\n  want %+v", got, want)
+	}
+
+	if _, err := exporter.Resolve(ctx, monitor.Condition{Reason: "EBSThrottled"}, stoType); err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	got = exporter.ActiveFatalConditions()
+	want = []manager.ActiveFatalCondition{
+		{ConditionType: netType, Reason: "InterfaceNotRunning"},
+		{ConditionType: netType, Reason: "VPCCNIFailure"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("ActiveFatalConditions after Resolve:\n  got  %+v\n  want %+v", got, want)
+	}
+
+	got[0].Reason = "mutated"
+	got2 := exporter.ActiveFatalConditions()
+	if got2[0].Reason != "InterfaceNotRunning" {
+		t.Fatalf("returned slice is not a deep copy; got2[0].Reason = %q", got2[0].Reason)
+	}
 }

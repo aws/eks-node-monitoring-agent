@@ -63,6 +63,7 @@ func (e *mockExporter) Resolve(_ context.Context, condition monitor.Condition, _
 	}
 	return e.resolveValue, nil
 }
+func (e *mockExporter) ActiveFatalConditions() []manager.ActiveFatalCondition { return nil }
 
 func TestManager_Notification(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.TODO(), time.Millisecond)

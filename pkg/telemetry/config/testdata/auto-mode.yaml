@@ -1,0 +1,43 @@
+telemetry:
+  enabled: true
+
+  report:
+    interval: 5m
+
+  notReporting:
+    afterFailedIntervals: 2
+
+  targetDefaults:
+    path: /metrics
+    timeout: 2s
+    maxBytes: 1Mi
+    expected: always
+    maxSeries: 50
+
+  targets:
+    - component: ipamd
+      endpoint:
+        address: 127.0.0.1
+        port: 61678
+      identity:
+        requireMetric: awscni_build_info
+      metrics:
+        - { name: awscni_assigned_ip_addresses, type: gauge, unit: "1" }
+        - { name: awscni_aws_api_error_count, type: counter, unit: "1", labels: [api] }
+        - { name: process_resident_memory_bytes, type: gauge, unit: By }
+        - { name: eks_problem }
+
+    - component: network-policy-agent
+      endpoint:
+        address: 127.0.0.1
+        port: 8900
+      metrics:
+        - { name: policy_program_failures, type: counter, unit: "1" }
+        - { name: eks_not_reporting }
+
+    - component: node-monitoring-agent
+      metrics:
+        - { name: eks_problem }
+        - { name: eks_pid_utilization, type: gauge, unit: "%" }
+        - { name: eks_net_linklocal_allowance_exceeded, type: counter, unit: "1" }
+        - { name: process_resident_memory_bytes, type: gauge, unit: By }

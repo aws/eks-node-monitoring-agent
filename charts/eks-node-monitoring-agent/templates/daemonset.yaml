@@ -93,7 +93,7 @@ spec:
             - name: host-root
               mountPath: /host
               mountPropagation: HostToContainer
-            {{- if .Values.nodeAgent.monitors }}
+            {{- if include "eks-node-monitoring-agent.hasAgentConfig" . }}
             - name: monitor-config
               mountPath: /etc/nma
               readOnly: true
@@ -102,7 +102,7 @@ spec:
         - name: host-root
           hostPath:
             path: /
-        {{- if .Values.nodeAgent.monitors }}
+        {{- if include "eks-node-monitoring-agent.hasAgentConfig" . }}
         - name: monitor-config
           configMap:
             name: {{ include "eks-node-monitoring-agent.fullname" . }}-monitor-config
