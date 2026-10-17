@@ -36,6 +36,11 @@ var DefaultPodLogPatterns = []string{
 	"kube-system_fsx-openzfs-csi-*",
 	"kube-system_file-cache-csi-*",
 	"kube-system_eks-pod-identity-agent*",
+	"kube-system_s3-csi*",
+	"mount-s3_mp-*",
+	"mount-s3_hr-*",
+	"kube-system_eks-node-monitoring-agent*",
+	"kube-system_kube-multus*",
 }
 
 func (c *CommonLogs) Collect(acc *Accessor) error {
