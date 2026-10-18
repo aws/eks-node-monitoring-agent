@@ -44,10 +44,10 @@ var DefaultPodLogPatterns = []string{
 }
 
 func (c *CommonLogs) Collect(acc *Accessor) error {
-	if c.PodLogPatterns != nil && len(c.PodLogPatterns) == 0 {
+	if c.PodLogPatterns == nil {
 		c.PodLogPatterns = DefaultPodLogPatterns
 	}
-	if c.VarLogFiles != nil && len(c.VarLogFiles) == 0 {
+	if c.VarLogFiles == nil {
 		c.VarLogFiles = DefaultVarLogFiles
 	}
 	return errors.Join(

@@ -40,6 +40,7 @@ var collectorMap = map[v1alpha1.LogCategory][]collect.Collector{
 				"cloud-init.log",
 				"cloud-init-output.log",
 				"kube-proxy.log",
+				"user-data.log",
 			},
 		},
 		&collect.Instance{},
