@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"time"
 )
@@ -40,12 +41,42 @@ func (m IPAMD) Collect(acc *Accessor) error {
 	} else {
 		merr = errors.Join(merr, acc.WriteOutput("ipamd/metrics.json", resp))
 	}
-	// collect ipamd checkpoint
-	var ipamdCheckpointPath = "/var/run/aws-node/ipam.json"
+	merr = errors.Join(merr, ipamdDatastores(acc))
+	return merr
+}
+
+// ipamdDatastores copies every regular file in the IPAMD state directory, not
+// just ipam.json: newer VPC CNI versions keep additional datastore files there
+// (e.g. per-ENI and prefix state). Sockets and subdirectories are skipped. A
+// missing directory means the VPC CNI is not installed and is not an error.
+func ipamdDatastores(acc *Accessor) error {
+	var ipamdStateDir = "/var/run/aws-node"
 	if acc.cfg.hasAnyTag(TagBottlerocket) {
-		ipamdCheckpointPath = "/run/aws-node/ipam.json"
+		ipamdStateDir = "/run/aws-node"
 	}
-	merr = errors.Join(merr, acc.CopyFile(filepath.Join(acc.cfg.Root, ipamdCheckpointPath), "ipamd/ipam.json"))
+	entries, err := os.ReadDir(filepath.Join(acc.cfg.Root, ipamdStateDir))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	var merr error
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			merr = errors.Join(merr, err)
+			continue
+		}
+		if !info.Mode().IsRegular() {
+			// the directory also holds the ipamd unix sockets
+			continue
+		}
+		merr = errors.Join(merr, acc.CopyFile(
+			filepath.Join(acc.cfg.Root, ipamdStateDir, entry.Name()),
+			filepath.Join("ipamd/", entry.Name()),
+		))
+	}
 	return merr
 }
 
