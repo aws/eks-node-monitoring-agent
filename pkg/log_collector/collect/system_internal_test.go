@@ -2,6 +2,7 @@ package collect
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -55,4 +56,35 @@ func TestSysctlPartialReadFailure(t *testing.T) {
 			assert.Equal(t, tc.want, string(got))
 		})
 	}
+}
+
+func TestLargeEnvironments(t *testing.T) {
+	root := t.TempDir()
+	writeEnviron := func(pid string, count int) {
+		dir := filepath.Join(root, "proc", pid)
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+		var env []byte
+		for i := 0; i < count; i++ {
+			env = append(env, []byte(fmt.Sprintf("VAR_%d=value", i))...)
+			env = append(env, 0)
+		}
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "environ"), env, 0o644))
+	}
+	writeEnviron("100", 1001) // over the threshold: reported
+	writeEnviron("200", 5)    // normal: not reported
+	writeEnviron("300", 1000) // exactly the threshold: not reported (script uses >1000)
+
+	// unreadable environ (another user's process): skipped, not an error
+	writeEnviron("400", 2000)
+	require.NoError(t, os.Chmod(filepath.Join(root, "proc", "400", "environ"), 0o000))
+
+	dst := t.TempDir()
+	acc, err := NewAccessor(context.Background(), Config{Root: root, Destination: dst})
+	require.NoError(t, err)
+
+	require.NoError(t, largeEnvironments(acc))
+
+	got, err := os.ReadFile(filepath.Join(dst, "system/large_environments.txt"))
+	require.NoError(t, err)
+	assert.Equal(t, "PID\tCount\n100\t1001\n", string(got))
 }

@@ -23,6 +23,9 @@ var DefaultVarLogFiles = []string{
 	"cloud-init-output.log",
 	"user-data.log",
 	"kube-proxy.log",
+	// a directory on Ubuntu: records unattended upgrades that can replace the
+	// kernel, containerd or systemd under a running node
+	"unattended-upgrades",
 }
 
 var DefaultPodLogPatterns = []string{

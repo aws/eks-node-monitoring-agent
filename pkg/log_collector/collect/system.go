@@ -27,7 +27,43 @@ func (s System) Collect(acc *Accessor) error {
 		networking(acc),
 		bottlerocket(acc),
 		reboots(acc),
+		largeEnvironments(acc),
 	)
+}
+
+// largeEnvironmentThreshold is the environment variable count above which a
+// process is reported. Kubernetes service-link injection in namespaces with
+// thousands of services produces environments this large, which cause exec
+// failures and kubelet slowness.
+const largeEnvironmentThreshold = 1000
+
+// largeEnvironments writes the PIDs whose environment holds more than
+// largeEnvironmentThreshold variables. Unreadable environ files (processes of
+// other users, or ones that exited mid-scan) are skipped.
+func largeEnvironments(acc *Accessor) error {
+	environPaths, err := filepath.Glob(filepath.Join(acc.cfg.Root, "/proc/[0-9]*/environ"))
+	if err != nil {
+		return err
+	}
+	var buf bytes.Buffer
+	buf.WriteString("PID\tCount\n")
+	for _, environPath := range environPaths {
+		data, err := os.ReadFile(environPath)
+		if err != nil {
+			continue
+		}
+		count := 0
+		for _, entry := range bytes.Split(data, []byte{0}) {
+			if len(entry) > 0 {
+				count++
+			}
+		}
+		if count > largeEnvironmentThreshold {
+			pid := filepath.Base(filepath.Dir(environPath))
+			buf.WriteString(fmt.Sprintf("%s\t%d\n", pid, count))
+		}
+	}
+	return acc.WriteOutput("system/large_environments.txt", buf.Bytes())
 }
 
 func top(acc *Accessor) error {
