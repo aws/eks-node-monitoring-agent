@@ -5,10 +5,11 @@ import (
 	"time"
 )
 
-// DefaultTimeout bounds how long a check waits for one NVML call. A healthy
-// driver answers in milliseconds, so a call still running after 10 seconds is
-// stuck, not slow. It is also no longer than the shortest interval any check
-// polls at, so a check stops waiting before its own next run.
+// DefaultTimeout bounds how long one run of a check waits in the NVIDIA
+// driver. A healthy driver answers a call in milliseconds, so a run still in
+// the driver after 10 seconds is stuck, not slow, even one that reads every
+// GPU. It is also no longer than the shortest interval any check polls at, so
+// a check stops waiting before its own next run.
 const DefaultTimeout = 10 * time.Second
 
 // stuckThreshold is how many consecutive runs every check must be stuck
