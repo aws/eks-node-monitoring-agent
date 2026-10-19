@@ -78,6 +78,21 @@ type NetworkingMonitor struct {
 	// name matches any of these are skipped during InterfaceNotUp /
 	// InterfaceNotRunning checks.
 	excludedInterfaceNameRegexps []*regexp.Regexp
+	// efaDriverNotLoadedSince is when no attached EFA device was first found
+	// bound to the efa driver, or zero while the driver is bound.
+	efaDriverNotLoadedSince time.Time
+	// efaDriverNotLoadedReported records that the Fatal EFADriverNotLoaded
+	// condition was set, so it can be resolved once the driver is bound.
+	efaDriverNotLoadedReported bool
+	// efaDriverNotified rate-limits the EFADriverNotLoaded Warning on nodes
+	// outside Auto Mode, keyed by the number of attached EFA devices.
+	efaDriverNotified *renotify.Tracker[int]
+	// efaRailCountNotified rate-limits the EFARailCountMismatch Warning,
+	// keyed by both counts in its message so a change in either is reported.
+	efaRailCountNotified *renotify.Tracker[efaRailCount]
+	// efaRailCountDegradedChecks counts consecutive checks that found fewer
+	// available EFA devices than attached ones.
+	efaRailCountDegradedChecks int
 }
 
 func (m *NetworkingMonitor) Name() string {
@@ -151,8 +166,10 @@ func (m *NetworkingMonitor) isInterfaceExcluded(name string) bool {
 
 func NewNetworkingMonitor(options ...Option) *NetworkingMonitor {
 	m := &NetworkingMonitor{
-		exec:           osext.NewExec(config.HostRoot()),
-		runtimeContext: config.GetRuntimeContext(),
+		exec:                 osext.NewExec(config.HostRoot()),
+		runtimeContext:       config.GetRuntimeContext(),
+		efaDriverNotified:    renotify.New[int](efaReNotifyInterval),
+		efaRailCountNotified: renotify.New[efaRailCount](efaReNotifyInterval),
 	}
 
 	for _, option := range options {
@@ -245,6 +262,7 @@ func (m *NetworkingMonitor) Register(ctx context.Context, mgr monitor.Manager) e
 		// one value, consider separating out the two
 		util.NewChannelHandler(func(time.Time) error { return m.handleIPAMD() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleMACAddressPolicy() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
+		util.NewChannelHandler(func(now time.Time) error { return m.handleEFADevices(ctx, now) }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 	} {
 		go handler.Start(ctx)
 	}
@@ -1053,6 +1071,143 @@ func (m *NetworkingMonitor) checkIPTables(rules []iptables.IPTablesRule) (merr e
 		}
 	}
 	return merr
+}
+
+// ~~~~ EFA devices (EFADriverNotLoaded, EFARailCountMismatch) ~~~~
+
+// efaReNotifyInterval is how often an unchanged EFA device Warning may be
+// reported. The device counts rarely change after boot, and every NMA Warning
+// on a node shares one client-go spam-filter bucket.
+const efaReNotifyInterval = 30 * time.Minute
+
+// efaRailCountMismatchChecks is how many consecutive checks must find fewer
+// available EFA devices than attached ones before EFARailCountMismatch is
+// reported, so a link that goes down briefly is not reported.
+const efaRailCountMismatchChecks = 3
+
+// efaDriverNotLoadedWindow is how long no attached EFA device may be bound to
+// the efa driver before EFADriverNotLoaded is reported. A node in this state
+// has no working EFA but stays schedulable, so on Auto Mode it is reported as
+// a Fatal condition so node repair can replace the node. Other nodes may run
+// an AMI without the efa driver, where repair would not help, so they get a
+// Warning instead.
+const efaDriverNotLoadedWindow = 15 * time.Minute
+
+func (m *NetworkingMonitor) handleEFADevices(ctx context.Context, now time.Time) error {
+	if slices.Contains(m.runtimeContext.Tags(), config.Hybrid) {
+		// EFA is only available on EC2 instances.
+		return nil
+	}
+	pciDevices, err := efa.CountEFAPCIDevices()
+	if err != nil {
+		return fmt.Errorf("failed to count EFA PCI devices: %w", err)
+	}
+	activeCount, err := efa.CountActiveEFADevices()
+	if err != nil {
+		return fmt.Errorf("failed to count active EFA devices: %w", err)
+	}
+	return m.checkEFADevices(ctx, pciDevices, activeCount, now)
+}
+
+// checkEFADevices compares the EFA devices attached to the instance, which are
+// visible on the PCI bus whether or not the efa driver loads, against the ones
+// that are bound to the efa driver and have an active link.
+func (m *NetworkingMonitor) checkEFADevices(ctx context.Context, pciDevices efa.EFAPCIDevices, activeCount int, now time.Time) error {
+	// no EFA PCI devices means the instance was launched without EFA, which is
+	// a valid configuration even on EFA-capable instance types.
+	if pciDevices.Attached == 0 {
+		m.resetEFARailCount()
+		return m.resetEFADriverNotLoaded(ctx)
+	}
+	if pciDevices.Bound == 0 {
+		m.resetEFARailCount()
+		return m.checkEFADriverNotLoaded(ctx, pciDevices.Attached, now)
+	}
+	if err := m.resetEFADriverNotLoaded(ctx); err != nil {
+		return err
+	}
+	available := min(pciDevices.Bound, activeCount)
+	if available >= pciDevices.Attached {
+		m.resetEFARailCount()
+		return nil
+	}
+	m.efaRailCountDegradedChecks++
+	if m.efaRailCountDegradedChecks < efaRailCountMismatchChecks {
+		return nil
+	}
+	return notifyEFADevices(ctx, m.manager, m.efaRailCountNotified, efaRailCount{available: available, attached: pciDevices.Attached}, now,
+		reasons.EFARailCountMismatch.
+			Builder().
+			Message(fmt.Sprintf("Only %d of %d attached EFA devices are available", available, pciDevices.Attached)).
+			Build(),
+	)
+}
+
+// checkEFADriverNotLoaded reports EFADriverNotLoaded once no attached EFA
+// device has been bound to the efa driver for efaDriverNotLoadedWindow.
+func (m *NetworkingMonitor) checkEFADriverNotLoaded(ctx context.Context, attached int, now time.Time) error {
+	if m.efaDriverNotLoadedSince.IsZero() {
+		m.efaDriverNotLoadedSince = now
+	}
+	if now.Sub(m.efaDriverNotLoadedSince) < efaDriverNotLoadedWindow {
+		return nil
+	}
+	builder := reasons.EFADriverNotLoaded.
+		Builder().
+		Message(fmt.Sprintf("Found %d attached EFA devices, but none have been bound to the efa driver for %s", attached, efaDriverNotLoadedWindow))
+	if !slices.Contains(m.runtimeContext.Tags(), config.EKSAuto) {
+		return notifyEFADevices(ctx, m.manager, m.efaDriverNotified, attached, now, builder.Severity(monitor.SeverityWarning).Build())
+	}
+	if err := m.manager.Notify(ctx, builder.Build()); err != nil {
+		return err
+	}
+	m.efaDriverNotLoadedReported = true
+	return nil
+}
+
+// resetEFADriverNotLoaded clears the EFADriverNotLoaded state once an EFA
+// device is bound to the efa driver, resolving the condition if it was set.
+func (m *NetworkingMonitor) resetEFADriverNotLoaded(ctx context.Context) error {
+	m.efaDriverNotLoadedSince = time.Time{}
+	m.efaDriverNotified.Reset()
+	if !m.efaDriverNotLoadedReported {
+		return nil
+	}
+	if err := m.manager.Notify(ctx, monitor.Condition{
+		Reason:   reasons.EFADriverNotLoaded.Template(),
+		Message:  "An attached EFA device is bound to the efa driver again",
+		Severity: monitor.SeverityFatal,
+		Resolved: true,
+	}); err != nil {
+		return err
+	}
+	m.efaDriverNotLoadedReported = false
+	return nil
+}
+
+// resetEFARailCount clears the EFARailCountMismatch state once there is no
+// mismatch to report.
+func (m *NetworkingMonitor) resetEFARailCount() {
+	m.efaRailCountDegradedChecks = 0
+	m.efaRailCountNotified.Reset()
+}
+
+// efaRailCount is the state reported by EFARailCountMismatch.
+type efaRailCount struct {
+	available, attached int
+}
+
+// notifyEFADevices sends condition unless tracker has recently reported key.
+func notifyEFADevices[K comparable](ctx context.Context, manager monitor.Manager, tracker *renotify.Tracker[K], key K, now time.Time, condition monitor.Condition) error {
+	if !tracker.ShouldNotify(key, now) {
+		return nil
+	}
+	if err := manager.Notify(ctx, condition); err != nil {
+		return err
+	}
+	// only record a sent notification so a failed Notify is retried next tick.
+	tracker.Notified(key, now)
+	return nil
 }
 
 // ~~~~ MAC Address Policy ~~~~
