@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net/http"
 	"path/filepath"
 	"testing"
 
@@ -8,37 +9,127 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 
+	"github.com/aws/eks-node-monitoring-agent/pkg/auth"
 	"github.com/aws/eks-node-monitoring-agent/pkg/config"
 )
 
-func TestRewriteExecProvider(t *testing.T) {
+func TestUseInProcessTokenAuth(t *testing.T) {
 	t.Run("nil exec provider is left untouched", func(t *testing.T) {
 		cfg := &rest.Config{} // client-cert auth, no ExecProvider
-		if err := rewriteExecProvider(cfg, chrootMapper{}); err != nil {
+		if err := useInProcessTokenAuth(cfg); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if cfg.ExecProvider != nil {
 			t.Fatal("ExecProvider should stay nil")
 		}
+		if cfg.WrapTransport != nil {
+			t.Fatal("no token transport should be installed without an ExecProvider")
+		}
 	})
 
-	t.Run("exec provider is rewritten through the chroot wrapper", func(t *testing.T) {
+	t.Run("exec provider is replaced by the token transport", func(t *testing.T) {
 		cfg := &rest.Config{
 			ExecProvider: &clientcmdapi.ExecConfig{
 				Command: "aws-iam-authenticator",
 				Args:    []string{"token", "-i", "cluster"},
 			},
 		}
-		if err := rewriteExecProvider(cfg, chrootMapper{}); err != nil {
+		if err := useInProcessTokenAuth(cfg); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if filepath.Base(cfg.ExecProvider.Command) != "chroot" {
-			t.Fatalf("command not rewritten to chroot wrapper: %q", cfg.ExecProvider.Command)
+		// the ExecProvider must be cleared, otherwise client-go still launches
+		// the plugin and the memory spike this change avoids comes back.
+		if cfg.ExecProvider != nil {
+			t.Fatal("ExecProvider should be cleared")
 		}
-		if cfg.ExecProvider.Args[1] != "aws-iam-authenticator" {
-			t.Fatalf("original command not preserved in args: %v", cfg.ExecProvider.Args)
+		if cfg.WrapTransport == nil {
+			t.Fatal("expected a token transport to be installed")
+		}
+		wrapped := cfg.WrapTransport(http.DefaultTransport)
+		tokenTransport, ok := wrapped.(*auth.EKSTokenTransport)
+		if !ok {
+			t.Fatalf("expected an *auth.EKSTokenTransport, got %T", wrapped)
+		}
+		if tokenTransport.Base != http.DefaultTransport {
+			t.Fatal("expected the wrapped transport to be used as the base")
 		}
 	})
+
+	t.Run("an existing transport wrapper is preserved", func(t *testing.T) {
+		wrapped := false
+		cfg := &rest.Config{
+			ExecProvider: &clientcmdapi.ExecConfig{
+				Command: "aws",
+				Args:    []string{"eks", "get-token", "--cluster-name", "cluster"},
+			},
+		}
+		cfg.Wrap(func(rt http.RoundTripper) http.RoundTripper {
+			wrapped = true
+			return rt
+		})
+		if err := useInProcessTokenAuth(cfg); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		cfg.WrapTransport(http.DefaultTransport)
+		if !wrapped {
+			t.Fatal("the pre-existing transport wrapper was dropped")
+		}
+	})
+
+	t.Run("errors when the cluster name is missing", func(t *testing.T) {
+		cfg := &rest.Config{
+			ExecProvider: &clientcmdapi.ExecConfig{
+				Command: "aws",
+				Args:    []string{"eks", "get-token"},
+			},
+		}
+		if err := useInProcessTokenAuth(cfg); err == nil {
+			t.Fatal("expected an error when the cluster name cannot be determined")
+		}
+	})
+}
+
+func TestClusterNameFromExecProvider(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"aws eks get-token", []string{"eks", "get-token", "--cluster-name", "my-cluster"}, "my-cluster"},
+		{"aws eks get-token with region", []string{"--region", "us-west-2", "eks", "get-token", "--cluster-name", "my-cluster", "--output", "json"}, "my-cluster"},
+		{"joined with equals", []string{"eks", "get-token", "--cluster-name=my-cluster"}, "my-cluster"},
+		{"aws-iam-authenticator short flag", []string{"token", "-i", "my-cluster"}, "my-cluster"},
+		{"aws-iam-authenticator long flag", []string{"token", "--cluster-id", "my-cluster"}, "my-cluster"},
+		{"short flag joined with equals", []string{"token", "-i=my-cluster"}, "my-cluster"},
+		{"surrounding whitespace is trimmed", []string{"token", "-i", "  my-cluster  "}, "my-cluster"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := clusterNameFromExecProvider(&clientcmdapi.ExecConfig{Args: tc.args})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("expected %q, got %q", tc.want, got)
+			}
+		})
+	}
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"no arguments", nil},
+		{"no cluster flag", []string{"eks", "get-token", "--region", "us-west-2"}},
+		{"flag with no value", []string{"eks", "get-token", "--cluster-name"}},
+		{"blank value", []string{"token", "-i", "   "}},
+		{"blank joined value", []string{"token", "--cluster-id="}},
+	} {
+		t.Run("errors on "+tc.name, func(t *testing.T) {
+			if _, err := clusterNameFromExecProvider(&clientcmdapi.ExecConfig{Args: tc.args}); err == nil {
+				t.Fatalf("expected an error for args %q", tc.args)
+			}
+		})
+	}
 }
 
 func TestHostPathOverrides(t *testing.T) {
