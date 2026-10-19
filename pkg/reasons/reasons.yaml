@@ -288,6 +288,23 @@ NetworkingReady:
     DefaultSeverity: 'Warning'
     Description: >-
       EFA driver metrics shows there is an interface with performance degredation.
+  EFADriverNotLoaded:
+    Template: 'EFADriverNotLoaded'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      EFA devices are attached to the instance, but none of them have been
+      bound to the efa driver for 15 minutes. The efa kernel module may be
+      missing or may have failed to load. Auto Mode only; on other nodes this
+      is reported as a Warning event, since their AMI may not include the efa
+      driver.
+  EFARailCountMismatch:
+    Template: 'EFARailCountMismatch'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      Fewer EFA devices are available on the node than are attached to the
+      instance, for three consecutive checks. A device is available when it is
+      bound to the efa driver and its port is ACTIVE and LinkUp. Missing rails
+      may reduce the network bandwidth available across rails.
   CoreDNSCorefileValidationFailed:
     Template: 'CoreDNSCorefileValidationFailed'
     DefaultSeverity: 'Warning'

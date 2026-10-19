@@ -275,9 +275,17 @@ The monitoring condition is `NetworkingReady` for issues in the following table 
 |Event
 |The customer's CoreDNS Corefile failed the agent's validation on this Auto Mode node and was not applied. DNS keeps serving the last applied Corefile, or the AMI baseline if none was applied yet, as when a Corefile is rejected at boot. Auto Mode only.
 
+|EFADriverNotLoaded
+|Condition
+|EFA devices are attached to the instance, but none of them have been bound to the efa driver for 15 minutes. The efa kernel module may be missing or may have failed to load. Auto Mode only; on other nodes this is reported as a Warning event, since their AMI may not include the efa driver.
+
 |EFAErrorMetric
 |Event
 |EFA driver metrics shows there is an interface with performance degredation.
+
+|EFARailCountMismatch
+|Event
+|Fewer EFA devices are available on the node than are attached to the instance, for three consecutive checks. A device is available when it is bound to the efa driver and its port is ACTIVE and LinkUp. Missing rails may reduce the network bandwidth available across rails.
 
 |IPAMDInconsistentState
 |Event

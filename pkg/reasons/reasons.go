@@ -227,8 +227,16 @@ var (
 		template:        "CoreDNSCorefileValidationFailed",
 		defaultSeverity: "Warning",
 	}
+	EFADriverNotLoaded = ReasonMeta{
+		template:        "EFADriverNotLoaded",
+		defaultSeverity: "Fatal",
+	}
 	EFAErrorMetric = ReasonMeta{
 		template:        "EFAErrorMetric",
+		defaultSeverity: "Warning",
+	}
+	EFARailCountMismatch = ReasonMeta{
+		template:        "EFARailCountMismatch",
 		defaultSeverity: "Warning",
 	}
 	IPAMDInconsistentState = ReasonMeta{
@@ -413,7 +421,9 @@ var byName = map[string]ReasonMeta{
 	"CoreDNSCorefileRevertedToBaseline":    CoreDNSCorefileRevertedToBaseline,
 	"CoreDNSCorefileRevertedToLastApplied": CoreDNSCorefileRevertedToLastApplied,
 	"CoreDNSCorefileValidationFailed":      CoreDNSCorefileValidationFailed,
+	"EFADriverNotLoaded":                   EFADriverNotLoaded,
 	"EFAErrorMetric":                       EFAErrorMetric,
+	"EFARailCountMismatch":                 EFARailCountMismatch,
 	"IPAMDInconsistentState":               IPAMDInconsistentState,
 	"IPAMDNoIPs":                           IPAMDNoIPs,
 	"IPAMDNotReady":                        IPAMDNotReady,
