@@ -406,6 +406,13 @@ AcceleratedHardwareReady:
       The NVIDIA Fabric Manager service is not running on this NVSwitch-equipped
       instance. Fabric Manager is required for multi-GPU NVLink communication.
       Without it, multi-GPU workloads will fail or silently degrade.
+  NvidiaLibraryNotFound:
+    Template: 'NvidiaLibraryNotFound'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      The agent could not load the NVIDIA management library
+      (libnvidia-ml.so.1) from the host, so it cannot read GPU health. This is
+      an agent packaging or driver installation issue, not a GPU fault.
   FabricManagerNotRunningWarning:
     Template: 'FabricManagerNotRunning'
     DefaultSeverity: 'Warning'
