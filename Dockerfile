@@ -70,14 +70,15 @@ ARG GOBUILDARGS=""
 ARG VERSION=build
 ARG GIT_COMMIT=unknown
 
-# Build the agent and chroot binaries with CGO enabled (required for systemd) and goroutine leak profiling
-RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOEXPERIMENT=goroutineleakprofile \
+# Build the agent and chroot binaries with CGO enabled (required for systemd).
+# Go 1.27 includes the goroutine leak profile by default, so no GOEXPERIMENT is needed.
+RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build ${GOBUILDARGS} \
         -ldflags="-s -w \
             -X github.com/aws/eks-node-monitoring-agent/internal/version.Version=${VERSION} \
             -X github.com/aws/eks-node-monitoring-agent/internal/version.GitCommit=${GIT_COMMIT}" \
         -o bin/eks-node-monitoring-agent ./cmd/eks-node-monitoring-agent/
-RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} GOEXPERIMENT=goroutineleakprofile \
+RUN CGO_ENABLED=1 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build ${GOBUILDARGS} -ldflags="-s -w" -o bin/chroot ./cmd/chroot/
 
 # =============================================================================
