@@ -73,6 +73,10 @@ If auto repair is enabled, the repair actions that are listed start 10 minutes a
 |Condition
 |A double bit error was produced by the GPU driver.
 
+|NvidiaDriverNotResponding
+|Event
+|Calls from the agent to the NVIDIA driver have not returned for several consecutive checks, so the agent cannot read GPU health. A call that has not returned is not treated as a GPU fault, because a busy or shared driver can also hold it.
+
 |NvidiaFabricError
 |Condition
 |One or more GPUs reported a non-success fabric status, indicating NVSwitch fabric training failure. Affected GPUs cannot participate in multi-GPU NVLink communication. This condition persists across reboots and requires instance replacement.

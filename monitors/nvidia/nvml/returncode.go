@@ -72,6 +72,10 @@ var (
 		Name: "nvml_library_loaded",
 		Help: "1 when the agent has loaded libnvidia-ml, 0 when no candidate path loads.",
 	})
+	driverNotResponding = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "nvml_driver_not_responding",
+		Help: "1 while NVML initialization, or every NVML check, has been stuck in the NVIDIA driver for the stuck threshold; 0 otherwise.",
+	})
 	unexpectedReturns = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "nvml_unexpected_returns_total",
 		Help: "NVML calls that returned an error code the reader has no rule for, by call and nvmlReturn_t value.",
@@ -79,5 +83,5 @@ var (
 )
 
 func init() {
-	metrics.Registry.MustRegister(libraryLoaded, unexpectedReturns)
+	metrics.Registry.MustRegister(libraryLoaded, driverNotResponding, unexpectedReturns)
 }

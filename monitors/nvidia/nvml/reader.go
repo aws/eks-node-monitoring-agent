@@ -46,6 +46,7 @@ type Reader struct {
 	// own, and the checks only run after Init succeeds.
 	initCheck       *Check
 	libraryWarnings *renotify.Tracker[string]
+	stuckWarnings   *renotify.Tracker[string]
 
 	// lib and path are only touched by Reconcile.
 	lib  gonvml.Interface
@@ -75,6 +76,7 @@ func newReader(cfg Config, now func() time.Time, candidates func() []string, new
 		newLibrary:      newLibrary,
 		initCheck:       &Check{name: "nvmlInit", timeout: DefaultTimeout},
 		libraryWarnings: renotify.New[string](classify.WarningReNotifyInterval),
+		stuckWarnings:   renotify.New[string](classify.WarningReNotifyInterval),
 	}
 }
 
@@ -101,20 +103,21 @@ func (r *Reader) Library() (lib gonvml.Interface, syms newerSymbols, ok bool) {
 
 // Reconcile loads and initializes NVML, retrying on each call until Init
 // succeeds. The nvidia monitor calls it every 30 seconds, from one goroutine.
-// Its conditions follow the parity map:
+// It reports:
 //   - No candidate library loads: a rate-limited NvidiaLibraryNotFound
-//     Warning, never a condition (M2).
-//   - Init fails or hangs past the grace period: Fatal DCGMError, as a failed
-//     hostengine connection is on main.
-//   - After Init, every check stuck for stuckThreshold runs: Fatal DCGMError.
+//     Warning, never a condition. A missing library is an agent packaging
+//     problem that replacing the node does not fix.
+//   - Init returns an error past the grace period: Fatal DCGMError, the
+//     reason package dcgm reports when it cannot reach the hostengine.
+//   - Init, or every check after Init, stuck for stuckThreshold runs: a
+//     rate-limited NvidiaDriverNotResponding Warning, never a condition.
+//     A call that has not returned is not evidence of a GPU fault: a wedged
+//     GPU, heavy load or another agent on the same driver lock can all hold
+//     it, and repairing the node would end the workload on it.
 func (r *Reader) Reconcile(ctx context.Context) []monitor.Condition {
 	if r.ready.Load() != nil {
-		if allStuck(r.checks) {
-			return []monitor.Condition{reasons.DCGMError.Builder().
-				Message(fmt.Sprintf("every NVML check has been stuck in the NVIDIA driver for %d consecutive runs", stuckThreshold)).
-				Build()}
-		}
-		return nil
+		return r.notResponding(allStuck(r.checks),
+			fmt.Sprintf("every NVML check has been stuck in the NVIDIA driver for %d consecutive runs, so GPU health is not being read", stuckThreshold))
 	}
 
 	if r.lib == nil {
@@ -166,12 +169,28 @@ func (r *Reader) recordInit(ctx context.Context, ret gonvml.Return) []monitor.Co
 // initStuck reports an Init that has been in the driver for stuckThreshold
 // runs. Shorter hangs, and hangs inside the grace period, stay silent.
 func (r *Reader) initStuck() []monitor.Condition {
-	if r.inGracePeriod() || r.initCheck.StuckCycles() < stuckThreshold {
+	return r.notResponding(!r.inGracePeriod() && r.initCheck.StuckCycles() >= stuckThreshold,
+		fmt.Sprintf("NVML initialization has been stuck in the NVIDIA driver for %d consecutive runs, so GPU health is not being read", stuckThreshold))
+}
+
+// notResponding reports a driver that has stopped answering as a Warning, at
+// most once per re-notify interval, and sets the nvml_driver_not_responding
+// gauge. Once the driver answers again, the gauge clears and the next stall
+// is reported right away.
+func (r *Reader) notResponding(stuck bool, msg string) []monitor.Condition {
+	if !stuck {
+		driverNotResponding.Set(0)
+		r.stuckWarnings.Reset()
 		return nil
 	}
-	return []monitor.Condition{reasons.DCGMError.Builder().
-		Message(fmt.Sprintf("NVML initialization has been stuck in the NVIDIA driver for %d consecutive runs", stuckThreshold)).
-		Build()}
+	driverNotResponding.Set(1)
+	const key = "driver-not-responding"
+	now := r.now()
+	if !r.stuckWarnings.ShouldNotify(key, now) {
+		return nil
+	}
+	r.stuckWarnings.Notified(key, now)
+	return []monitor.Condition{reasons.NvidiaDriverNotResponding.Builder().Message(msg).Build()}
 }
 
 // libraryNotFound reports a missing library once per re-notify interval,
