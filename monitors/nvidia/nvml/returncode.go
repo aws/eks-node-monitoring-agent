@@ -48,31 +48,23 @@ func outcome(call string, ret gonvml.Return) Outcome {
 	}
 }
 
-// newerSymbols lists the NVML functions that the oldest driver NMA supports
-// (R535) does not export. go-nvml binds symbols lazily, so calling a function
-// the loaded library lacks aborts the process instead of returning an error.
-// Check every name here with symbols.Has before calling it, and treat a
-// missing one as ERROR_FUNCTION_NOT_FOUND.
-var newerSymbols = []string{
-	"nvmlDeviceGetGpuFabricInfoV",
+// newerSymbols records which NVML functions newer than R535, the oldest
+// driver NMA supports, the loaded library exports. go-nvml binds symbols
+// lazily, so calling a function the library lacks aborts the process instead
+// of returning an error. Check the matching field before calling one, and
+// treat false as ERROR_FUNCTION_NOT_FOUND. A field without a lookup in
+// lookupNewerSymbols fails TestNewerSymbolsAllLookedUp.
+type newerSymbols struct {
+	gpuFabricInfoV bool // nvmlDeviceGetGpuFabricInfoV
 }
 
-// symbols records which of newerSymbols the loaded library exports. The
-// lookup runs once, when NVML initializes.
-type symbols map[string]bool
-
-func lookupSymbols(ext gonvml.ExtendedInterface, names []string) symbols {
-	s := make(symbols, len(names))
-	for _, name := range names {
-		s[name] = ext.LookupSymbol(name) == nil
+// lookupNewerSymbols checks the loaded library for each newer function. It
+// runs once, when NVML initializes.
+func lookupNewerSymbols(ext gonvml.ExtendedInterface) newerSymbols {
+	has := func(name string) bool { return ext.LookupSymbol(name) == nil }
+	return newerSymbols{
+		gpuFabricInfoV: has("nvmlDeviceGetGpuFabricInfoV"),
 	}
-	return s
-}
-
-// Has reports whether the loaded library exports name. A name that was never
-// looked up reports false, so a call missing from newerSymbols fails closed.
-func (s symbols) Has(name string) bool {
-	return s[name]
 }
 
 var (

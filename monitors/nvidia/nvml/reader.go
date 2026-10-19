@@ -7,7 +7,7 @@ package nvml
 import (
 	"context"
 	"fmt"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	gonvml "github.com/NVIDIA/go-nvml/pkg/nvml"
@@ -26,6 +26,13 @@ type Config struct {
 	GracePeriod time.Duration
 }
 
+// readyLibrary is what checks need once nvmlInit has succeeded. It is set
+// once and never changed.
+type readyLibrary struct {
+	lib     gonvml.Interface
+	symbols newerSymbols
+}
+
 // Reader owns the NVML library handle and its initialization.
 type Reader struct {
 	gracePeriod time.Duration
@@ -40,12 +47,16 @@ type Reader struct {
 	initCheck       *Check
 	libraryWarnings *renotify.Tracker[string]
 
-	mu      sync.Mutex
-	lib     gonvml.Interface
-	path    string
-	ready   bool
-	symbols symbols
-	checks  []*Check
+	// lib and path are only touched by Reconcile.
+	lib  gonvml.Interface
+	path string
+
+	// ready is set once by Reconcile when Init succeeds, and read by checks
+	// through Library. It is nil until then.
+	ready atomic.Pointer[readyLibrary]
+
+	// checks must all be registered before the first Reconcile.
+	checks []*Check
 }
 
 // NewReader returns a Reader that loads libnvidia-ml from the host.
@@ -69,40 +80,36 @@ func newReader(cfg Config, now func() time.Time, candidates func() []string, new
 
 // NewCheck registers a check that runs one NVML call at a time with the given
 // timeout. When every registered check has been stuck for stuckThreshold
-// consecutive runs, Reconcile reports the driver as hung.
+// consecutive runs, Reconcile reports the driver as hung. Register every
+// check before the first call to Reconcile, which reads the list without a
+// lock.
 func (r *Reader) NewCheck(name string, timeout time.Duration) *Check {
 	c := &Check{name: name, timeout: timeout}
-	r.mu.Lock()
 	r.checks = append(r.checks, c)
-	r.mu.Unlock()
 	return c
 }
 
 // Library returns the initialized NVML library and the newer symbols it
 // exports. ok is false until Init has succeeded; checks skip their run then.
-func (r *Reader) Library() (lib gonvml.Interface, syms symbols, ok bool) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.lib, r.symbols, r.ready
+func (r *Reader) Library() (lib gonvml.Interface, syms newerSymbols, ok bool) {
+	s := r.ready.Load()
+	if s == nil {
+		return nil, newerSymbols{}, false
+	}
+	return s.lib, s.symbols, true
 }
 
 // Reconcile loads and initializes NVML, retrying on each call until Init
-// succeeds. The nvidia monitor calls it every 30 seconds. Its conditions
-// follow the parity map:
+// succeeds. The nvidia monitor calls it every 30 seconds, from one goroutine.
+// Its conditions follow the parity map:
 //   - No candidate library loads: a rate-limited NvidiaLibraryNotFound
 //     Warning, never a condition (M2).
 //   - Init fails or hangs past the grace period: Fatal DCGMError, as a failed
 //     hostengine connection is on main.
 //   - After Init, every check stuck for stuckThreshold runs: Fatal DCGMError.
 func (r *Reader) Reconcile(ctx context.Context) []monitor.Condition {
-	logger := log.FromContext(ctx)
-
-	r.mu.Lock()
-	lib, ready, checks := r.lib, r.ready, r.checks
-	r.mu.Unlock()
-
-	if ready {
-		if allStuck(checks) {
+	if r.ready.Load() != nil {
+		if allStuck(r.checks) {
 			return []monitor.Condition{reasons.DCGMError.Builder().
 				Message(fmt.Sprintf("every NVML check has been stuck in the NVIDIA driver for %d consecutive runs", stuckThreshold)).
 				Build()}
@@ -110,7 +117,7 @@ func (r *Reader) Reconcile(ctx context.Context) []monitor.Condition {
 		return nil
 	}
 
-	if lib == nil {
+	if r.lib == nil {
 		type opened struct {
 			lib  gonvml.Interface
 			path string
@@ -129,30 +136,23 @@ func (r *Reader) Reconcile(ctx context.Context) []monitor.Condition {
 		}
 		libraryLoaded.Set(1)
 		r.libraryWarnings.Reset()
-		logger.Info("loaded NVIDIA management library", "path", o.path)
-		r.mu.Lock()
+		log.FromContext(ctx).Info("loaded NVIDIA management library", "path", o.path)
 		r.lib, r.path = o.lib, o.path
-		r.mu.Unlock()
-		return r.initialized(ctx, o.lib, o.ret)
+		return r.recordInit(ctx, o.ret)
 	}
 
-	ret, status := run(r.initCheck, lib.Init)
+	ret, status := run(r.initCheck, r.lib.Init)
 	if status == Stuck {
 		return r.initStuck()
 	}
-	return r.initialized(ctx, lib, ret)
+	return r.recordInit(ctx, ret)
 }
 
-// initialized records the result of Init on a loaded library.
-func (r *Reader) initialized(ctx context.Context, lib gonvml.Interface, ret gonvml.Return) []monitor.Condition {
+// recordInit records the result of Init on the loaded library.
+func (r *Reader) recordInit(ctx context.Context, ret gonvml.Return) []monitor.Condition {
 	if ret == gonvml.SUCCESS {
-		syms := lookupSymbols(lib.Extensions(), newerSymbols)
-		r.mu.Lock()
-		r.ready = true
-		r.symbols = syms
-		path := r.path
-		r.mu.Unlock()
-		log.FromContext(ctx).Info("initialized NVML", "path", path)
+		r.ready.Store(&readyLibrary{lib: r.lib, symbols: lookupNewerSymbols(r.lib.Extensions())})
+		log.FromContext(ctx).Info("initialized NVML", "path", r.path)
 		return nil
 	}
 	if r.inGracePeriod() {

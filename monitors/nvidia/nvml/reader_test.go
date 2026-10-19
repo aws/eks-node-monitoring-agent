@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -48,18 +49,22 @@ func TestOutcome(t *testing.T) {
 	}
 }
 
-func TestSymbols(t *testing.T) {
-	ext := &mock.ExtendedInterface{LookupSymbolFunc: func(name string) error {
-		if name == "present" {
-			return nil
-		}
-		return errors.New("undefined symbol")
-	}}
-	syms := lookupSymbols(ext, []string{"present", "missing"})
-	assert.True(t, syms.Has("present"))
-	assert.False(t, syms.Has("missing"))
-	assert.False(t, syms.Has("neverLookedUp"), "a name outside the list must fail closed")
-	assert.Len(t, ext.LookupSymbolCalls(), 2, "each name is looked up once")
+func TestLookupNewerSymbols(t *testing.T) {
+	none := &mock.ExtendedInterface{LookupSymbolFunc: func(string) error { return errors.New("undefined symbol") }}
+	assert.Equal(t, newerSymbols{}, lookupNewerSymbols(none), "a library without the newer functions reports none")
+	assert.Len(t, none.LookupSymbolCalls(), reflect.TypeOf(newerSymbols{}).NumField(), "each function is looked up once")
+}
+
+// TestNewerSymbolsAllLookedUp fails if a field is added to newerSymbols without
+// a matching lookup: with a library that exports everything, every field must
+// come back true.
+func TestNewerSymbolsAllLookedUp(t *testing.T) {
+	all := &mock.ExtendedInterface{LookupSymbolFunc: func(string) error { return nil }}
+	got := reflect.ValueOf(lookupNewerSymbols(all))
+	for i := 0; i < got.NumField(); i++ {
+		assert.True(t, got.Field(i).Bool(),
+			"newerSymbols.%s is never looked up in lookupNewerSymbols", got.Type().Field(i).Name)
+	}
 }
 
 func TestRun(t *testing.T) {
@@ -88,16 +93,11 @@ func TestRun(t *testing.T) {
 
 	// Once the driver answers, the next run makes a new call and clears the count.
 	close(release)
-	assert.Eventually(t, func() bool {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		select {
-		case <-c.pending:
-			return true
-		default:
-			return false
-		}
-	}, time.Second, time.Millisecond)
+	select {
+	case <-c.pending:
+	case <-time.After(time.Second):
+		t.Fatal("the released call never returned")
+	}
 	v, status = run(c, func() int { return 9 })
 	assert.Equal(t, Done, status)
 	assert.Equal(t, 9, v)
@@ -105,7 +105,11 @@ func TestRun(t *testing.T) {
 }
 
 func TestAllStuck(t *testing.T) {
-	stuck := func(n int) *Check { return &Check{stuckCycles: n} }
+	stuck := func(n int) *Check {
+		c := &Check{}
+		c.stuck.Store(int32(n))
+		return c
+	}
 	assert.False(t, allStuck(nil), "no checks is not a hung driver")
 	assert.False(t, allStuck([]*Check{stuck(stuckThreshold), stuck(stuckThreshold - 1)}))
 	assert.True(t, allStuck([]*Check{stuck(stuckThreshold), stuck(stuckThreshold + 3)}))
@@ -134,7 +138,6 @@ func TestLibraryCandidates(t *testing.T) {
 		t.Setenv(config.NVIDIA_DRIVER_ROOT_ENV, "")
 		ubuntu := touch(t, host, "usr/lib/x86_64-linux-gnu/"+libraryName)
 		al := touch(t, host, "usr/lib64/"+libraryName)
-		require.NoError(t, os.MkdirAll(filepath.Join(host, "usr/lib/aarch64-linux-gnu", libraryName), 0o755)) // a directory is not a library
 		assert.Equal(t, []string{al, ubuntu}, libraryCandidates())
 	})
 
@@ -261,7 +264,7 @@ func TestReconcile_driverNotLoaded(t *testing.T) {
 	lib, syms, ok := r.Library()
 	assert.True(t, ok)
 	assert.NotNil(t, lib)
-	assert.True(t, syms.Has("nvmlDeviceGetGpuFabricInfoV"))
+	assert.True(t, syms.gpuFabricInfoV)
 	assert.Empty(t, r.Reconcile(ctx), "an initialized reader with no checks reports nothing")
 }
 
@@ -281,14 +284,56 @@ func TestReconcile_initHangs(t *testing.T) {
 
 func TestReconcile_everyCheckStuck(t *testing.T) {
 	r, _ := testReader(func() gonvml.Return { return gonvml.SUCCESS })
+	a := r.NewCheck("a", DefaultTimeout)
+	b := r.NewCheck("b", DefaultTimeout)
 	ctx := t.Context()
 	assert.Empty(t, r.Reconcile(ctx))
 
-	a := r.NewCheck("a", DefaultTimeout)
-	b := r.NewCheck("b", DefaultTimeout)
-	a.stuckCycles, b.stuckCycles = stuckThreshold, stuckThreshold-1
+	a.stuck.Store(stuckThreshold)
+	b.stuck.Store(stuckThreshold - 1)
 	assert.Empty(t, r.Reconcile(ctx), "one check still answering means the driver is not hung")
 
-	b.stuckCycles = stuckThreshold
+	b.stuck.Store(stuckThreshold)
 	assertSingle(t, r.Reconcile(ctx), "DCGMError", monitor.SeverityFatal)
+}
+
+// TestConcurrentUse runs Reconcile on one goroutine while a registered check
+// calls Library and runs on another, the way the nvidia monitor uses them.
+// Under -race it fails if a field is shared without synchronization.
+func TestConcurrentUse(t *testing.T) {
+	var inits atomic.Int32
+	r, _ := testReader(func() gonvml.Return {
+		if inits.Add(1) < 3 {
+			return gonvml.ERROR_DRIVER_NOT_LOADED
+		}
+		return gonvml.SUCCESS
+	})
+	c := r.NewCheck("probe", time.Second)
+	ctx := t.Context()
+
+	stop := make(chan struct{})
+	checkDone := make(chan struct{})
+	go func() {
+		defer close(checkDone)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			if lib, _, ok := r.Library(); ok {
+				run(c, func() bool { return lib != nil })
+			}
+		}
+	}()
+
+	for i := 0; i < 50; i++ {
+		r.Reconcile(ctx)
+	}
+	close(stop)
+	<-checkDone
+
+	_, _, ok := r.Library()
+	assert.True(t, ok)
+	assert.Zero(t, c.StuckCycles())
 }

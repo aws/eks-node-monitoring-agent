@@ -13,58 +13,49 @@ import (
 // with dlopen at Init, so the agent binary has no link-time dependency on it.
 const libraryName = "libnvidia-ml.so.1"
 
-// libraryDirs are the directories under a driver root where driver packages
-// install libraryName: RPM-based distributions first, then Debian multiarch.
-var libraryDirs = []string{"/usr/lib64", "/usr/lib/x86_64-linux-gnu", "/usr/lib/aarch64-linux-gnu"}
+// libraryDirs are where driver packages install libraryName, relative to a
+// driver root, in the order NMA tries them. An entry may be a glob.
+var libraryDirs = []string{
+	"/usr/lib64",                 // RPM-based distributions, such as AL2023
+	"/usr/lib/x86_64-linux-gnu",  // Debian and Ubuntu multiarch, x86_64
+	"/usr/lib/aarch64-linux-gnu", // Debian and Ubuntu multiarch, arm64
+	"/usr/share/.nvidia/*/lib64", // Bottlerocket, one root per driver branch (lts for R580, pb for R595)
+}
 
-// bottlerocketLibraryGlob matches the Bottlerocket NVIDIA kernel module
-// packages, which install the library under a per-branch root (lts for R580,
-// pb for R595).
-// ref: https://github.com/bottlerocket-os/bottlerocket-kernel-kit (packages/kmod-*-nvidia-*/*.spec, nvidia_libdir)
-const bottlerocketLibraryGlob = "/usr/share/.nvidia/*/lib64/" + libraryName
-
-// libraryCandidates returns the library paths to try, in order. A host
-// process (HOST_ROOT unset, as on Auto Mode) tries the soname first, so the
-// dynamic loader finds the library the same way nv-hostengine does. Every
-// other candidate is under the host root, so a containerized agent always
+// libraryCandidates returns the library paths to try, in order. Every path
+// except the soname is under the host root, so a containerized agent always
 // loads the host's copy, which matches the loaded kernel module.
 func libraryCandidates() []string {
 	var out []string
 	if config.HostRoot() == "/" {
+		// A host process (Auto Mode) lets the dynamic loader resolve the
+		// soname, the same way nv-hostengine does.
 		out = append(out, libraryName)
 	}
-
-	// Driver roots follow the device-file lookup in package dcgm: an explicit
-	// override is used alone; otherwise the GPU Operator root, when present,
-	// comes before the host's own root.
-	var roots []string
-	override := config.NvidiaDriverRoot()
-	if override != "" {
-		roots = []string{override}
-	} else {
-		if info, err := os.Stat(config.ToHostPath(config.DefaultGPUOperatorDriverRoot)); err == nil && info.IsDir() {
-			roots = append(roots, config.DefaultGPUOperatorDriverRoot)
-		}
-		roots = append(roots, "/")
-	}
-	for _, root := range roots {
+	for _, root := range driverRoots() {
 		for _, dir := range libraryDirs {
-			if p := config.ToHostPath(filepath.Join(root, dir, libraryName)); isFile(p) {
-				out = append(out, p)
-			}
+			// Glob returns only paths that exist. Its only error is a bad
+			// pattern, which only an override path containing glob syntax can
+			// produce; that root then yields no candidates.
+			matches, _ := filepath.Glob(config.ToHostPath(filepath.Join(root, dir, libraryName)))
+			out = append(out, matches...)
 		}
-	}
-	if override == "" {
-		// The pattern is a constant, so Glob cannot return ErrBadPattern.
-		matches, _ := filepath.Glob(config.ToHostPath(bottlerocketLibraryGlob))
-		out = append(out, matches...)
 	}
 	return out
 }
 
-func isFile(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
+// driverRoots returns the driver roots to search, following the device-file
+// lookup in package dcgm: an explicit override on its own; otherwise the GPU
+// Operator root when present, then the host's root.
+func driverRoots() []string {
+	if override := config.NvidiaDriverRoot(); override != "" {
+		return []string{override}
+	}
+	var roots []string
+	if info, err := os.Stat(config.ToHostPath(config.DefaultGPUOperatorDriverRoot)); err == nil && info.IsDir() {
+		roots = append(roots, config.DefaultGPUOperatorDriverRoot)
+	}
+	return append(roots, "/")
 }
 
 // openLibrary initializes NVML from the first candidate that dlopen accepts.
