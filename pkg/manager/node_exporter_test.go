@@ -539,3 +539,149 @@ func TestNodeExporter_ReasonFollowsMostRecentReport(t *testing.T) {
 	fatal("ErrorA", "MessageA2")
 	expectCondition("ErrorA", "MessageA2; MessageB")
 }
+
+const captureConditionType = corev1.NodeConditionType("NetworkingReady")
+
+// newCaptureExporter builds a node exporter wired to a capture channel of the
+// given buffer, for exercising the healthy-to-failing capture trigger.
+func newCaptureExporter(t *testing.T, buffer int) (manager.Exporter, chan manager.CaptureRequest) {
+	t.Helper()
+	ctx := context.TODO()
+	fakeClient := fake.NewFakeClient()
+	initialNode := corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "test-node"}}
+	if err := fakeClient.Create(ctx, &initialNode); err != nil {
+		t.Fatalf("failed to create initial node: %v", err)
+	}
+	exporter := manager.NewNodeExporter(
+		&initialNode,
+		fakeClient,
+		record.NewFakeRecorder(100),
+		map[corev1.NodeConditionType]manager.NodeConditionConfig{
+			captureConditionType: {ReadyReason: "NetworkingIsReady", ReadyMessage: "Monitoring is active"},
+		},
+	)
+	ch := make(chan manager.CaptureRequest, buffer)
+	exporter.SetCaptureChannel(ch)
+	return exporter, ch
+}
+
+func TestNodeExporter_CaptureRequestedOnFirstFatal(t *testing.T) {
+	ctx := context.TODO()
+	exporter, ch := newCaptureExporter(t, 1)
+
+	if err := exporter.Fatal(ctx, monitor.Condition{Reason: "Down", Message: "link down"}, captureConditionType); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case req := <-ch:
+		if req.Condition != captureConditionType || req.Reason != "Down" || req.Message != "link down" {
+			t.Errorf("unexpected request: %+v", req)
+		}
+		if req.At.IsZero() {
+			t.Error("request At must be non-zero")
+		}
+	default:
+		t.Fatal("expected a capture request on the first Fatal")
+	}
+}
+
+func TestNodeExporter_NoSecondRequestForSameReasonWhileFalse(t *testing.T) {
+	ctx := context.TODO()
+	exporter, ch := newCaptureExporter(t, 4)
+
+	fatal := monitor.Condition{Reason: "Down", Message: "link down"}
+	if err := exporter.Fatal(ctx, fatal, captureConditionType); err != nil {
+		t.Fatal(err)
+	}
+	<-ch // drain the first request
+	if err := exporter.Fatal(ctx, fatal, captureConditionType); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case req := <-ch:
+		t.Errorf("did not expect a second request for the same reason while already False: %+v", req)
+	default:
+	}
+}
+
+func TestNodeExporter_NoRequestForNewReasonWhileAlreadyFalse(t *testing.T) {
+	ctx := context.TODO()
+	exporter, ch := newCaptureExporter(t, 4)
+
+	if err := exporter.Fatal(ctx, monitor.Condition{Reason: "Down", Message: "a"}, captureConditionType); err != nil {
+		t.Fatal(err)
+	}
+	<-ch // drain the first request
+	// A different reason on a condition that is already False is a known
+	// limitation: the condition does not transition, so no request is sent.
+	if err := exporter.Fatal(ctx, monitor.Condition{Reason: "AlsoDown", Message: "b"}, captureConditionType); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case req := <-ch:
+		t.Errorf("did not expect a request for a new reason while already False: %+v", req)
+	default:
+	}
+}
+
+func TestNodeExporter_NewRequestAfterResolveThenFatal(t *testing.T) {
+	ctx := context.TODO()
+	exporter, ch := newCaptureExporter(t, 4)
+
+	if err := exporter.Fatal(ctx, monitor.Condition{Reason: "Down", Message: "a"}, captureConditionType); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := exporter.Resolve(ctx, monitor.Condition{Reason: "Down"}, captureConditionType); err != nil {
+		t.Fatal(err)
+	}
+	// After recovery the condition is True again, so a new failure is a fresh
+	// transition and must request another capture.
+	if err := exporter.Fatal(ctx, monitor.Condition{Reason: "Down", Message: "a again"}, captureConditionType); err != nil {
+		t.Fatal(err)
+	}
+
+	count := 0
+	for {
+		select {
+		case <-ch:
+			count++
+			continue
+		default:
+		}
+		break
+	}
+	if count != 2 {
+		t.Errorf("expected 2 capture requests (initial + after resolve), got %d", count)
+	}
+}
+
+func TestNodeExporter_FatalDoesNotBlockOnFullChannel(t *testing.T) {
+	ctx := context.TODO()
+	// Buffer of 1: the first transition fills it, and a later transition must
+	// not block when the buffer is full.
+	exporter, ch := newCaptureExporter(t, 1)
+
+	if err := exporter.Fatal(ctx, monitor.Condition{Reason: "Down", Message: "a"}, captureConditionType); err != nil {
+		t.Fatal(err)
+	}
+	// Channel now full (not drained). Resolve then Fatal again to force a new
+	// transition whose send would block if it were not non-blocking.
+	if _, err := exporter.Resolve(ctx, monitor.Condition{Reason: "Down"}, captureConditionType); err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- exporter.Fatal(ctx, monitor.Condition{Reason: "Down", Message: "b"}, captureConditionType)
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(1 * time.Second):
+		t.Fatal("Fatal blocked on a full capture channel")
+	}
+	_ = ch
+}
