@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"hash/fnv"
+	"net/http"
 	"slices"
 	"sync"
 	"time"
@@ -41,6 +42,8 @@ type Manager struct {
 	inFlight map[int]bool
 	scrapes  *prometheus.CounterVec
 	reports  *prometheus.CounterVec
+
+	apiNotRegistered bool
 }
 
 func NewManager(cfg ManagerConfig) *Manager {
@@ -128,11 +131,21 @@ func (m *Manager) runInterval(ctx context.Context, start, end time.Time) {
 		return
 	}
 	m.reports.WithLabelValues(res.Outcome.String()).Inc()
+	notRegistered := res.Status == http.StatusNotFound
+	// only log first register/not-registered event to avoid log pollution
+	if res.Status != 0 && notRegistered != m.apiNotRegistered {
+		if notRegistered {
+			m.cfg.Logger.Info("telemetry API is not registered, all reports will be dropped until it is", "status", res.Status, "message", res.Message)
+		} else {
+			m.cfg.Logger.Info("telemetry API is registered", "status", res.Status)
+		}
+		m.apiNotRegistered = notRegistered
+	}
 	if res.Outcome == nodetelemetry.Hold {
 		m.cfg.Logger.V(2).Info("telemetry report held until the next interval", "status", res.Status, "message", res.Message)
 		return
 	}
-	if res.Outcome == nodetelemetry.Dropped {
+	if res.Outcome == nodetelemetry.Dropped && !notRegistered {
 		m.cfg.Logger.Info("telemetry report rejected", "status", res.Status, "message", res.Message)
 	}
 	// TODO: once reports are size-bounded, advance only the counters

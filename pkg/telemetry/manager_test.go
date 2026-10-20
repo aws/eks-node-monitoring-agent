@@ -2,11 +2,14 @@ package telemetry
 
 import (
 	"context"
+	"net/http"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/go-logr/logr"
+	"github.com/go-logr/logr/funcr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	clocktesting "k8s.io/utils/clock/testing"
@@ -87,4 +90,39 @@ func TestManager_HungCollector(t *testing.T) {
 	m.runInterval(context.Background(), time.Unix(60, 0), time.Unix(120, 0))
 	assert.Equal(t, 2, sender.count())
 	assert.Len(t, h.calls, 1)
+}
+
+type scriptedSender struct{ results []nodetelemetry.Result }
+
+func (s *scriptedSender) Send(context.Context, *nodetelemetry.Report) (nodetelemetry.Result, error) {
+	r := s.results[0]
+	s.results = s.results[1:]
+	return r, nil
+}
+
+func TestManager_LogsAPIRegistrationChanges(t *testing.T) {
+	notFound := nodetelemetry.Result{Outcome: nodetelemetry.Dropped, Status: http.StatusNotFound}
+	accepted := nodetelemetry.Result{Outcome: nodetelemetry.Accepted, Status: http.StatusOK}
+	transport := nodetelemetry.Result{Outcome: nodetelemetry.Hold}
+	var logs []string
+	m := NewManager(ManagerConfig{
+		Sender: &scriptedSender{results: []nodetelemetry.Result{notFound, notFound, transport, notFound, accepted, accepted, notFound}},
+		Logger: funcr.New(func(_, args string) { logs = append(logs, args) }, funcr.Options{}),
+	})
+	for i := 0; i < 7; i++ {
+		m.runInterval(context.Background(), time.Unix(int64(i)*60, 0), time.Unix(int64(i+1)*60, 0))
+	}
+	var msgs []string
+	for _, l := range logs {
+		for _, want := range []string{"telemetry API is not registered", "telemetry API is registered", "telemetry report rejected"} {
+			if strings.Contains(l, `"msg"="`+want) {
+				msgs = append(msgs, want)
+			}
+		}
+	}
+	assert.Equal(t, []string{
+		"telemetry API is not registered",
+		"telemetry API is registered",
+		"telemetry API is not registered",
+	}, msgs, "logged once when it goes missing and once when it comes back; a transport error changes nothing")
 }
