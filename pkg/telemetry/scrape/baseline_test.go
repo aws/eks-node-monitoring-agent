@@ -52,7 +52,7 @@ func TestBaselines_Eviction(t *testing.T) {
 
 	b.Observe(time.Unix(0, 0), counter(10))
 	for i := 0; i < evictAfter; i++ {
-		b.Unreachable()
+		b.ScrapeFailed()
 	}
-	assert.Empty(t, b.series, "unreachable for evictAfter intervals")
+	assert.Empty(t, b.series, "evictAfter failed scrapes in a row")
 }

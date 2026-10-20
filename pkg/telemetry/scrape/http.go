@@ -129,7 +129,7 @@ func (c *HTTPCollector) fetch(ctx context.Context) (Parsed, string) {
 
 func (c *HTTPCollector) failed(reason string) Result {
 	c.mu.Lock()
-	c.baselines.Unreachable()
+	c.baselines.ScrapeFailed()
 	c.mu.Unlock()
 	res := Result{Scope: nodetelemetry.Scope{Name: c.cfg.Scope}, Failure: reason}
 	if c.cfg.OnceSeen && !c.seen {

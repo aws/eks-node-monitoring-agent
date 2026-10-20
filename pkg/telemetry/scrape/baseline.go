@@ -9,8 +9,8 @@ import (
 const evictAfter = 3
 
 type Baselines struct {
-	series      map[string]*baseline
-	unreachable int
+	series        map[string]*baseline
+	failedScrapes int
 }
 
 type baseline struct {
@@ -47,7 +47,7 @@ func NewBaselines() *Baselines {
 // Series that have a baseline but are missing from counters lose their pending
 // value, and are evicted after missing evictAfter scrapes in a row.
 func (b *Baselines) Observe(now time.Time, counters map[string][]Series) []Delta {
-	b.unreachable = 0
+	b.failedScrapes = 0
 	seen := map[string]bool{}
 	var out []Delta
 	for metric, series := range counters {
@@ -88,8 +88,13 @@ func (b *Baselines) Advance() {
 	}
 }
 
-func (b *Baselines) Unreachable() {
-	if b.unreachable++; b.unreachable >= evictAfter {
+// ScrapeFailed records a failed scrape of the target: such as a timeout, refused connection,
+// error status, oversized response, parse error or identity mismatch. After evictAfter failures
+// in a row, every baseline is evicted: a target that has been down that long has most likely
+// restarted or stopped, so its counters start over, and a target that's gone for good stops
+// holding memory. A successful scrape is expected to reset the count.
+func (b *Baselines) ScrapeFailed() {
+	if b.failedScrapes++; b.failedScrapes >= evictAfter {
 		// TODO: count evicted baselines.
 		b.series = map[string]*baseline{}
 	}
