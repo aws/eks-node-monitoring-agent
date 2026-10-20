@@ -205,7 +205,10 @@ func run() error {
 	// the worker drains it. The worker reads NodeDiagnostics through the
 	// manager's cached client.
 	captureCh := make(chan manager.CaptureRequest, 4)
-	captureWorker := autocapture.NewWorker(captureCh, mgr.GetClient(), logger.WithName("auto-log-capture"))
+	// Shared with the NodeDiagnostic controller below so the two never
+	// collect logs at the same time.
+	guard := &captureguard.Guard{}
+	captureWorker := autocapture.NewWorker(captureCh, mgr.GetClient(), runtimeContext, guard, logger.WithName("auto-log-capture"))
 	if err := mgr.Add(crmanager.RunnableFunc(captureWorker.Start)); err != nil {
 		logger.Error(err, "failed to add auto log capture worker")
 		return err
@@ -417,7 +420,6 @@ func run() error {
 
 	// Initialize and register NodeDiagnostic controller for log collection
 	logger.Info("initializing node diagnostic controller")
-	guard := &captureguard.Guard{}
 	diagnosticController := controllers.NewNodeDiagnosticController(mgr.GetClient(), hostname, runtimeContext, guard)
 	if err := diagnosticController.Register(ctx, mgr); err != nil {
 		logger.Error(err, "failed to register diagnostic controller")
