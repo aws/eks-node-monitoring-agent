@@ -43,7 +43,7 @@ func NewClient(cfg *rest.Config) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("nodetelemetry: build http client: %w", err)
 	}
-	return &Client{http: hc, url: strings.TrimSuffix(cfg.Host, "/") + metricsAPIPath}, nil
+	return NewClientFromURL(hc, strings.TrimSuffix(cfg.Host, "/")+metricsAPIPath), nil
 }
 
 func NewClientFromURL(hc *http.Client, url string) *Client {
