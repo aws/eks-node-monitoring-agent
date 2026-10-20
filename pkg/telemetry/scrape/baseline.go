@@ -32,6 +32,20 @@ func NewBaselines() *Baselines {
 	return &Baselines{series: map[string]*baseline{}}
 }
 
+// Observe takes the counter series from one successful scrape, taken at time "now",
+// and returns each series' increase since its baseline. A series' baseline is
+// its value in the last report that was sent and accepted or dropped, so a report
+// that's held leaves baselines in place and the next delta covers the gap.
+//
+// For each series in counters:
+//   - Seen for the first time, or lower than its baseline:
+//     it gets a new baseline at its current value and no delta this time.
+//   - Otherwise: it returns the increase over the baseline, starting at the
+//     baseline's time, and records the current value as pending, to become
+//     the new baseline on the next Advance.
+//
+// Series that have a baseline but are missing from counters lose their pending
+// value, and are evicted after missing evictAfter scrapes in a row.
 func (b *Baselines) Observe(now time.Time, counters map[string][]Series) []Delta {
 	b.unreachable = 0
 	seen := map[string]bool{}
