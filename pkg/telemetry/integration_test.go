@@ -110,7 +110,7 @@ targets:
       - { name: eks_problem }
 `, host, port)), cfg))
 	fatal := fatals{{ConditionType: "StorageReady", Reason: "IOError"}}
-	collectors, wait := BuildCollectors(cfg, fatal, map[string]string{"instanceId": "i-0123456789abcdef0"})
+	collectors, wait := BuildCollectors(cfg, fatal, map[string]string{"instanceId": "i-0123456789abcdef0"}, logr.Discard())
 	require.Len(t, collectors, 2)
 
 	runtime := &nmaconfig.RuntimeContext{}

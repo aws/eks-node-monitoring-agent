@@ -212,7 +212,7 @@ wait:
 	return out
 }
 
-func BuildCollectors(cfg *config.Config, source FatalSource, resources map[string]string) ([]scrape.Collector, time.Duration) {
+func BuildCollectors(cfg *config.Config, source FatalSource, resources map[string]string, logger logr.Logger) ([]scrape.Collector, time.Duration) {
 	var out []scrape.Collector
 	var wait time.Duration
 	for _, t := range cfg.Targets {
@@ -242,6 +242,7 @@ func BuildCollectors(cfg *config.Config, source FatalSource, resources map[strin
 			Metrics:           metrics,
 			NotReportingAfter: cfg.NotReportingThreshold(),
 			OnceSeen:          s.Expected == config.ExpectedOnceSeen,
+			Logger:            logger,
 		}))
 		wait = max(wait, s.Timeout)
 	}

@@ -12,6 +12,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-logr/logr"
+
 	"github.com/aws/eks-node-monitoring-agent/pkg/nodetelemetry"
 	"github.com/aws/eks-node-monitoring-agent/pkg/telemetry/config"
 )
@@ -28,6 +30,7 @@ type HTTPConfig struct {
 	NotReportingAfter int
 	OnceSeen          bool
 	Clock             func() time.Time
+	Logger            logr.Logger
 }
 
 // HTTPCollector scrapes one target's Prometheus metrics endpoint over plain
@@ -51,6 +54,9 @@ type HTTPCollector struct {
 	client   *http.Client
 	failures int
 	seen     bool
+	// lastErrorStatus is the HTTP status of the last failed fetch, so an
+	// error status is logged once rather than on every scrape.
+	lastErrorStatus int
 
 	mu        sync.Mutex
 	baselines *Baselines
@@ -130,8 +136,13 @@ func (c *HTTPCollector) fetch(ctx context.Context) (Parsed, string) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
+		if resp.StatusCode != c.lastErrorStatus {
+			c.cfg.Logger.Info("scrape target returned a new error status", "component", c.cfg.Scope, "url", c.url, "status", resp.StatusCode)
+			c.lastErrorStatus = resp.StatusCode
+		}
 		return Parsed{}, ReasonConnectionRefused
 	}
+	c.lastErrorStatus = 0
 	parsed, err := Parse(resp.Header.Get("Content-Type"), resp.Body, c.allow, c.cfg.MaxBytes, c.cfg.Identity)
 	switch {
 	case errors.Is(err, errTooLarge):

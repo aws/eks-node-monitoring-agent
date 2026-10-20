@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr/funcr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -134,4 +135,24 @@ func TestHTTPCollector_Timeout(t *testing.T) {
 	p, _ := strconv.Atoi(port)
 	c := NewHTTPCollector(HTTPConfig{Scope: "s", Endpoint: config.TargetEndpoint{Address: host, Port: p}, Timeout: 50 * time.Millisecond, MaxBytes: 1 << 20})
 	require.Equal(t, ReasonTimeout, c.Scrape(context.Background()).Failure)
+}
+
+func TestHTTPCollector_LogsErrorStatusOnce(t *testing.T) {
+	var logs []string
+	tg := &target{}
+	c := newCollector(t, tg, func(cfg *HTTPConfig) {
+		cfg.Logger = funcr.New(func(_, args string) { logs = append(logs, args) }, funcr.Options{})
+	})
+	scrape := func() string { return c.Scrape(context.Background()).Failure }
+
+	assert.Equal(t, ReasonConnectionRefused, scrape(), "a 503 is reported with the closed-set reason")
+	scrape()
+	require.Len(t, logs, 1, "the same error status is logged once")
+	assert.Contains(t, logs[0], `"status"=503`)
+
+	tg.set("depth 1\n")
+	assert.Empty(t, scrape())
+	tg.set("")
+	scrape()
+	assert.Len(t, logs, 2, "logged again after a successful scrape")
 }

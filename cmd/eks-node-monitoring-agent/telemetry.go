@@ -34,7 +34,7 @@ func runTelemetry(ctx context.Context, logger logr.Logger, cfg *telemetryconfig.
 	if attrs.HostID != "" {
 		resources = map[string]string{"instanceId": attrs.HostID}
 	}
-	collectors, scrapeWait := telemetry.BuildCollectors(cfg, source, resources)
+	collectors, scrapeWait := telemetry.BuildCollectors(cfg, source, resources, logger)
 
 	logger.Info("starting node telemetry", "interval", cfg.ReportInterval(), "collectors", len(collectors))
 	_ = telemetry.NewManager(telemetry.ManagerConfig{
