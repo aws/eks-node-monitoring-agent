@@ -124,14 +124,83 @@ func TestXIDs_repeatFloor(t *testing.T) {
 	assert.Len(t, h.wait(t), 1, "five seconds later the GPU reports again")
 }
 
-func TestXIDs_registersSupportedGPUs(t *testing.T) {
+func TestXIDs_unsupportedGPUIsNotRetried(t *testing.T) {
 	unsupported := newFakeGPU()
 	unsupported.fail["registerEvents"] = gonvml.ERROR_NOT_SUPPORTED
 	h := newXIDHarness(t, newFakeGPU(), unsupported)
 
 	assert.Empty(t, h.wait(t))
-	assert.Len(t, h.x.devices, 1)
-	assert.Contains(t, h.x.devices, h.devices[0])
+	assert.Empty(t, h.x.missing)
+	assert.Equal(t, float64(0), testutil.ToFloat64(xidUnregisteredGPUs))
+	h.now = h.now.Add(xidRetryInterval)
+	assert.Empty(t, h.wait(t))
+	assert.Equal(t, 1, unsupported.registers, "a GPU without XID events is not retried")
+}
+
+// TestXIDs_retriesFailedRegistration checks that a GPU that fails to register
+// is retried into the same event set at most every xidRetryInterval, and is
+// counted in nvml_xid_unregistered_gpus until it registers.
+func TestXIDs_retriesFailedRegistration(t *testing.T) {
+	t.Run("registration fails", func(t *testing.T) {
+		flaky := newFakeGPU()
+		flaky.fail["registerEvents"] = gonvml.ERROR_UNKNOWN
+		h := newXIDHarness(t, newFakeGPU(), flaky)
+
+		assert.Empty(t, h.wait(t))
+		assert.Equal(t, []int{1}, h.x.missing)
+		assert.Equal(t, float64(1), testutil.ToFloat64(xidUnregisteredGPUs))
+
+		h.now = h.now.Add(xidRetryInterval - time.Second)
+		assert.Empty(t, h.wait(t))
+		assert.Equal(t, 1, flaky.registers, "no retry before the interval")
+
+		h.now = h.now.Add(time.Second)
+		assert.Empty(t, h.wait(t))
+		assert.Equal(t, 2, flaky.registers, "retried after the interval")
+		assert.Equal(t, []int{1}, h.x.missing)
+
+		delete(flaky.fail, "registerEvents")
+		h.now = h.now.Add(xidRetryInterval)
+		assert.Empty(t, h.wait(t))
+		assert.Empty(t, h.x.missing)
+		assert.Equal(t, float64(0), testutil.ToFloat64(xidUnregisteredGPUs))
+		assert.Equal(t, 1, h.creates, "retries reuse the event set")
+
+		h.event(1, 79)
+		assert.Len(t, h.wait(t), 1, "the retried GPU's XIDs are received")
+	})
+
+	t.Run("device handle fails", func(t *testing.T) {
+		gpu := newFakeGPU()
+		h := newXIDHarness(t, newFakeGPU(), gpu)
+		device := h.lib.DeviceGetHandleByIndexFunc
+		h.lib.DeviceGetHandleByIndexFunc = func(i int) (gonvml.Device, gonvml.Return) {
+			if i == 1 {
+				return nil, gonvml.ERROR_UNKNOWN
+			}
+			return device(i)
+		}
+
+		assert.Empty(t, h.wait(t))
+		assert.Equal(t, []int{1}, h.x.missing)
+		assert.Zero(t, gpu.registers)
+
+		h.lib.DeviceGetHandleByIndexFunc = device
+		h.now = h.now.Add(xidRetryInterval)
+		assert.Empty(t, h.wait(t))
+		assert.Empty(t, h.x.missing)
+		assert.Equal(t, 1, gpu.registers)
+	})
+}
+
+// TestXIDs_unknownDevicesHaveTheirOwnFloor checks that the repeat floor is
+// per device, including devices NMA did not register.
+func TestXIDs_unknownDevicesHaveTheirOwnFloor(t *testing.T) {
+	h := newXIDHarness(t, newFakeGPU())
+	for _, dev := range []gonvml.Device{&mock.Device{}, &mock.Device{}} {
+		h.queue = append(h.queue, waitResult{gonvml.EventData{Device: dev, EventType: gonvml.EventTypeXidCriticalError, EventData: 79}, gonvml.SUCCESS})
+		assert.Len(t, h.wait(t), 1)
+	}
 }
 
 // TestXIDs_noBusyLoop checks that Wait pauses instead of returning at once

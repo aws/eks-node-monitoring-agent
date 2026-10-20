@@ -11,6 +11,7 @@ import (
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/classify"
+	"github.com/aws/eks-node-monitoring-agent/pkg/util/renotify"
 )
 
 // PolicyInterval is how often Policies.Poll should run. It matches the rate
@@ -51,6 +52,11 @@ var nvlinkErrorTotals = []struct {
 // policy at most once per GPU per poll, and a counter needs two readings in a
 // row before it can report growth.
 //
+// Retired pages, temperature and power are levels, not counters: they would
+// report on every poll while the reading stays over its limit. Each reports
+// at most once per classify.WarningReNotifyInterval per GPU, and again right
+// away after the GPU reads within the limit.
+//
 // One poll's NVML calls, about nine per GPU, run as a single run of one check
 // under DefaultTimeout. At milliseconds per call that is far inside the
 // deadline, and one check per poll means a hung driver holds at most one
@@ -63,9 +69,13 @@ type Policies struct {
 	// GPU's enforced power limit.
 	powerThresholdWatts atomic.Uint32
 
-	// baselines holds each counter's last reading. It is only touched by the
-	// goroutine that calls Poll.
+	now func() time.Time
+
+	// Only the goroutine that calls Poll touches the maps below. baselines
+	// holds each counter's last reading. notified holds a re-notify tracker
+	// for each GPU and level policy that has reported, and only for those.
 	baselines map[counterKey]uint64
+	notified  map[levelKey]*renotify.Tracker[struct{}]
 }
 
 type counterKey struct {
@@ -73,13 +83,28 @@ type counterKey struct {
 	dcgmField uint16
 }
 
+// levelKey identifies one GPU's level policy for rate limiting.
+type levelKey struct {
+	gpu    int
+	policy string
+}
+
+// Level policies, rate-limited per GPU.
+const (
+	retiredPagesPolicy = "retiredPages"
+	thermalPolicy      = "thermal"
+	powerPolicy        = "power"
+)
+
 // NewPolicies registers the policy checks with r. Create it before the first
 // call to r.Reconcile.
 func NewPolicies(r *Reader) *Policies {
 	return &Policies{
 		reader:    r,
 		check:     r.NewCheck("policies", DefaultTimeout),
+		now:       time.Now,
 		baselines: map[counterKey]uint64{},
+		notified:  map[levelKey]*renotify.Tracker[struct{}]{},
 	}
 }
 
@@ -173,38 +198,55 @@ func readGPU(lib gonvml.Interface, index int, readLimit bool) gpuReadings {
 		return gpuReadings{lost: r.lost}
 	}
 
+	// One step per read, in a fixed order. Each step reads one value and
+	// records it whether or not it was observed.
 	g := gpuReadings{nvlink: make([]reading, len(nvlinkErrorTotals))}
 	steps := []func(){
+		// Double-bit policy: uncorrected ECC errors in device memory since
+		// the driver loaded. Device memory only, as DCGM's policy reads it;
+		// the total also counts caches and register files.
 		func() {
 			v, ret := dev.GetMemoryErrorCounter(gonvml.MEMORY_ERROR_TYPE_UNCORRECTED, gonvml.VOLATILE_ECC, gonvml.MEMORY_LOCATION_DEVICE_MEMORY)
 			g.dbe = r.observe("nvmlDeviceGetMemoryErrorCounter", v, ret)
 		},
+		// PCIe policy: the GPU's PCIe replay counter.
 		func() {
 			v, ret := dev.GetPcieReplayCounter()
-			g.pcieReplays = r.observe("nvmlDeviceGetPcieReplayCounter", nonNegative(v), ret)
+			g.pcieReplays = r.observe("nvmlDeviceGetPcieReplayCounter", uint64(v), ret)
 		},
+		// Retired-pages policy, first half: pages retired after repeated
+		// single-bit errors. Only the count of the returned list is used.
 		func() {
 			pages, ret := dev.GetRetiredPages(gonvml.PAGE_RETIREMENT_CAUSE_MULTIPLE_SINGLE_BIT_ECC_ERRORS)
 			g.retiredSBE = r.observe("nvmlDeviceGetRetiredPages", uint64(len(pages)), ret)
 		},
+		// Retired-pages policy, second half: pages retired after a
+		// double-bit error.
 		func() {
 			pages, ret := dev.GetRetiredPages(gonvml.PAGE_RETIREMENT_CAUSE_DOUBLE_BIT_ECC_ERROR)
 			g.retiredDBE = r.observe("nvmlDeviceGetRetiredPages", uint64(len(pages)), ret)
 		},
+		// Thermal policy: GPU core temperature in degrees C.
 		func() {
 			v, ret := dev.GetTemperature(gonvml.TEMPERATURE_GPU)
 			g.temperatureC = r.observe("nvmlDeviceGetTemperature", uint64(v), ret)
 		},
+		// Power policy: board power draw in milliwatts.
 		func() {
 			v, ret := dev.GetPowerUsage()
 			g.powerMW = r.observe("nvmlDeviceGetPowerUsage", uint64(v), ret)
 		},
+		// Power policy limit, in milliwatts. Read only when no threshold is
+		// configured, because then the GPU's own enforced limit is the bar.
 		func() {
 			if readLimit {
 				v, ret := dev.GetEnforcedPowerLimit()
 				g.powerLimitMW = r.observe("nvmlDeviceGetEnforcedPowerLimit", uint64(v), ret)
 			}
 		},
+		// NVLink policy: the four NVLink error totals, summed over links by
+		// the driver, in one field-values call. Each value carries its own
+		// return code.
 		func() {
 			values := make([]gonvml.FieldValue, len(nvlinkErrorTotals))
 			for i, f := range nvlinkErrorTotals {
@@ -230,13 +272,6 @@ func readGPU(lib gonvml.Interface, index int, readLimit bool) gpuReadings {
 		}
 	}
 	return g
-}
-
-func nonNegative(n int) uint64 {
-	if n < 0 {
-		return 0
-	}
-	return uint64(n)
 }
 
 // fieldValueUint decodes an unsigned NVML field value. NVML writes the value
@@ -266,7 +301,7 @@ func (p *Policies) evaluate(samples []gpuReadings) []monitor.Condition {
 
 		if p.grew(counterKey{gpu, dcgmFieldDBEDevice}, s.dbe) {
 			out = append(out, withMessage(classify.NormalizedSignals{DoubleBitECC: true},
-				fmt.Sprintf("detected %d Nvidia Double Bit error(s) on location %v", s.dbe.value, "Device"))...)
+				fmt.Sprintf("detected %d Nvidia Double Bit error(s) on location Device", s.dbe.value))...)
 		}
 
 		// Every counter updates its baseline, but the policy reports the
@@ -280,17 +315,19 @@ func (p *Policies) evaluate(samples []gpuReadings) []monitor.Condition {
 			}
 		}
 
-		if s.retiredSBE.ok && s.retiredDBE.ok && s.retiredSBE.value+s.retiredDBE.value > maxRetiredPages {
+		pagesObserved := s.retiredSBE.ok && s.retiredDBE.ok
+		if p.reportLevel(levelKey{gpu, retiredPagesPolicy}, pagesObserved, s.retiredSBE.value+s.retiredDBE.value > maxRetiredPages) {
 			out = append(out, withMessage(classify.NormalizedSignals{PageRetirement: true},
 				fmt.Sprintf("detected %d SBE, and %d DBE page retirements", s.retiredSBE.value, s.retiredDBE.value))...)
 		}
 
-		if s.temperatureC.ok && s.temperatureC.value > maxTemperatureC {
+		if p.reportLevel(levelKey{gpu, thermalPolicy}, s.temperatureC.ok, s.temperatureC.value > maxTemperatureC) {
 			out = append(out, withMessage(classify.NormalizedSignals{ThermalViolation: true},
 				fmt.Sprintf("detected GPU thermals outside of thresholds with severity code %d", s.temperatureC.value))...)
 		}
 
-		if watts, over := p.overPower(s); over {
+		watts, powerObserved, overPower := p.power(s)
+		if p.reportLevel(levelKey{gpu, powerPolicy}, powerObserved, overPower) {
 			out = append(out, withMessage(classify.NormalizedSignals{PowerViolation: true},
 				fmt.Sprintf("detected power usage outside of thresholds with severity code %d", watts))...)
 		}
@@ -326,21 +363,51 @@ func (p *Policies) clearBaselines(gpu int) {
 	}
 }
 
-// overPower compares whole watts against the threshold, as DCGM does. With no
-// threshold configured, it uses the GPU's enforced power limit.
-func (p *Policies) overPower(s gpuReadings) (uint64, bool) {
+// reportLevel reports whether a level policy should report for this poll. A
+// reading over the limit reports at most once per WarningReNotifyInterval
+// per GPU. A reading within the limit drops the GPU's tracker, so the next
+// violation reports at once. A reading that was not observed changes
+// nothing, because unknown is not clean.
+//
+// The report is recorded here, not after it is sent, because Poll's caller
+// sends it later and nothing here learns whether that worked.
+func (p *Policies) reportLevel(key levelKey, observed, over bool) bool {
+	if !observed {
+		return false
+	}
+	if !over {
+		delete(p.notified, key)
+		return false
+	}
+	now := p.now()
+	tracker, tracked := p.notified[key]
+	if tracked && !tracker.ShouldNotify(struct{}{}, now) {
+		return false
+	}
+	if !tracked {
+		tracker = renotify.New[struct{}](classify.WarningReNotifyInterval)
+		p.notified[key] = tracker
+	}
+	tracker.Notified(struct{}{}, now)
+	return true
+}
+
+// power compares whole watts against the threshold, as DCGM does. With no
+// threshold configured, it uses the GPU's enforced power limit. observed is
+// false when the draw or the limit it needs could not be read.
+func (p *Policies) power(s gpuReadings) (watts uint64, observed, over bool) {
 	if !s.powerMW.ok {
-		return 0, false
+		return 0, false, false
 	}
 	limit := uint64(p.powerThresholdWatts.Load())
 	if limit == 0 {
 		if !s.powerLimitMW.ok {
-			return 0, false
+			return 0, false, false
 		}
 		limit = s.powerLimitMW.value / 1000
 	}
-	watts := s.powerMW.value / 1000
-	return watts, watts > limit
+	watts = s.powerMW.value / 1000
+	return watts, true, watts > limit
 }
 
 // withMessage classifies s and replaces each condition's message with msg.

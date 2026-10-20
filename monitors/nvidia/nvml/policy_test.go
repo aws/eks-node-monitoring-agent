@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
+	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/classify"
 )
 
 // fakeGPU is one GPU's NVML values. Tests change them between polls. Polls
@@ -30,6 +31,7 @@ type fakeGPU struct {
 	block    chan struct{} // when set, the ECC read waits on it
 
 	limitReads int
+	registers  int // RegisterEvents calls
 	afterLost  int // calls made after a call returned ERROR_GPU_IS_LOST
 	lost       bool
 }
@@ -97,6 +99,7 @@ func (f *fakeGPU) device() *mock.Device {
 			return gonvml.SUCCESS
 		},
 		RegisterEventsFunc: func(uint64, gonvml.EventSet) gonvml.Return {
+			f.registers++
 			return f.result("registerEvents")
 		},
 	}
@@ -217,12 +220,12 @@ func TestPolicies(t *testing.T) {
 			},
 		},
 		{
-			name: "temperature above 100 C reports on every poll",
+			name: "temperature above 100 C reports once, then is rate-limited",
 			gpus: 1,
 			polls: []poll{
 				{func(g []*fakeGPU) { g[0].tempC = 100 }, nil},
 				{func(g []*fakeGPU) { g[0].tempC = 101 }, []string{"NvidiaThermalError|Warning|detected GPU thermals outside of thresholds with severity code 101"}},
-				{nothing, []string{"NvidiaThermalError|Warning|detected GPU thermals outside of thresholds with severity code 101"}},
+				{nothing, nil},
 			},
 		},
 		{
@@ -256,13 +259,10 @@ func TestPolicies(t *testing.T) {
 			name: "a lost GPU reports nothing here and its counters start over",
 			gpus: 2,
 			polls: []poll{
-				{func(g []*fakeGPU) { g[0].dbe, g[1].tempC = 3, 101 }, []string{"NvidiaThermalError|Warning|detected GPU thermals outside of thresholds with severity code 101"}},
-				{func(g []*fakeGPU) { g[0].dbe, g[0].fail["ecc"] = 4, gonvml.ERROR_GPU_IS_LOST }, []string{"NvidiaThermalError|Warning|detected GPU thermals outside of thresholds with severity code 101"}},
-				{func(g []*fakeGPU) { g[0].lost = false; delete(g[0].fail, "ecc"); g[0].dbe = 5 }, []string{"NvidiaThermalError|Warning|detected GPU thermals outside of thresholds with severity code 101"}},
-				{func(g []*fakeGPU) { g[0].dbe = 6 }, []string{
-					"NvidiaDoubleBitError|Fatal|detected 6 Nvidia Double Bit error(s) on location Device",
-					"NvidiaThermalError|Warning|detected GPU thermals outside of thresholds with severity code 101",
-				}},
+				{func(g []*fakeGPU) { g[0].dbe, g[1].replays = 3, 1 }, nil},
+				{func(g []*fakeGPU) { g[0].dbe, g[0].fail["ecc"], g[1].replays = 4, gonvml.ERROR_GPU_IS_LOST, 2 }, []string{"NvidiaPCIeError|Warning|detected 2 PCIe replays"}},
+				{func(g []*fakeGPU) { g[0].lost = false; delete(g[0].fail, "ecc"); g[0].dbe = 5 }, nil},
+				{func(g []*fakeGPU) { g[0].dbe = 6 }, []string{"NvidiaDoubleBitError|Fatal|detected 6 Nvidia Double Bit error(s) on location Device"}},
 			},
 		},
 	} {
@@ -385,4 +385,52 @@ func TestFieldValueUint(t *testing.T) {
 		assert.Equal(t, tc.wantOK, ok, "type %d", tc.in.ValueType)
 		assert.Equal(t, tc.want, got, "type %d", tc.in.ValueType)
 	}
+}
+
+// TestPolicies_levelWarningsRateLimited checks that retired pages, thermal and
+// power Warnings report at most once per re-notify interval per GPU, keyed by
+// GPU and policy rather than message, and report again at once after the GPU
+// reads within its limit.
+func TestPolicies_levelWarningsRateLimited(t *testing.T) {
+	gpus := []*fakeGPU{newFakeGPU(), newFakeGPU()}
+	gpus[0].powerMW = 701_000 // over the 700 W enforced limit
+	gpus[1].tempC = 101       // over 100 C
+	var p *Policies
+	initializedReader(t, fakeLibrary(gpus...), func(r *Reader) { p = NewPolicies(r) })
+	now := time.Unix(0, 0)
+	p.now = func() time.Time { return now }
+	poll := func(msg string) []string {
+		t.Helper()
+		conds, ok := p.Poll()
+		require.True(t, ok, msg)
+		return describe(conds)
+	}
+	const (
+		power701 = "NvidiaPowerError|Warning|detected power usage outside of thresholds with severity code 701"
+		power709 = "NvidiaPowerError|Warning|detected power usage outside of thresholds with severity code 709"
+		thermal  = "NvidiaThermalError|Warning|detected GPU thermals outside of thresholds with severity code 101"
+	)
+
+	assert.Equal(t, []string{power701, thermal}, poll("first violation on each GPU"))
+
+	now = now.Add(PolicyInterval)
+	gpus[0].powerMW = 709_000
+	assert.Empty(t, poll("a new reading in the message does not make it a new Warning"))
+
+	now = now.Add(PolicyInterval)
+	gpus[0].fail["power"] = gonvml.ERROR_UNKNOWN
+	assert.Empty(t, poll("an unread power draw is unknown"))
+	now = now.Add(PolicyInterval)
+	delete(gpus[0].fail, "power")
+	assert.Empty(t, poll("unknown did not clear the rate limit"))
+
+	now = now.Add(PolicyInterval)
+	gpus[0].powerMW = 600_000
+	assert.Empty(t, poll("within the limit"))
+	now = now.Add(PolicyInterval)
+	gpus[0].powerMW = 709_000
+	assert.Equal(t, []string{power709}, poll("a reading within the limit lets the next violation report at once"))
+
+	now = now.Add(classify.WarningReNotifyInterval)
+	assert.Equal(t, []string{power709, thermal}, poll("both report again after the re-notify interval"))
 }
