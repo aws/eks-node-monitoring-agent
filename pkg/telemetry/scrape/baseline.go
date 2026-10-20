@@ -1,7 +1,8 @@
 package scrape
 
 import (
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 )
@@ -100,15 +101,16 @@ func (b *Baselines) ScrapeFailed() {
 	}
 }
 
+// seriesKey builds a map key that identifies a series by its metric name and
+// label set, for example "foo_total\x00api=Describe\x00code=500". Labels are
+// sorted by name, so the same label set always gives the same key regardless
+// of map order. Each label pair is prefixed with a NUL byte, which can't
+// appear in metric or label names, so the label boundaries can't be confused
+// with "=" or "," inside label values.
 func seriesKey(metric string, labels map[string]string) string {
-	keys := make([]string, 0, len(labels))
-	for k := range labels {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
 	var sb strings.Builder
 	sb.WriteString(metric)
-	for _, k := range keys {
+	for _, k := range slices.Sorted(maps.Keys(labels)) {
 		sb.WriteString("\x00" + k + "=" + labels[k])
 	}
 	return sb.String()
