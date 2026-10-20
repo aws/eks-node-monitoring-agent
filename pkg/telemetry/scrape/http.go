@@ -16,6 +16,7 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/pkg/telemetry/config"
 )
 
+// HTTPConfig configures an HTTPCollector for one target.
 type HTTPConfig struct {
 	Scope             string
 	Endpoint          config.TargetEndpoint
@@ -29,6 +30,20 @@ type HTTPConfig struct {
 	Clock             func() time.Time
 }
 
+// HTTPCollector scrapes one target's Prometheus metrics endpoint over plain
+// HTTP. Each scrape is a GET to http://<Endpoint.Address>:<Endpoint.Port><Path>
+// whose Accept header asks for the Prometheus exposition format, either
+// delimited protobuf (io.prometheus.client.MetricFamily) or text (version
+// 0.0.4). The response is parsed according to its Content-Type, and as text
+// if the Content-Type isn't a Prometheus format. Other formats, such as JSON,
+// fail to parse.
+//
+// A scrape fails if the target can't be reached or times out, answers with a
+// status of 300 or above (redirects aren't followed), returns more than
+// MaxBytes, can't be parsed, or doesn't expose the Identity metric. Otherwise
+// only allowlisted Metrics are kept: counters become deltas against their
+// baselines, and gauges are combined across series that share their kept
+// labels.
 type HTTPCollector struct {
 	cfg      HTTPConfig
 	allow    map[string]config.MetricSpec
