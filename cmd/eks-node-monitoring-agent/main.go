@@ -39,6 +39,7 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/pkg/diagnostic"
 	"github.com/aws/eks-node-monitoring-agent/pkg/manager"
 	"github.com/aws/eks-node-monitoring-agent/pkg/monitor/registry"
+	"github.com/aws/eks-node-monitoring-agent/pkg/util/captureguard"
 
 	// Import monitor packages to trigger auto-registration via init()
 	_ "github.com/aws/eks-node-monitoring-agent/monitors/kernel"
@@ -416,7 +417,8 @@ func run() error {
 
 	// Initialize and register NodeDiagnostic controller for log collection
 	logger.Info("initializing node diagnostic controller")
-	diagnosticController := controllers.NewNodeDiagnosticController(mgr.GetClient(), hostname, runtimeContext)
+	guard := &captureguard.Guard{}
+	diagnosticController := controllers.NewNodeDiagnosticController(mgr.GetClient(), hostname, runtimeContext, guard)
 	if err := diagnosticController.Register(ctx, mgr); err != nil {
 		logger.Error(err, "failed to register diagnostic controller")
 		return err
