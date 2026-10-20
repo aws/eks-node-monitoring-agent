@@ -279,11 +279,16 @@ func TestReconcile_initHangs(t *testing.T) {
 	for i := 1; i < stuckThreshold; i++ {
 		assert.Empty(t, r.Reconcile(ctx), "run %d", i)
 	}
-	assertSingle(t, r.Reconcile(ctx), "DCGMError", monitor.SeverityFatal)
+	assertSingle(t, r.Reconcile(ctx), "NvidiaDriverNotResponding", monitor.SeverityWarning)
+	assert.Equal(t, float64(1), testutil.ToFloat64(driverNotResponding))
+	assert.Empty(t, r.Reconcile(ctx), "rate-limited while Init stays stuck")
 }
 
+// TestReconcile_everyCheckStuck checks that a driver that stops answering is a
+// Warning and never a condition: a call that has not returned is not a GPU
+// fault, and repairing the node would end the workload on it.
 func TestReconcile_everyCheckStuck(t *testing.T) {
-	r, _ := testReader(func() gonvml.Return { return gonvml.SUCCESS })
+	r, now := testReader(func() gonvml.Return { return gonvml.SUCCESS })
 	a := r.NewCheck("a", DefaultTimeout)
 	b := r.NewCheck("b", DefaultTimeout)
 	ctx := t.Context()
@@ -294,7 +299,19 @@ func TestReconcile_everyCheckStuck(t *testing.T) {
 	assert.Empty(t, r.Reconcile(ctx), "one check still answering means the driver is not hung")
 
 	b.stuck.Store(stuckThreshold)
-	assertSingle(t, r.Reconcile(ctx), "DCGMError", monitor.SeverityFatal)
+	assertSingle(t, r.Reconcile(ctx), "NvidiaDriverNotResponding", monitor.SeverityWarning)
+	assert.Equal(t, float64(1), testutil.ToFloat64(driverNotResponding))
+	*now = now.Add(time.Minute)
+	assert.Empty(t, r.Reconcile(ctx), "rate-limited while the driver stays stuck")
+	*now = now.Add(classify.WarningReNotifyInterval)
+	assertSingle(t, r.Reconcile(ctx), "NvidiaDriverNotResponding", monitor.SeverityWarning)
+
+	// The driver answers: the gauge clears, and the next stall reports at once.
+	a.stuck.Store(0)
+	assert.Empty(t, r.Reconcile(ctx))
+	assert.Equal(t, float64(0), testutil.ToFloat64(driverNotResponding))
+	a.stuck.Store(stuckThreshold)
+	assertSingle(t, r.Reconcile(ctx), "NvidiaDriverNotResponding", monitor.SeverityWarning)
 }
 
 // TestConcurrentUse runs Reconcile on one goroutine while a registered check

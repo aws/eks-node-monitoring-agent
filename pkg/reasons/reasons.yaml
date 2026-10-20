@@ -406,6 +406,14 @@ AcceleratedHardwareReady:
       The NVIDIA Fabric Manager service is not running on this NVSwitch-equipped
       instance. Fabric Manager is required for multi-GPU NVLink communication.
       Without it, multi-GPU workloads will fail or silently degrade.
+  NvidiaDriverNotResponding:
+    Template: 'NvidiaDriverNotResponding'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      Calls from the agent to the NVIDIA driver have not returned for several
+      consecutive checks, so the agent cannot read GPU health. A call that has
+      not returned is not treated as a GPU fault, because a busy or shared
+      driver can also hold it.
   NvidiaLibraryNotFound:
     Template: 'NvidiaLibraryNotFound'
     DefaultSeverity: 'Warning'
