@@ -123,9 +123,15 @@ func (r *Report) AddScope(s Scope) {
 		return
 	}
 	for _, m := range s.Metrics {
-		if m.Sums != nil {
+		switch {
+		case m.Sums != nil && m.Gauges != nil:
+			// each Metric becomes one OTLP metric, which can only have one data type so a
+			// Metric must set either Gauges or Sums, not both
+			// https://github.com/open-telemetry/opentelemetry-proto/blob/09769935deb8b2ebcf73ad1e2142b691d17bf70b/opentelemetry/proto/metrics/v1/metrics.proto#L201-L210
+			// TODO: count toward dropped metrics.
+		case m.Sums != nil:
 			r.addSum(sm, m)
-		} else {
+		case m.Gauges != nil:
 			r.addGauge(sm, m)
 		}
 	}

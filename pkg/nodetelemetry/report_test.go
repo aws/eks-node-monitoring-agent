@@ -129,3 +129,15 @@ func TestReport_ProblemsAndNotReporting(t *testing.T) {
 	assert.Equal(t, map[string]any{"reason": "Timeout"}, nr.At(0).Attributes().AsRaw())
 	assert.Equal(t, 1, md.ResourceMetrics().At(0).ScopeMetrics().At(1).Metrics().Len(), "a not-reporting scope carries only eks_not_reporting")
 }
+
+func TestReport_SkipsMetricsWithoutAKnownType(t *testing.T) {
+	r := nodetelemetry.NewReport(sampleNode, time.Unix(0, 0), time.Unix(300, 0))
+	r.AddScope(nodetelemetry.Scope{Name: "s", Metrics: []nodetelemetry.Metric{
+		{Name: "typed", Unit: "1", Gauges: []nodetelemetry.GaugePoint{{Value: 1}}},
+		{Name: "untyped", Unit: "1"},
+		{Name: "both", Unit: "1", Gauges: []nodetelemetry.GaugePoint{{Value: 1}}, Sums: []nodetelemetry.SumPoint{{Delta: 1}}},
+	}})
+	ms := marshal(t, r).ResourceMetrics().At(0).ScopeMetrics().At(0).Metrics()
+	require.Equal(t, 1, ms.Len(), "a metric needs exactly one of gauges or sums")
+	assert.Equal(t, "typed", ms.At(0).Name())
+}
