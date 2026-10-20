@@ -28,12 +28,17 @@ type fakeGPU struct {
 	limitMW  uint32
 	nvlink   [4]uint64 // in nvlinkErrorTotals order
 	fail     map[string]gonvml.Return
-	block    chan struct{} // when set, the ECC read waits on it
+	block    chan struct{} // when set, the ECC and fabric reads wait on it
 
-	limitReads int
-	registers  int // RegisterEvents calls
-	afterLost  int // calls made after a call returned ERROR_GPU_IS_LOST
-	lost       bool
+	fabricState  uint8
+	fabricStatus uint32 // nvmlReturn_t of a completed fabric training
+	fabricMask   uint32
+
+	limitReads  int
+	fabricReads int // fabric calls, either struct version
+	registers   int // RegisterEvents calls
+	afterLost   int // calls made after a call returned ERROR_GPU_IS_LOST
+	lost        bool
 }
 
 func newFakeGPU() *fakeGPU {
@@ -118,7 +123,7 @@ func fakeLibrary(gpus ...*fakeGPU) *mock.Interface {
 			return &mock.ExtendedInterface{LookupSymbolFunc: func(string) error { return nil }}
 		},
 		DeviceGetCountFunc:         func() (int, gonvml.Return) { return len(devices), gonvml.SUCCESS },
-		DeviceGetHandleByIndexFunc: func(i int) (gonvml.Device, gonvml.Return) { return devices[i], gonvml.SUCCESS },
+		DeviceGetHandleByIndexFunc: func(i int) (gonvml.Device, gonvml.Return) { return devices[i], gpus[i].result("handle") },
 	}
 }
 
@@ -256,11 +261,14 @@ func TestPolicies(t *testing.T) {
 			},
 		},
 		{
-			name: "a lost GPU reports nothing here and its counters start over",
+			name: "a lost GPU reports only that it is lost, and its counters start over",
 			gpus: 2,
 			polls: []poll{
 				{func(g []*fakeGPU) { g[0].dbe, g[1].replays = 3, 1 }, nil},
-				{func(g []*fakeGPU) { g[0].dbe, g[0].fail["ecc"], g[1].replays = 4, gonvml.ERROR_GPU_IS_LOST, 2 }, []string{"NvidiaPCIeError|Warning|detected 2 PCIe replays"}},
+				{func(g []*fakeGPU) { g[0].dbe, g[0].fail["ecc"], g[1].replays = 4, gonvml.ERROR_GPU_IS_LOST, 2 }, []string{
+					"NvidiaXID79Error|Fatal|GPU 0 has fallen off the bus: NVML returned GPU_IS_LOST",
+					"NvidiaPCIeError|Warning|detected 2 PCIe replays",
+				}},
 				{func(g []*fakeGPU) { g[0].lost = false; delete(g[0].fail, "ecc"); g[0].dbe = 5 }, nil},
 				{func(g []*fakeGPU) { g[0].dbe = 6 }, []string{"NvidiaDoubleBitError|Fatal|detected 6 Nvidia Double Bit error(s) on location Device"}},
 			},
@@ -294,8 +302,8 @@ func TestPolicies_lostGPUStopsReading(t *testing.T) {
 	initializedReader(t, fakeLibrary(gpu), func(r *Reader) { p = NewPolicies(r) })
 
 	conds, ok := p.Poll()
-	assert.Empty(t, conds)
-	assert.True(t, ok, "the poll read the GPUs; the lost one is reported by its own check")
+	assert.Equal(t, []string{"NvidiaXID79Error|Fatal|GPU 0 has fallen off the bus: NVML returned GPU_IS_LOST"}, describe(conds))
+	assert.True(t, ok)
 	assert.Zero(t, gpu.afterLost, "no call after the first ERROR_GPU_IS_LOST")
 }
 

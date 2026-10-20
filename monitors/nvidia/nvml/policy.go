@@ -50,7 +50,8 @@ var nvlinkErrorTotals = []struct {
 // the last poll, more than maxRetiredPages retired pages, a temperature above
 // maxTemperatureC, and power above the threshold. Like DCGM, it reports each
 // policy at most once per GPU per poll, and a counter needs two readings in a
-// row before it can report growth.
+// row before it can report growth. A GPU that answers with ERROR_GPU_IS_LOST
+// reports the lost-GPU Fatal and nothing else.
 //
 // Retired pages, temperature and power are levels, not counters: they would
 // report on every poll while the reading stays over its limit. Each reports
@@ -296,6 +297,7 @@ func (p *Policies) evaluate(samples []gpuReadings) []monitor.Condition {
 			// A lost GPU's values are not observed, so its counters need two
 			// new readings before they can report growth.
 			p.clearBaselines(gpu)
+			out = append(out, lostGPU(gpu)...)
 			continue
 		}
 
