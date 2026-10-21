@@ -119,7 +119,7 @@ nodeAgent:
       interval: 5m
     targetDefaults:
       # -- Defaults to apply across all configured targets where the corresponding field is omitted.
-      # onceSeen: a target is not included in the until it has been observed at least once.
+      # onceSeen: a target is not included in the report until it has been observed at least once.
       expected: onceSeen
     # -- Node-local agents to scrape and the metrics to send from each.
     targets:

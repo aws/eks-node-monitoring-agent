@@ -140,7 +140,7 @@ The following table lists the configurable parameters for this chart and their d
 | nodeAgent.securityContext | object | `{"capabilities":{"add":["NET_ADMIN"]},"privileged":true}` | Container Security context for the eks-node-monitoring-agent |
 | nodeAgent.telemetry.enabled | bool | `false` | EXPERIMENTAL: Send node telemetry (agent metrics and problems) to the telemetry API. |
 | nodeAgent.telemetry.report.interval | string | `"5m"` | How often the agent sends a telemetry report. |
-| nodeAgent.telemetry.targetDefaults.expected | string | `"onceSeen"` | Defaults to apply across all configured targets where the corresponding field is omitted. onceSeen: a target is not included in the until it has been observed at least once. |
+| nodeAgent.telemetry.targetDefaults.expected | string | `"onceSeen"` | Defaults to apply across all configured targets where the corresponding field is omitted. onceSeen: a target is not included in the report until it has been observed at least once. |
 | nodeAgent.telemetry.targets | list | see [`values.yaml`](./values.yaml) | Node-local agents to scrape and the metrics to send from each. |
 | nodeAgent.tolerations | list | `[{"operator":"Exists"}]` | Deployment tolerations for the eks-node-monitoring-agent |
 | serviceAccount.annotations | object | `{}` | Annotations applied to the service account |
