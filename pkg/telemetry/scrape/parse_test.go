@@ -56,11 +56,19 @@ func TestParse_Protobuf(t *testing.T) {
 	assert.Equal(t, []Series{{Labels: map[string]string{}, Value: 5}}, res.Series["foo_total"])
 }
 
-func TestParse_MaxSeriesDropsTheMetric(t *testing.T) {
-	body := "# TYPE foo_total counter\nfoo_total{api=\"A\"} 1\nfoo_total{api=\"B\"} 1\nfoo_total{api=\"C\"} 1\n"
-	res, err := Parse(textCT, strings.NewReader(body), testAllow, 1<<20, "")
+func TestParse_MaxSeriesCountsSentSeries(t *testing.T) {
+	body := "# TYPE foo_total counter\n" +
+		"foo_total{api=\"A\",code=\"200\"} 1\nfoo_total{api=\"A\",code=\"500\"} 1\n" +
+		"foo_total{api=\"B\",code=\"200\"} 1\nfoo_total{api=\"B\",code=\"500\"} 1\n"
+	byAPI := map[string]config.MetricSpec{"foo_total": {Name: "foo_total", Type: config.MetricTypeCounter, Labels: []string{"api"}, MaxSeries: 2}}
+	res, err := Parse(textCT, strings.NewReader(body), byAPI, 1<<20, "")
 	require.NoError(t, err)
-	assert.NotContains(t, res.Series, "foo_total")
+	assert.Len(t, res.Series["foo_total"], 4, "4 source series, but only 2 distinct api values are sent, which is within MaxSeries")
+
+	byCode := map[string]config.MetricSpec{"foo_total": {Name: "foo_total", Type: config.MetricTypeCounter, Labels: []string{"api", "code"}, MaxSeries: 2}}
+	res, err = Parse(textCT, strings.NewReader(body), byCode, 1<<20, "")
+	require.NoError(t, err)
+	assert.NotContains(t, res.Series, "foo_total", "4 distinct api/code pairs would be sent, which exceeds MaxSeries")
 }
 
 func TestParse_TooLarge(t *testing.T) {

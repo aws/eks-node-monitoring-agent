@@ -54,12 +54,24 @@ func Parse(contentType string, body io.Reader, allow map[string]config.MetricSpe
 		case !ok:
 		case name == nodetelemetry.MetricEksProblem:
 			res.Problems = append(res.Problems, problems(&mf)...)
-		// TODO: count metrics dropped for exceeding MaxSeries.
-		case name != nodetelemetry.MetricEksNotReporting && (spec.MaxSeries == 0 || len(mf.Metric) <= spec.MaxSeries):
+		case name == nodetelemetry.MetricEksNotReporting:
+			// NMA reports a component's not-reporting status itself: reports of this
+			// from target agents are deliberately not handled.
+		default:
+			var series []Series
+			sent := map[string]bool{}
 			for _, m := range mf.Metric {
 				if v, ok := value(&mf, m); ok {
-					res.Series[name] = append(res.Series[name], Series{Labels: labels(m), Value: v})
+					l := labels(m)
+					sent[seriesKey("", kept(l, spec.Labels))] = true
+					series = append(series, Series{Labels: l, Value: v})
 				}
+			}
+			// MaxSeries caps the series that are sent: source series that differ only
+			// in labels outside the allowlist are combined into one, so they count once.
+			// TODO: count metrics dropped for exceeding MaxSeries.
+			if len(series) > 0 && len(sent) <= spec.MaxSeries {
+				res.Series[name] = series
 			}
 		}
 	}
