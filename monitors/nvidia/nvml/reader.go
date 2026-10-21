@@ -48,6 +48,18 @@ type Reader struct {
 	libraryWarnings *renotify.Tracker[string]
 	stuckWarnings   *renotify.Tracker[string]
 
+	// probe bounds the driver probe that escalate runs while the checks
+	// that read the GPUs are stalled. It is not one of checks, so a stuck
+	// probe holds one more thread and never counts toward the stall.
+	probe          *Check
+	memoryPressure func() (float64, error)
+
+	// probeStuckSince is when the probe's current stuck call started, zero
+	// while the probe answers. held is why the last escalation was held at
+	// Warning, empty when it wasn't. Only Reconcile touches them.
+	probeStuckSince time.Time
+	held            string
+
 	// lib and path are only touched by Reconcile.
 	lib  gonvml.Interface
 	path string
@@ -77,14 +89,17 @@ func newReader(cfg Config, now func() time.Time, candidates func() []string, new
 		initCheck:       &Check{name: "nvmlInit", timeout: DefaultTimeout},
 		libraryWarnings: renotify.New[string](classify.WarningReNotifyInterval),
 		stuckWarnings:   renotify.New[string](classify.WarningReNotifyInterval),
+		probe:           &Check{name: "driverProbe", timeout: DefaultTimeout},
+		memoryPressure:  hostMemoryPressure,
 	}
 }
 
-// NewCheck registers a check that runs one NVML call at a time with the given
-// timeout. When every registered check has been stuck for stuckThreshold
-// consecutive runs, Reconcile reports the driver as hung. Register every
-// check before the first call to Reconcile, which reads the list without a
-// lock.
+// NewCheck registers a check that reads the GPUs and runs one NVML call at a
+// time with the given timeout. When every registered check has been stuck for
+// stuckThreshold consecutive runs, Reconcile reports the driver as not
+// responding. Register only checks whose runs read every GPU, so that one
+// wedged GPU stalls them all. Register every check before the first call to
+// Reconcile, which reads the list without a lock.
 func (r *Reader) NewCheck(name string, timeout time.Duration) *Check {
 	c := &Check{name: name, timeout: timeout}
 	r.checks = append(r.checks, c)
@@ -109,15 +124,21 @@ func (r *Reader) Library() (lib gonvml.Interface, syms newerSymbols, ok bool) {
 //     problem that replacing the node does not fix.
 //   - Init returns an error past the grace period: Fatal DCGMError, the
 //     reason package dcgm reports when it cannot reach the hostengine.
-//   - Init, or every check after Init, stuck for stuckThreshold runs: a
-//     rate-limited NvidiaDriverNotResponding Warning, never a condition.
-//     A call that has not returned is not evidence of a GPU fault: a wedged
-//     GPU, heavy load or another agent on the same driver lock can all hold
-//     it, and repairing the node would end the workload on it.
+//   - Init, or every check that reads the GPUs, stuck for stuckThreshold
+//     runs: a rate-limited NvidiaDriverNotResponding Warning. A call that
+//     has not returned is not by itself evidence of a GPU fault: heavy load
+//     or another agent on the same driver lock can hold it, and repairing
+//     the node would end the workload on it.
+//   - After Init, the checks stalled and a light driver probe stuck for
+//     escalationWindow while host memory is not under pressure: Fatal
+//     NvidiaDriverUnresponsive. A driver that answers nothing for that long
+//     can't run GPU work, and a reboot clears it. See escalate.
 func (r *Reader) Reconcile(ctx context.Context) []monitor.Condition {
 	if r.ready.Load() != nil {
-		return r.notResponding(allStuck(r.checks),
-			fmt.Sprintf("every NVML check has been stuck in the NVIDIA driver for %d consecutive runs, so GPU health is not being read", stuckThreshold))
+		stalled := allStuck(r.checks)
+		conds := r.notResponding(stalled,
+			fmt.Sprintf("the NVML checks that read the GPUs have been stuck in the NVIDIA driver for %d consecutive runs, so GPU health is not being read", stuckThreshold))
+		return append(conds, r.escalate(ctx, stalled)...)
 	}
 
 	if r.lib == nil {

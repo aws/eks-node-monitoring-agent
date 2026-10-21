@@ -74,7 +74,7 @@ var (
 	})
 	driverNotResponding = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "nvml_driver_not_responding",
-		Help: "1 while NVML initialization, or every NVML check, has been stuck in the NVIDIA driver for the stuck threshold; 0 otherwise.",
+		Help: "1 while NVML initialization, or every NVML check that reads the GPUs, has been stuck in the NVIDIA driver for the stuck threshold; 0 otherwise.",
 	})
 	xidUnregisteredGPUs = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "nvml_xid_unregistered_gpus",

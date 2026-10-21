@@ -213,6 +213,8 @@ func testReader(init func() gonvml.Return) (*Reader, *time.Time) {
 		ExtensionsFunc: func() gonvml.ExtendedInterface {
 			return &mock.ExtendedInterface{LookupSymbolFunc: func(string) error { return nil }}
 		},
+		// No GPUs, so the driver probe always answers.
+		DeviceGetCountFunc: func() (int, gonvml.Return) { return 0, gonvml.SUCCESS },
 	}
 	r := newReader(Config{GracePeriod: time.Minute}, func() time.Time { return now },
 		func() []string { return []string{"/host/usr/lib64/" + libraryName} },
@@ -284,9 +286,10 @@ func TestReconcile_initHangs(t *testing.T) {
 	assert.Empty(t, r.Reconcile(ctx), "rate-limited while Init stays stuck")
 }
 
-// TestReconcile_everyCheckStuck checks that a driver that stops answering is a
-// Warning and never a condition: a call that has not returned is not a GPU
-// fault, and repairing the node would end the workload on it.
+// TestReconcile_everyCheckStuck checks that a stall alone is a Warning and
+// never a condition: a call that has not returned is not by itself a GPU
+// fault, and repairing the node would end the workload on it. The driver probe
+// answers here; TestEscalate covers a probe that doesn't.
 func TestReconcile_everyCheckStuck(t *testing.T) {
 	r, now := testReader(func() gonvml.Return { return gonvml.SUCCESS })
 	a := r.NewCheck("a", DefaultTimeout)

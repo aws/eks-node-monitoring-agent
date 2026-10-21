@@ -45,12 +45,14 @@ type XIDs struct {
 	lastSent map[gonvml.Device]time.Time
 }
 
-// NewXIDs registers the XID check with r. Create it before the first call to
-// r.Reconcile.
+// NewXIDs returns the XID reader for r.
 func NewXIDs(r *Reader) *XIDs {
 	return &XIDs{
-		reader:   r,
-		check:    r.NewCheck("xid", DefaultTimeout),
+		reader: r,
+		// Not registered with the reader: the wait is on the event set, not
+		// on one GPU, so it can keep returning while one GPU is wedged, and
+		// counting it would hide that stall.
+		check:    &Check{name: "xid", timeout: DefaultTimeout},
 		now:      time.Now,
 		sleep:    sleepContext,
 		lastSent: map[gonvml.Device]time.Time{},

@@ -12,12 +12,13 @@ import (
 // a check stops waiting before its own next run.
 const DefaultTimeout = 10 * time.Second
 
-// stuckThreshold is how many consecutive runs every check must be stuck
-// before the reader reports the driver as hung. One stuck run can be a short
-// stall, such as a GPU reset or heavy load holding the driver lock, and one
-// stuck check can be a single slow call. Every check stuck for five runs in a
-// row means the driver as a whole has stopped answering. Because every check
-// has to be stuck, the slowest check's interval sets how long that takes.
+// stuckThreshold is how many consecutive runs every check that reads the GPUs
+// must be stuck before the reader reports the driver as not responding. One
+// stuck run can be a short stall, such as a GPU reset or heavy load holding
+// the driver lock, and one stuck check can be a single slow call. Every such
+// check stuck for five runs in a row means the driver, or a GPU every read
+// waits on, has stopped answering. Because every check has to be stuck, the
+// slowest check's interval sets how long that takes.
 const stuckThreshold = 5
 
 // Check runs one NVML call at a time under a deadline. The deadline returns
