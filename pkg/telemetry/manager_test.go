@@ -15,6 +15,7 @@ import (
 	clocktesting "k8s.io/utils/clock/testing"
 
 	"github.com/aws/eks-node-monitoring-agent/pkg/nodetelemetry"
+	"github.com/aws/eks-node-monitoring-agent/pkg/telemetry/config"
 	"github.com/aws/eks-node-monitoring-agent/pkg/telemetry/scrape"
 )
 
@@ -125,4 +126,17 @@ func TestManager_LogsAPIRegistrationChanges(t *testing.T) {
 		"telemetry API is registered",
 		"telemetry API is not registered",
 	}, msgs, "logged once when it goes missing and once when it comes back; a transport error changes nothing")
+}
+
+func TestResolveMetrics_CapsMaxSeriesAtTheAPILimit(t *testing.T) {
+	got := map[string]int{}
+	for _, m := range resolveMetrics([]config.MetricSpec{
+		{Name: "small", MaxSeries: 10},
+		{Name: "huge", MaxSeries: 500},
+		{Name: "default"},
+	}, config.DefaultMaxSeries) {
+		got[m.Name] = m.MaxSeries
+	}
+	assert.Equal(t, map[string]int{"small": 10, "huge": nodetelemetry.MaxPointsPerMetric, "default": config.DefaultMaxSeries}, got)
+	assert.Equal(t, nodetelemetry.MaxPointsPerMetric, resolveMetrics([]config.MetricSpec{{Name: "m"}}, 200)[0].MaxSeries, "a target default above the limit is capped too")
 }

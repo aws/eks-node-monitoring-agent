@@ -223,11 +223,6 @@ func BuildCollectors(cfg *config.Config, source FatalSource, resources map[strin
 			continue
 		}
 		s := cfg.Resolve(t)
-		metrics := make([]config.MetricSpec, 0, len(t.Metrics))
-		for _, m := range t.Metrics {
-			m.MaxSeries = cmp.Or(m.MaxSeries, s.MaxSeries)
-			metrics = append(metrics, m)
-		}
 		var identity string
 		if t.Identity != nil {
 			identity = t.Identity.RequireMetric
@@ -239,7 +234,7 @@ func BuildCollectors(cfg *config.Config, source FatalSource, resources map[strin
 			Timeout:           s.Timeout,
 			MaxBytes:          s.MaxBytes,
 			Identity:          identity,
-			Metrics:           metrics,
+			Metrics:           resolveMetrics(t.Metrics, s.MaxSeries),
 			NotReportingAfter: cfg.NotReportingThreshold(),
 			OnceSeen:          s.Expected == config.ExpectedOnceSeen,
 			Logger:            logger,
@@ -247,4 +242,16 @@ func BuildCollectors(cfg *config.Config, source FatalSource, resources map[strin
 		wait = max(wait, s.Timeout)
 	}
 	return out, wait + time.Second
+}
+
+// resolveMetrics fills in each metric's MaxSeries from the target's resolved
+// default, capped at the extension's per-metric point limit (each series that's
+// sent is one point per report).
+func resolveMetrics(specs []config.MetricSpec, targetMaxSeries int) []config.MetricSpec {
+	out := make([]config.MetricSpec, 0, len(specs))
+	for _, m := range specs {
+		m.MaxSeries = min(cmp.Or(m.MaxSeries, targetMaxSeries), nodetelemetry.MaxPointsPerMetric)
+		out = append(out, m)
+	}
+	return out
 }

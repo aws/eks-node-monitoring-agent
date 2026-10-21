@@ -31,6 +31,9 @@ const (
 	NotReportingAttrReason = "reason"
 )
 
+// MaxPointsPerMetric should be kept as the most points the telemetry extension
+// accepts for one metric. Points beyond this are expected to be dropped by the
+// extension. Collectors that cap their own metrics should cap at or below it.
 const MaxPointsPerMetric = 50
 
 var attrValueRe = regexp.MustCompile(`^[A-Za-z0-9._:/-]{1,64}$`)
