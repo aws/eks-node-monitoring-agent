@@ -15,10 +15,23 @@ type Baselines struct {
 }
 
 type baseline struct {
-	value     float64
-	start     time.Time
-	missing   int
-	next      *float64
+	// acked is the counter value deltas are measured from: the value in the
+	// last report that was accepted or dropped, or 0 after a reset.
+	acked float64
+	// start is when acked was scraped, sent as the delta's start time.
+	start time.Time
+	// lastScraped is the most recently scraped value, used to detect resets.
+	// Unlike next, it's kept while the series is absent.
+	lastScraped float64
+	// carry is the increase up to a reset that no report has acknowledged
+	// yet. It's added to every delta until the next Advance.
+	carry float64
+	// missing is how many scrapes in a row the series has been absent from.
+	missing int
+	// next is the value from the latest scrape, which becomes acked on the
+	// next Advance. It's nil if the series was absent from the latest scrape.
+	next *float64
+	// nextStart is when next was scraped, and becomes start on Advance.
 	nextStart time.Time
 }
 
@@ -39,11 +52,15 @@ func NewBaselines() *Baselines {
 // that's held leaves baselines in place and the next delta covers the gap.
 //
 // For each series in counters:
-//   - Seen for the first time, or lower than its baseline:
-//     it gets a new baseline at its current value and no delta this time.
-//   - Otherwise: it returns the increase over the baseline, starting at the
-//     baseline's time, and records the current value as pending, to become
-//     the new baseline on the next Advance.
+//   - Seen for the first time: it gets a baseline at its current value and no
+//     delta this time.
+//   - Lower than its last observed value: the counter reset. The increase from
+//     the baseline up to the last observed value hasn't been acknowledged yet,
+//     so it's carried over, and the baseline moves to 0, since a counter starts
+//     over from 0.
+//   - Otherwise: it returns the carried increase plus the increase over the
+//     baseline, starting at the baseline's time, and records the current value
+//     as pending, to become the new baseline on the next Advance.
 //
 // Series that have a baseline but are missing from counters lose their pending
 // value, and are evicted after missing evictAfter scrapes in a row.
@@ -58,14 +75,19 @@ func (b *Baselines) Observe(now time.Time, counters map[string][]Series) []Delta
 			base, ok := b.series[key]
 			// TODO: also reset when process_start_time_seconds shows the
 			// agent restarted.
-			if !ok || s.Value < base.value {
-				b.series[key] = &baseline{value: s.Value, start: now}
+			if !ok {
+				b.series[key] = &baseline{acked: s.Value, lastScraped: s.Value, start: now}
 				continue
 			}
 			base.missing = 0
+			if s.Value < base.lastScraped {
+				base.carry += base.lastScraped - base.acked
+				base.acked = 0
+			}
+			base.lastScraped = s.Value
 			v := s.Value
 			base.next, base.nextStart = &v, now
-			out = append(out, Delta{Metric: metric, Series: s, Value: s.Value - base.value, Start: base.start})
+			out = append(out, Delta{Metric: metric, Series: s, Value: base.carry + s.Value - base.acked, Start: base.start})
 		}
 	}
 	for key, base := range b.series {
@@ -84,7 +106,7 @@ func (b *Baselines) Observe(now time.Time, counters map[string][]Series) []Delta
 func (b *Baselines) Advance() {
 	for _, base := range b.series {
 		if base.next != nil {
-			base.value, base.start, base.next = *base.next, base.nextStart, nil
+			base.acked, base.start, base.carry, base.next = *base.next, base.nextStart, 0, nil
 		}
 	}
 }
