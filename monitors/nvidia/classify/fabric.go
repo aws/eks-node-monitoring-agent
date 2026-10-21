@@ -40,6 +40,12 @@ var fabricManagerStatusNames = map[int64]string{
 	DcgmFMStatusNvmlTooOld:   "NvmlTooOld",
 }
 
+// FabricHealthMaskHasFault reports whether a fabric health mask (field 174)
+// decodes as a fault. A blank value is not a fault.
+func FabricHealthMaskHasFault(mask uint64) bool {
+	return !isInt64Blank(int64(mask)) && len(fabricHealthMaskFaults(int64(mask))) > 0
+}
+
 // fabricHealthMaskFaults decodes the faulting sub-fields of a fabric health
 // mask (field 174). Each sub-field is extracted as (mask >> shift) & widthMask
 // (mirroring NVIDIA's DCGM_GPU_FABRIC_HEALTH_TEST macro) and reported only when

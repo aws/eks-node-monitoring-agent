@@ -436,6 +436,13 @@ AcceleratedHardwareReady:
       fabric training failure. Affected GPUs cannot participate in multi-GPU
       NVLink communication. This condition persists across reboots and requires
       instance replacement.
+  NvidiaFabricWarning:
+    Template: 'NvidiaFabricWarning'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      A GPU fabric health mask decoded as a fault, but nvidia-smi reports the
+      fabric health as Healthy on every GPU, so the node is not marked for
+      replacement.
   NeuronDMAError:
     Template: 'NeuronDMAError'
     DefaultSeverity: 'Fatal'

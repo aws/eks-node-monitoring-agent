@@ -62,6 +62,58 @@ func TestClassify_currentPolicy(t *testing.T) {
 
 func u64(v uint64) *uint64 { return &v }
 
+// crossCheck returns n GPUs with the given summaries; GPUs past the end get the
+// last one.
+func crossCheck(n int, processesRunning bool, summaries ...string) *FabricCrossCheck {
+	check := &FabricCrossCheck{ProcessesRunning: processesRunning}
+	for i := 0; i < n; i++ {
+		summary := summaries[min(i, len(summaries)-1)]
+		check.GPUs = append(check.GPUs, GPUFabricHealth{BusID: fmt.Sprintf("00000000:%02x:00.0", 0x51+i), HealthSummary: summary})
+	}
+	return check
+}
+
+// TestClassify_fabricCrossCheck covers how nvidia-smi's view changes a mask
+// fault. Mask 0x40 (access_timeout_recovery=True) decodes as a fault.
+func TestClassify_fabricCrossCheck(t *testing.T) {
+	u := func(v uint) *uint { return &v }
+	const fault = "GPU fabric health mask 0x40: access_timeout_recovery=1"
+	for _, tc := range []struct {
+		name string
+		in   NormalizedSignals
+		want []monitor.Condition
+	}{
+		{"no cross-check => Fatal, message unchanged",
+			NormalizedSignals{FabricHealthMask: u64(0x40)},
+			[]monitor.Condition{{Reason: "NvidiaFabricError", Message: fault, Severity: monitor.SeverityFatal}}},
+		{"all GPUs Healthy => Warning",
+			NormalizedSignals{FabricHealthMask: u64(0x40), GPUCount: u(8), FabricCrossCheck: crossCheck(8, true, "Healthy")},
+			[]monitor.Condition{{Reason: "NvidiaFabricWarning", Message: fault + "; nvidia-smi reports fabric health summary Healthy on all 8 GPUs; GPU processes running: yes", Severity: monitor.SeverityWarning}}},
+		{"one GPU not Healthy => Fatal naming it",
+			NormalizedSignals{FabricHealthMask: u64(0x40), GPUCount: u(8), FabricCrossCheck: crossCheck(8, true, "Healthy", "Unhealthy", "Healthy")},
+			[]monitor.Condition{{Reason: "NvidiaFabricError", Message: fault + `; nvidia-smi fabric health summary for GPU 00000000:52:00.0: "Unhealthy"`, Severity: monitor.SeverityFatal}}},
+		{"nvidia-smi lists fewer GPUs than DCGM => Fatal",
+			NormalizedSignals{FabricHealthMask: u64(0x40), GPUCount: u(8), FabricCrossCheck: crossCheck(7, true, "Healthy")},
+			[]monitor.Condition{{Reason: "NvidiaFabricError", Message: fault + "; nvidia-smi lists 7 GPUs but DCGM detected 8 GPUs", Severity: monitor.SeverityFatal}}},
+		// Other GPU faults are never cross-checked.
+		{"double-bit ECC stays Fatal",
+			NormalizedSignals{DoubleBitECC: true, GPUCount: u(8), FabricCrossCheck: crossCheck(8, true, "Healthy")},
+			[]monitor.Condition{{Reason: "NvidiaDoubleBitError", Message: "detected NVIDIA double-bit ECC error", Severity: monitor.SeverityFatal}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Classify(tc.in)
+			if len(got) != len(tc.want) {
+				t.Fatalf("want %+v, got %+v", tc.want, got)
+			}
+			for i := range tc.want {
+				if got[i].Reason != tc.want[i].Reason || got[i].Message != tc.want[i].Message || got[i].Severity != tc.want[i].Severity {
+					t.Errorf("condition %d: want %+v, got %+v", i, tc.want[i], got[i])
+				}
+			}
+		})
+	}
+}
+
 // TestClassify_xidAllowlist locks the well-known XID allowlist. The expected
 // codes are an explicit literal rather than a loop over WellKnownXidCodes, so an
 // accidental addition to or removal from the allowlist fails here and shows up
