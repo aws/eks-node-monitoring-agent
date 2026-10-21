@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"k8s.io/client-go/rest"
 )
@@ -38,7 +39,17 @@ type Client struct {
 	url  string
 }
 
+// defaultSendTimeout bounds a report's POST when the rest config doesn't set a
+// Timeout, so a stalled request can't block the reporting loop. It's longer
+// than kube-apiserver's default request timeout (60s), so a stuck request
+// normally ends with the API server's 504 rather than this client giving up.
+const defaultSendTimeout = 75 * time.Second
+
 func NewClient(cfg *rest.Config) (*Client, error) {
+	cfg = rest.CopyConfig(cfg)
+	if cfg.Timeout == 0 {
+		cfg.Timeout = defaultSendTimeout
+	}
 	hc, err := rest.HTTPClientFor(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("nodetelemetry: build http client: %w", err)

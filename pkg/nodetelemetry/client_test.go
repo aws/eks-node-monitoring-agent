@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"k8s.io/client-go/rest"
 
 	"github.com/aws/eks-node-monitoring-agent/pkg/nodetelemetry"
 )
@@ -68,4 +69,19 @@ func mustRead(t *testing.T, r io.Reader) []byte {
 	b, err := io.ReadAll(r)
 	require.NoError(t, err)
 	return b
+}
+
+func TestClient_StalledServerIsHeld(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(release) })
+
+	c, err := nodetelemetry.NewClient(&rest.Config{Host: srv.URL, Timeout: 100 * time.Millisecond})
+	require.NoError(t, err)
+	start := time.Now()
+	res, err := c.Send(context.Background(), nodetelemetry.NewReport(sampleNode, time.Unix(0, 0), time.Unix(300, 0)))
+	require.NoError(t, err)
+	assert.Equal(t, nodetelemetry.Hold, res.Outcome, "a timed-out send is held, not dropped")
+	assert.Less(t, time.Since(start), 5*time.Second)
 }
