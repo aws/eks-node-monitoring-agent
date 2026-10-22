@@ -1,0 +1,20 @@
+telemetry:
+  enabled: true
+
+  targetDefaults:
+    expected: onceSeen
+
+  targets:
+    - component: ipamd
+      endpoint:
+        address: 127.0.0.1
+        port: 61678
+      identity:
+        requireMetric: awscni_build_info
+      metrics:
+        - { name: awscni_assigned_ip_addresses, type: gauge, unit: "1" }
+        - { name: eks_problem }
+
+    - component: node-monitoring-agent
+      metrics:
+        - { name: eks_problem }

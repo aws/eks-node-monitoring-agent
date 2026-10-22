@@ -394,6 +394,16 @@ func run() error {
 
 		close(registered)
 
+		if monitorConfig.TelemetryEnabled() {
+			// telemetry should always keep the manager's config so that the reports go out as NMA's service account
+			// as an addon or eks-auto:node-monitoring-agent on Auto. this assumes that the KUBECONFIG env var and
+			// --kubeconfig flag are not set in the DaemonSet config, leaving GetConfig() to pick up the service account
+			// token mount. for Auto, it assumes the --kubeconfig flag is set to one that specifies as:
+			// eks-auto:node-monitoring-agent
+			telemetryCfg := rest.CopyConfig(mgr.GetConfig())
+			go runTelemetry(ctx, logger.WithName("telemetry"), monitorConfig.Telemetry, telemetryCfg, monitoringKubeClient, monitorMgr)
+		}
+
 		return monitorMgr.Start(ctx)
 	})); err != nil {
 		logger.Error(err, "failed to add monitor startup runnable")

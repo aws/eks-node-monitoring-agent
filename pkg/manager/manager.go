@@ -70,6 +70,11 @@ func (m *MonitorManager) Register(ctx context.Context, mon monitor.Monitor, cond
 	return mon.Register(ctx, makeManagerWrapper(m, mon))
 }
 
+// ActiveFatalConditions returns the exporter's unresolved fatal conditions
+func (m *MonitorManager) ActiveFatalConditions() []ActiveFatalCondition {
+	return m.exporter.ActiveFatalConditions()
+}
+
 // Start starts all observers and begins processing notifications
 func (m *MonitorManager) Start(ctx context.Context) error {
 	logger := log.FromContext(ctx)
