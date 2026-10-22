@@ -246,7 +246,7 @@ func TestXIDs_noBusyLoop(t *testing.T) {
 		unknown(t, h.x)
 		unknown(t, h.x)
 		assert.Equal(t, []time.Duration{xidWaitTimeout, xidWaitTimeout}, h.slept)
-		assert.Equal(t, 2, h.x.check.StuckCycles())
+		assert.NotZero(t, h.x.check.inDriverSince.Load(), "the stuck wait is still in the driver")
 	})
 }
 

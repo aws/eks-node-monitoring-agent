@@ -62,6 +62,10 @@ var (
 		template:        "NvidiaDriverNotResponding",
 		defaultSeverity: "Warning",
 	}
+	NvidiaDriverUnresponsive = ReasonMeta{
+		template:        "NvidiaDriverUnresponsive",
+		defaultSeverity: "Fatal",
+	}
 	NvidiaFabricError = ReasonMeta{
 		template:        "NvidiaFabricError",
 		defaultSeverity: "Fatal",
@@ -370,6 +374,7 @@ var byName = map[string]ReasonMeta{
 	"NvidiaDeviceCountMismatch":            NvidiaDeviceCountMismatch,
 	"NvidiaDoubleBitError":                 NvidiaDoubleBitError,
 	"NvidiaDriverNotResponding":            NvidiaDriverNotResponding,
+	"NvidiaDriverUnresponsive":             NvidiaDriverUnresponsive,
 	"NvidiaFabricError":                    NvidiaFabricError,
 	"NvidiaLibraryNotFound":                NvidiaLibraryNotFound,
 	"NvidiaNCCLError":                      NvidiaNCCLError,
