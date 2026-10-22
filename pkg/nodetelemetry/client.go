@@ -65,34 +65,34 @@ func NewClient(cfg *rest.Config) (*Client, error) {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = defaultSendTimeout
 	}
-	hc, err := rest.HTTPClientFor(cfg)
+	httpClient, err := rest.HTTPClientFor(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("nodetelemetry: build http client: %w", err)
 	}
-	return NewClientFromURL(hc, strings.TrimSuffix(cfg.Host, "/")+metricsAPIPath), nil
+	return NewClientFromURL(httpClient, strings.TrimSuffix(cfg.Host, "/")+metricsAPIPath), nil
 }
 
 // NewClientFromURL returns a Client that sends to url using hc.
-func NewClientFromURL(hc *http.Client, url string) *Client {
-	return &Client{http: hc, url: url}
+func NewClientFromURL(httpClient *http.Client, url string) *Client {
+	return &Client{http: httpClient, url: url}
 }
 
 // Send posts the report to the API server.
-func (c *Client) Send(ctx context.Context, r *Report) (Result, error) {
-	if r == nil {
+func (client *Client) Send(ctx context.Context, report *Report) (Result, error) {
+	if report == nil {
 		return Result{}, errors.New("nodetelemetry: nil report")
 	}
-	body, err := r.Marshal()
+	body, err := report.Marshal()
 	if err != nil {
 		return Result{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, client.url, bytes.NewReader(body))
 	if err != nil {
 		return Result{}, err
 	}
 	req.Header.Set("Content-Type", protobufContentType)
 	req.Header.Set("Content-Encoding", gzipContentEncoding)
-	resp, err := c.http.Do(req)
+	resp, err := client.http.Do(req)
 	if err != nil {
 		return Result{Outcome: Hold, Message: err.Error()}, nil
 	}

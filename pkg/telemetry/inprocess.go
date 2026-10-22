@@ -29,19 +29,19 @@ func NewInProcessCollector(source FatalSource, resources map[string]string) *InP
 }
 
 // Scope returns NMAScope.
-func (c *InProcessCollector) Scope() string { return NMAScope }
+func (collector *InProcessCollector) Scope() string { return NMAScope }
 
 // Scrape returns the active fatal conditions. It never fails.
-func (c *InProcessCollector) Scrape(context.Context) scrape.Result {
+func (collector *InProcessCollector) Scrape(context.Context) scrape.Result {
 	res := scrape.Result{Scope: nodetelemetry.Scope{Name: NMAScope}}
 	// TODO: send Warning conditions too.
-	for _, f := range c.source.ActiveFatalConditions() {
+	for _, condition := range collector.source.ActiveFatalConditions() {
 		// TODO: check type and reason against the problem catalog, so
 		// reasons such as %sRepeatedRestart can't carry arbitrary names.
 		res.Problems = append(res.Problems, nodetelemetry.Problem{
-			Type:      string(f.ConditionType),
-			Reason:    f.Reason,
-			Resources: c.resources,
+			Type:      string(condition.ConditionType),
+			Reason:    condition.Reason,
+			Resources: collector.resources,
 		})
 	}
 	// TODO: add NMA's own metrics from its Prometheus registry.

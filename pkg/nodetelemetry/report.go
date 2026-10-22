@@ -102,17 +102,17 @@ type Scope struct {
 
 // Report is one OTLP metrics report for the node.
 type Report struct {
-	md         pmetric.Metrics
-	rm         pmetric.ResourceMetrics
-	start, end pcommon.Timestamp
+	metrics         pmetric.Metrics
+	resourceMetrics pmetric.ResourceMetrics
+	start, end      pcommon.Timestamp
 }
 
 // NewReport returns an empty report for the interval from start to end.
 func NewReport(node NodeAttrs, start, end time.Time) *Report {
-	md := pmetric.NewMetrics()
-	rm := md.ResourceMetrics().AppendEmpty()
-	a := rm.Resource().Attributes()
-	for k, v := range map[string]string{
+	metrics := pmetric.NewMetrics()
+	resourceMetrics := metrics.ResourceMetrics().AppendEmpty()
+	attrs := resourceMetrics.Resource().Attributes()
+	for key, value := range map[string]string{
 		AttrNodeName:       node.NodeName,
 		AttrHostID:         node.HostID,
 		AttrHostArch:       node.HostArch,
@@ -121,136 +121,136 @@ func NewReport(node NodeAttrs, start, end time.Time) *Report {
 		AttrKubeletVersion: node.KubeletVersion,
 		AttrComputeType:    node.ComputeType,
 	} {
-		if v != "" {
-			a.PutStr(k, v)
+		if value != "" {
+			attrs.PutStr(key, value)
 		}
 	}
 	return &Report{
-		md:    md,
-		rm:    rm,
-		start: pcommon.NewTimestampFromTime(start),
-		end:   pcommon.NewTimestampFromTime(end),
+		metrics:         metrics,
+		resourceMetrics: resourceMetrics,
+		start:           pcommon.NewTimestampFromTime(start),
+		end:             pcommon.NewTimestampFromTime(end),
 	}
 }
 
 // AddScope adds the scope to the report, or nothing if it's empty. Points with
 // invalid attribute values, or beyond MaxPointsPerMetric, are dropped.
-func (r *Report) AddScope(s Scope) {
-	if len(s.Metrics) == 0 && len(s.Problems) == 0 && s.NotReporting == "" {
+func (report *Report) AddScope(scope Scope) {
+	if len(scope.Metrics) == 0 && len(scope.Problems) == 0 && scope.NotReporting == "" {
 		return
 	}
-	sm := r.rm.ScopeMetrics().AppendEmpty()
-	sm.Scope().SetName(s.Name)
-	if s.NotReporting != "" {
-		dp := gauge(sm, MetricEksNotReporting, unitDimensionless).AppendEmpty()
-		dp.SetIntValue(1)
-		dp.SetTimestamp(r.end)
-		dp.Attributes().PutStr(NotReportingAttrReason, s.NotReporting)
+	scopeMetrics := report.resourceMetrics.ScopeMetrics().AppendEmpty()
+	scopeMetrics.Scope().SetName(scope.Name)
+	if scope.NotReporting != "" {
+		point := gauge(scopeMetrics, MetricEksNotReporting, unitDimensionless).AppendEmpty()
+		point.SetIntValue(1)
+		point.SetTimestamp(report.end)
+		point.Attributes().PutStr(NotReportingAttrReason, scope.NotReporting)
 		return
 	}
-	for _, m := range s.Metrics {
+	for _, metric := range scope.Metrics {
 		switch {
-		case m.Sums != nil && m.Gauges != nil:
+		case metric.Sums != nil && metric.Gauges != nil:
 			// each Metric becomes one OTLP metric, which can only have one data type so a
 			// Metric must set either Gauges or Sums, not both
 			// https://github.com/open-telemetry/opentelemetry-proto/blob/09769935deb8b2ebcf73ad1e2142b691d17bf70b/opentelemetry/proto/metrics/v1/metrics.proto#L201-L210
 			// TODO: count toward dropped metrics.
-		case m.Sums != nil:
-			r.addSum(sm, m)
-		case m.Gauges != nil:
-			r.addGauge(sm, m)
+		case metric.Sums != nil:
+			report.addSum(scopeMetrics, metric)
+		case metric.Gauges != nil:
+			report.addGauge(scopeMetrics, metric)
 		}
 	}
-	if len(s.Problems) > 0 {
-		r.addProblems(sm, s.Problems)
+	if len(scope.Problems) > 0 {
+		report.scopeMetrics(scopeMetrics, scope.Problems)
 	}
 }
 
-func (r *Report) addGauge(sm pmetric.ScopeMetrics, m Metric) {
-	dps := gauge(sm, m.Name, m.Unit)
-	for _, p := range m.Gauges {
-		if dps.Len() == MaxPointsPerMetric || !validAttrs(p.Attrs) {
+func (report *Report) addGauge(scopeMetrics pmetric.ScopeMetrics, metric Metric) {
+	points := gauge(scopeMetrics, metric.Name, metric.Unit)
+	for _, gaugePoint := range metric.Gauges {
+		if points.Len() == MaxPointsPerMetric || !validAttrs(gaugePoint.Attrs) {
 			// TODO: count dropped points.
 			continue
 		}
-		dp := dps.AppendEmpty()
-		dp.SetDoubleValue(p.Value)
-		dp.SetTimestamp(r.end)
-		putAttrs(dp.Attributes(), p.Attrs)
+		point := points.AppendEmpty()
+		point.SetDoubleValue(gaugePoint.Value)
+		point.SetTimestamp(report.end)
+		putAttrs(point.Attributes(), gaugePoint.Attrs)
 	}
 }
 
-func (r *Report) addSum(sm pmetric.ScopeMetrics, m Metric) {
-	sum := newMetric(sm, m.Name, m.Unit).SetEmptySum()
+func (report *Report) addSum(scopeMetrics pmetric.ScopeMetrics, metric Metric) {
+	sum := newMetric(scopeMetrics, metric.Name, metric.Unit).SetEmptySum()
 	sum.SetAggregationTemporality(pmetric.AggregationTemporalityDelta)
 	sum.SetIsMonotonic(true)
-	dps := sum.DataPoints()
-	for _, p := range m.Sums {
-		if p.Delta == 0 || dps.Len() == MaxPointsPerMetric || !validAttrs(p.Attrs) {
+	points := sum.DataPoints()
+	for _, sumPoint := range metric.Sums {
+		if sumPoint.Delta == 0 || points.Len() == MaxPointsPerMetric || !validAttrs(sumPoint.Attrs) {
 			// TODO: count dropped points.
 			continue
 		}
-		dp := dps.AppendEmpty()
-		dp.SetDoubleValue(p.Delta)
-		dp.SetStartTimestamp(r.start)
-		if !p.StartTime.IsZero() {
-			dp.SetStartTimestamp(pcommon.NewTimestampFromTime(p.StartTime))
+		point := points.AppendEmpty()
+		point.SetDoubleValue(sumPoint.Delta)
+		point.SetStartTimestamp(report.start)
+		if !sumPoint.StartTime.IsZero() {
+			point.SetStartTimestamp(pcommon.NewTimestampFromTime(sumPoint.StartTime))
 		}
-		dp.SetTimestamp(r.end)
-		putAttrs(dp.Attributes(), p.Attrs)
+		point.SetTimestamp(report.end)
+		putAttrs(point.Attributes(), sumPoint.Attrs)
 	}
 }
 
-func (r *Report) addProblems(sm pmetric.ScopeMetrics, problems []Problem) {
-	dps := gauge(sm, MetricEksProblem, unitDimensionless)
-	for _, p := range problems {
-		attrs := Attrs{ProblemAttrType: p.Type, ProblemAttrReason: p.Reason}
-		for k, v := range p.Resources {
-			attrs[ProblemAttrResource+k] = v
+func (report *Report) scopeMetrics(scopeMetrics pmetric.ScopeMetrics, problems []Problem) {
+	points := gauge(scopeMetrics, MetricEksProblem, unitDimensionless)
+	for _, problem := range problems {
+		attrs := Attrs{ProblemAttrType: problem.Type, ProblemAttrReason: problem.Reason}
+		for key, value := range problem.Resources {
+			attrs[ProblemAttrResource+key] = value
 		}
-		if dps.Len() == MaxPointsPerMetric || !validAttrs(attrs) {
+		if points.Len() == MaxPointsPerMetric || !validAttrs(attrs) {
 			// TODO: count dropped points.
 			continue
 		}
-		dp := dps.AppendEmpty()
-		dp.SetIntValue(1)
-		dp.SetTimestamp(r.end)
-		putAttrs(dp.Attributes(), attrs)
+		point := points.AppendEmpty()
+		point.SetIntValue(1)
+		point.SetTimestamp(report.end)
+		putAttrs(point.Attributes(), attrs)
 	}
 }
 
 // Marshal returns the report as a gzipped OTLP protobuf request.
-func (r *Report) Marshal() ([]byte, error) {
+func (report *Report) Marshal() ([]byte, error) {
 	// TODO: bound the raw and gzipped size, dropping points by priority.
-	raw, err := pmetricotlp.NewExportRequestFromMetrics(r.md).MarshalProto()
+	raw, err := pmetricotlp.NewExportRequestFromMetrics(report.metrics).MarshalProto()
 	if err != nil {
 		return nil, fmt.Errorf("marshal OTLP: %w", err)
 	}
 	var buf bytes.Buffer
-	zw := gzip.NewWriter(&buf)
-	if _, err := zw.Write(raw); err != nil {
+	gzipWriter := gzip.NewWriter(&buf)
+	if _, err := gzipWriter.Write(raw); err != nil {
 		return nil, err
 	}
-	if err := zw.Close(); err != nil {
+	if err := gzipWriter.Close(); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
 }
 
-func newMetric(sm pmetric.ScopeMetrics, name, unit string) pmetric.Metric {
-	m := sm.Metrics().AppendEmpty()
-	m.SetName(name)
-	m.SetUnit(unit)
-	return m
+func newMetric(scopeMetrics pmetric.ScopeMetrics, name, unit string) pmetric.Metric {
+	metric := scopeMetrics.Metrics().AppendEmpty()
+	metric.SetName(name)
+	metric.SetUnit(unit)
+	return metric
 }
 
-func gauge(sm pmetric.ScopeMetrics, name, unit string) pmetric.NumberDataPointSlice {
-	return newMetric(sm, name, unit).SetEmptyGauge().DataPoints()
+func gauge(scopeMetrics pmetric.ScopeMetrics, name, unit string) pmetric.NumberDataPointSlice {
+	return newMetric(scopeMetrics, name, unit).SetEmptyGauge().DataPoints()
 }
 
-func validAttrs(a Attrs) bool {
-	for _, v := range a {
-		if !attrValueRe.MatchString(v) {
+func validAttrs(attrs Attrs) bool {
+	for _, value := range attrs {
+		if !attrValueRe.MatchString(value) {
 			return false
 		}
 	}
@@ -258,7 +258,7 @@ func validAttrs(a Attrs) bool {
 }
 
 func putAttrs(dst pcommon.Map, src Attrs) {
-	for k, v := range src {
-		dst.PutStr(k, v)
+	for key, value := range src {
+		dst.PutStr(key, value)
 	}
 }

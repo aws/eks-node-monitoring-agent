@@ -137,42 +137,42 @@ type Resolved struct {
 
 // Resolve returns t's settings, falling back to targetDefaults and then the
 // defaults.
-func (c *Config) Resolve(t Target) Resolved {
-	d := c.TargetDefaults
-	r := Resolved{
-		Path:      cmp.Or(t.Path, d.Path, DefaultTargetPath),
-		Timeout:   cmp.Or(t.Timeout.Duration, d.Timeout.Duration, DefaultTargetTimeout),
+func (cfg *Config) Resolve(target Target) Resolved {
+	defaults := cfg.TargetDefaults
+	resolved := Resolved{
+		Path:      cmp.Or(target.Path, defaults.Path, DefaultTargetPath),
+		Timeout:   cmp.Or(target.Timeout.Duration, defaults.Timeout.Duration, DefaultTargetTimeout),
 		MaxBytes:  DefaultTargetMaxBytes,
-		Expected:  cmp.Or(t.Expected, d.Expected, DefaultExpectedPolicy),
-		MaxSeries: cmp.Or(t.MaxSeries, d.MaxSeries, DefaultMaxSeries),
+		Expected:  cmp.Or(target.Expected, defaults.Expected, DefaultExpectedPolicy),
+		MaxSeries: cmp.Or(target.MaxSeries, defaults.MaxSeries, DefaultMaxSeries),
 	}
-	if q := cmp.Or(t.MaxBytes, d.MaxBytes); q != nil {
-		r.MaxBytes = q.Value()
+	if maxBytes := cmp.Or(target.MaxBytes, defaults.MaxBytes); maxBytes != nil {
+		resolved.MaxBytes = maxBytes.Value()
 	}
-	return r
+	return resolved
 }
 
 // ReportInterval returns the report interval, or the default if unset.
-func (c *Config) ReportInterval() time.Duration {
-	return cmp.Or(c.Report.Interval.Duration, DefaultReportInterval)
+func (cfg *Config) ReportInterval() time.Duration {
+	return cmp.Or(cfg.Report.Interval.Duration, DefaultReportInterval)
 }
 
 // NotReportingThreshold returns AfterFailedIntervals, or the default if unset.
-func (c *Config) NotReportingThreshold() int {
-	return cmp.Or(c.NotReporting.AfterFailedIntervals, DefaultAfterFailedIntervals)
+func (cfg *Config) NotReportingThreshold() int {
+	return cmp.Or(cfg.NotReporting.AfterFailedIntervals, DefaultAfterFailedIntervals)
 }
 
 // IsEnabled returns true if the config is set and enabled.
-func (c *Config) IsEnabled() bool {
-	return c != nil && c.Enabled
+func (cfg *Config) IsEnabled() bool {
+	return cfg != nil && cfg.Enabled
 }
 
 // Validate checks the config. The config is optional and may be nil.
-func (c *Config) Validate() error {
-	if c == nil {
+func (cfg *Config) Validate() error {
+	if cfg == nil {
 		return nil
 	}
-	if !c.Enabled && !reflect.DeepEqual(c, &Config{}) {
+	if !cfg.Enabled && !reflect.DeepEqual(cfg, &Config{}) {
 		return errors.New("telemetry: other fields can only be set when enabled is true")
 	}
 	// TODO: validate units, metric types, component names and explicit

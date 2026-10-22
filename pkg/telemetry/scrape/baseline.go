@@ -68,40 +68,40 @@ func NewBaselines() *Baselines {
 //
 // Series that have a baseline but are missing from counters lose their pending
 // value, and are evicted after missing evictAfter scrapes in a row.
-func (b *Baselines) Observe(now time.Time, counters map[string][]Series) []Delta {
-	b.failedScrapes = 0
+func (baselines *Baselines) Observe(now time.Time, counters map[string][]Series) []Delta {
+	baselines.failedScrapes = 0
 	seen := map[string]bool{}
 	var out []Delta
 	for metric, series := range counters {
-		for _, s := range series {
-			key := seriesKey(metric, s.Labels)
+		for _, sample := range series {
+			key := seriesKey(metric, sample.Labels)
 			seen[key] = true
-			base, ok := b.series[key]
+			base, ok := baselines.series[key]
 			// TODO: also reset when process_start_time_seconds shows the
 			// agent restarted.
 			if !ok {
-				b.series[key] = &baseline{acked: s.Value, lastScraped: s.Value, start: now}
+				baselines.series[key] = &baseline{acked: sample.Value, lastScraped: sample.Value, start: now}
 				continue
 			}
 			base.missing = 0
-			if s.Value < base.lastScraped {
+			if sample.Value < base.lastScraped {
 				base.carry += base.lastScraped - base.acked
 				base.acked = 0
 			}
-			base.lastScraped = s.Value
-			v := s.Value
-			base.next, base.nextStart = &v, now
-			out = append(out, Delta{Metric: metric, Series: s, Value: base.carry + s.Value - base.acked, Start: base.start})
+			base.lastScraped = sample.Value
+			current := sample.Value
+			base.next, base.nextStart = &current, now
+			out = append(out, Delta{Metric: metric, Series: sample, Value: base.carry + sample.Value - base.acked, Start: base.start})
 		}
 	}
-	for key, base := range b.series {
+	for key, base := range baselines.series {
 		if seen[key] {
 			continue
 		}
 		base.next = nil
 		if base.missing++; base.missing >= evictAfter {
 			// TODO: count evicted baselines.
-			delete(b.series, key)
+			delete(baselines.series, key)
 		}
 	}
 	return out
@@ -109,8 +109,8 @@ func (b *Baselines) Observe(now time.Time, counters map[string][]Series) []Delta
 
 // Advance makes each series' pending value from the last Observe its baseline.
 // Should be called once reports are Accepted or Dropped.
-func (b *Baselines) Advance() {
-	for _, base := range b.series {
+func (baselines *Baselines) Advance() {
+	for _, base := range baselines.series {
 		if base.next != nil {
 			base.acked, base.start, base.carry, base.next = *base.next, base.nextStart, 0, nil
 		}
@@ -122,10 +122,10 @@ func (b *Baselines) Advance() {
 // in a row, every baseline is evicted: a target that has been down that long has most likely
 // restarted or stopped, so its counters start over, and a target that's gone for good stops
 // holding memory. A successful scrape is expected to reset the count.
-func (b *Baselines) ScrapeFailed() {
-	if b.failedScrapes++; b.failedScrapes >= evictAfter {
+func (baselines *Baselines) ScrapeFailed() {
+	if baselines.failedScrapes++; baselines.failedScrapes >= evictAfter {
 		// TODO: count evicted baselines.
-		b.series = map[string]*baseline{}
+		baselines.series = map[string]*baseline{}
 	}
 }
 
@@ -136,10 +136,10 @@ func (b *Baselines) ScrapeFailed() {
 // appear in metric or label names, so the label boundaries can't be confused
 // with "=" or "," inside label values.
 func seriesKey(metric string, labels map[string]string) string {
-	var sb strings.Builder
-	sb.WriteString(metric)
-	for _, k := range slices.Sorted(maps.Keys(labels)) {
-		sb.WriteString("\x00" + k + "=" + labels[k])
+	var stringBuilder strings.Builder
+	stringBuilder.WriteString(metric)
+	for _, labelName := range slices.Sorted(maps.Keys(labels)) {
+		stringBuilder.WriteString("\x00" + labelName + "=" + labels[labelName])
 	}
-	return sb.String()
+	return stringBuilder.String()
 }

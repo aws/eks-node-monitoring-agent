@@ -32,7 +32,7 @@ const reportOutcomeError = "error"
 
 // Sender sends a report to the telemetry API.
 type Sender interface {
-	Send(ctx context.Context, r *nodetelemetry.Report) (nodetelemetry.Result, error)
+	Send(ctx context.Context, report *nodetelemetry.Report) (nodetelemetry.Result, error)
 }
 
 // ManagerConfig configures a Manager.
@@ -77,7 +77,7 @@ func NewManager(cfg ManagerConfig) *Manager {
 	if cfg.Runtime == nil {
 		cfg.Runtime = nmaconfig.GetRuntimeContext()
 	}
-	m := &Manager{
+	manager := &Manager{
 		cfg:      cfg,
 		inFlight: map[int]bool{},
 		scrapes: prometheus.NewCounterVec(prometheus.CounterOpts{
@@ -90,27 +90,27 @@ func NewManager(cfg ManagerConfig) *Manager {
 		}, []string{"outcome"}),
 	}
 	if cfg.Registerer != nil {
-		cfg.Registerer.MustRegister(m.scrapes, m.reports)
+		cfg.Registerer.MustRegister(manager.scrapes, manager.reports)
 	}
-	return m
+	return manager
 }
 
 // Start sends reports until ctx is done, starting at FirstReportTime.
-func (m *Manager) Start(ctx context.Context) error {
-	clk := m.cfg.Clock
-	prev := clk.Now()
-	timer := clk.NewTimer(FirstReportTime(prev, m.cfg.Interval, m.cfg.NodeName).Sub(prev))
+func (manager *Manager) Start(ctx context.Context) error {
+	wallClock := manager.cfg.Clock
+	prev := wallClock.Now()
+	timer := wallClock.NewTimer(FirstReportTime(prev, manager.cfg.Interval, manager.cfg.NodeName).Sub(prev))
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
 		return nil
 	case <-timer.C():
 	}
-	ticker := clk.NewTicker(m.cfg.Interval)
+	ticker := wallClock.NewTicker(manager.cfg.Interval)
 	defer ticker.Stop()
 	for {
-		now := clk.Now()
-		m.runInterval(ctx, prev, now)
+		now := wallClock.Now()
+		manager.runInterval(ctx, prev, now)
 		prev = now
 		select {
 		case <-ctx.Done():
@@ -123,101 +123,101 @@ func (m *Manager) Start(ctx context.Context) error {
 // FirstReportTime returns the node's first report time: a fixed offset into
 // the interval, derived from the node name so nodes don't all report at once.
 func FirstReportTime(now time.Time, interval time.Duration, nodeName string) time.Time {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(nodeName))
-	t := now.Truncate(interval).Add(time.Duration(h.Sum64() % uint64(interval)))
-	if t.Before(now) {
-		t = t.Add(interval)
+	hash := fnv.New64a()
+	_, _ = hash.Write([]byte(nodeName))
+	first := now.Truncate(interval).Add(time.Duration(hash.Sum64() % uint64(interval)))
+	if first.Before(now) {
+		first = first.Add(interval)
 	}
-	return t
+	return first
 }
 
-func (m *Manager) runInterval(ctx context.Context, start, end time.Time) {
-	results := m.collect(ctx)
-	node := m.cfg.Node
-	tags := m.cfg.Runtime.Tags()
+func (manager *Manager) runInterval(ctx context.Context, start, end time.Time) {
+	results := manager.collect(ctx)
+	node := manager.cfg.Node
+	tags := manager.cfg.Runtime.Tags()
 	if node.ComputeType == "" {
-		for _, t := range []string{nmaconfig.EKSAuto, nmaconfig.Hybrid} {
+		for _, tag := range []string{nmaconfig.EKSAuto, nmaconfig.Hybrid} {
 			// the hybrid tag may be added with a delay, so we check for it on every
 			// interval until the compute-type's been discovered
-			if slices.Contains(tags, t) {
-				node.ComputeType = t
+			if slices.Contains(tags, tag) {
+				node.ComputeType = tag
 				break
 			}
 		}
 	}
-	rep := nodetelemetry.NewReport(node, start, end)
-	for _, r := range results {
-		rep.AddScope(r.Scope)
+	report := nodetelemetry.NewReport(node, start, end)
+	for _, result := range results {
+		report.AddScope(result.Scope)
 	}
 
-	res, err := m.cfg.Sender.Send(ctx, rep)
+	res, err := manager.cfg.Sender.Send(ctx, report)
 	if err != nil {
-		m.cfg.Logger.Error(err, "telemetry report not sent")
-		m.reports.WithLabelValues(reportOutcomeError).Inc()
+		manager.cfg.Logger.Error(err, "telemetry report not sent")
+		manager.reports.WithLabelValues(reportOutcomeError).Inc()
 		return
 	}
-	m.reports.WithLabelValues(string(res.Outcome)).Inc()
+	manager.reports.WithLabelValues(string(res.Outcome)).Inc()
 	notRegistered := res.Status == http.StatusNotFound
 	// only log first register/not-registered event to avoid log pollution
-	if res.Status != 0 && notRegistered != m.apiNotRegistered {
+	if res.Status != 0 && notRegistered != manager.apiNotRegistered {
 		if notRegistered {
-			m.cfg.Logger.Info("telemetry API is not registered, all reports will be dropped until it is", "status", res.Status, "message", res.Message)
+			manager.cfg.Logger.Info("telemetry API is not registered, all reports will be dropped until it is", "status", res.Status, "message", res.Message)
 		} else {
-			m.cfg.Logger.Info("telemetry API is registered", "status", res.Status)
+			manager.cfg.Logger.Info("telemetry API is registered", "status", res.Status)
 		}
-		m.apiNotRegistered = notRegistered
+		manager.apiNotRegistered = notRegistered
 	}
 	if res.Outcome == nodetelemetry.Hold {
-		m.cfg.Logger.V(2).Info("telemetry report held until the next interval", "status", res.Status, "message", res.Message)
+		manager.cfg.Logger.V(2).Info("telemetry report held until the next interval", "status", res.Status, "message", res.Message)
 		return
 	}
 	if res.Outcome == nodetelemetry.Dropped && !notRegistered {
-		m.cfg.Logger.Info("telemetry report rejected", "status", res.Status, "message", res.Message)
+		manager.cfg.Logger.Info("telemetry report rejected", "status", res.Status, "message", res.Message)
 	}
 	// TODO: once reports are size-bounded, advance only the counters
 	// that were sent.
-	for _, r := range results {
-		if r.Advance != nil {
-			r.Advance()
+	for _, result := range results {
+		if result.Advance != nil {
+			result.Advance()
 		}
 	}
 }
 
-func (m *Manager) collect(ctx context.Context) []scrape.Result {
+func (manager *Manager) collect(ctx context.Context) []scrape.Result {
 	type done struct {
-		i int
-		r scrape.Result
+		index  int
+		result scrape.Result
 	}
-	ch := make(chan done, len(m.cfg.Collectors))
+	finished := make(chan done, len(manager.cfg.Collectors))
 	launched := map[int]bool{}
-	for i, c := range m.cfg.Collectors {
-		m.mu.Lock()
-		busy := m.inFlight[i]
-		m.inFlight[i] = true
-		m.mu.Unlock()
+	for index, collector := range manager.cfg.Collectors {
+		manager.mu.Lock()
+		busy := manager.inFlight[index]
+		manager.inFlight[index] = true
+		manager.mu.Unlock()
 		if busy {
-			m.scrapes.WithLabelValues(c.Scope(), scrapeResultSkipped).Inc()
+			manager.scrapes.WithLabelValues(collector.Scope(), scrapeResultSkipped).Inc()
 			continue
 		}
-		launched[i] = true
+		launched[index] = true
 		go func() {
-			r := c.Scrape(ctx)
-			m.mu.Lock()
-			delete(m.inFlight, i)
-			m.mu.Unlock()
-			ch <- done{i, r}
+			result := collector.Scrape(ctx)
+			manager.mu.Lock()
+			delete(manager.inFlight, index)
+			manager.mu.Unlock()
+			finished <- done{index, result}
 		}()
 	}
 
 	got := map[int]scrape.Result{}
-	timer := m.cfg.Clock.NewTimer(m.cfg.ScrapeWait)
+	timer := manager.cfg.Clock.NewTimer(manager.cfg.ScrapeWait)
 	defer timer.Stop()
 wait:
 	for len(got) < len(launched) {
 		select {
-		case d := <-ch:
-			got[d.i] = d.r
+		case scraped := <-finished:
+			got[scraped.index] = scraped.result
 		case <-timer.C():
 			break wait
 		case <-ctx.Done():
@@ -226,14 +226,14 @@ wait:
 	}
 
 	var out []scrape.Result
-	for i, c := range m.cfg.Collectors {
-		r, ok := got[i]
+	for index, collector := range manager.cfg.Collectors {
+		result, ok := got[index]
 		switch {
 		case ok:
-			m.scrapes.WithLabelValues(c.Scope(), cmp.Or(r.Failure, scrapeResultOK)).Inc()
-			out = append(out, r)
-		case launched[i]:
-			m.scrapes.WithLabelValues(c.Scope(), scrapeResultLate).Inc()
+			manager.scrapes.WithLabelValues(collector.Scope(), cmp.Or(result.Failure, scrapeResultOK)).Inc()
+			out = append(out, result)
+		case launched[index]:
+			manager.scrapes.WithLabelValues(collector.Scope(), scrapeResultLate).Inc()
 		}
 	}
 	return out
@@ -245,31 +245,31 @@ wait:
 func BuildCollectors(cfg *config.Config, source FatalSource, resources map[string]string, logger logr.Logger) ([]scrape.Collector, time.Duration) {
 	var out []scrape.Collector
 	var wait time.Duration
-	for _, t := range cfg.Targets {
-		if t.Endpoint == nil {
-			if slices.ContainsFunc(t.Metrics, func(m config.MetricSpec) bool { return m.Name == nodetelemetry.MetricEksProblem }) {
+	for _, target := range cfg.Targets {
+		if target.Endpoint == nil {
+			if slices.ContainsFunc(target.Metrics, func(spec config.MetricSpec) bool { return spec.Name == nodetelemetry.MetricEksProblem }) {
 				out = append(out, NewInProcessCollector(source, resources))
 			}
 			continue
 		}
-		s := cfg.Resolve(t)
+		settings := cfg.Resolve(target)
 		var identity string
-		if t.Identity != nil {
-			identity = t.Identity.RequireMetric
+		if target.Identity != nil {
+			identity = target.Identity.RequireMetric
 		}
 		out = append(out, scrape.NewHTTPCollector(scrape.HTTPConfig{
-			Scope:             t.Component,
-			Endpoint:          *t.Endpoint,
-			Path:              s.Path,
-			Timeout:           s.Timeout,
-			MaxBytes:          s.MaxBytes,
+			Scope:             target.Component,
+			Endpoint:          *target.Endpoint,
+			Path:              settings.Path,
+			Timeout:           settings.Timeout,
+			MaxBytes:          settings.MaxBytes,
 			Identity:          identity,
-			Metrics:           resolveMetrics(t.Metrics, s.MaxSeries),
+			Metrics:           resolveMetrics(target.Metrics, settings.MaxSeries),
 			NotReportingAfter: cfg.NotReportingThreshold(),
-			OnceSeen:          s.Expected == config.ExpectedOnceSeen,
+			OnceSeen:          settings.Expected == config.ExpectedOnceSeen,
 			Logger:            logger,
 		}))
-		wait = max(wait, s.Timeout)
+		wait = max(wait, settings.Timeout)
 	}
 	return out, wait + time.Second
 }
@@ -279,9 +279,9 @@ func BuildCollectors(cfg *config.Config, source FatalSource, resources map[strin
 // sent is one point per report).
 func resolveMetrics(specs []config.MetricSpec, targetMaxSeries int) []config.MetricSpec {
 	out := make([]config.MetricSpec, 0, len(specs))
-	for _, m := range specs {
-		m.MaxSeries = min(cmp.Or(m.MaxSeries, targetMaxSeries), nodetelemetry.MaxPointsPerMetric)
-		out = append(out, m)
+	for _, spec := range specs {
+		spec.MaxSeries = min(cmp.Or(spec.MaxSeries, targetMaxSeries), nodetelemetry.MaxPointsPerMetric)
+		out = append(out, spec)
 	}
 	return out
 }

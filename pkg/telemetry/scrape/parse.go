@@ -46,11 +46,11 @@ func Parse(contentType string, body io.Reader, allow map[string]config.MetricSpe
 	if format.FormatType() == expfmt.TypeUnknown {
 		format = expfmt.NewFormat(expfmt.TypeTextPlain)
 	}
-	dec := expfmt.NewDecoder(&limitReader{r: body, left: maxBytes}, format)
+	dec := expfmt.NewDecoder(&limitReader{reader: body, left: maxBytes}, format)
 	res := Parsed{Series: map[string][]Series{}}
 	for {
-		var mf dto.MetricFamily
-		err := dec.Decode(&mf)
+		var metricFamily dto.MetricFamily
+		err := dec.Decode(&metricFamily)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return res, nil
@@ -59,26 +59,26 @@ func Parse(contentType string, body io.Reader, allow map[string]config.MetricSpe
 			}
 			return Parsed{}, fmt.Errorf("decode exposition: %w", err)
 		}
-		name := mf.GetName()
-		if name == identity && len(mf.Metric) > 0 {
+		name := metricFamily.GetName()
+		if name == identity && len(metricFamily.Metric) > 0 {
 			res.SawIdentity = true
 		}
 		spec, ok := allow[name]
 		switch {
 		case !ok:
 		case name == nodetelemetry.MetricEksProblem:
-			res.Problems = append(res.Problems, problems(&mf)...)
+			res.Problems = append(res.Problems, problems(&metricFamily)...)
 		case name == nodetelemetry.MetricEksNotReporting:
 			// NMA reports a component's not-reporting status itself: reports of this
 			// from target agents are deliberately not handled.
 		default:
 			var series []Series
 			sent := map[string]bool{}
-			for _, m := range mf.Metric {
-				if v, ok := value(&mf, m); ok {
-					l := labels(m)
-					sent[seriesKey("", kept(l, spec.Labels))] = true
-					series = append(series, Series{Labels: l, Value: v})
+			for _, metric := range metricFamily.Metric {
+				if metricValue, ok := value(&metricFamily, metric); ok {
+					metricLabels := labels(metric)
+					sent[seriesKey("", kept(metricLabels, spec.Labels))] = true
+					series = append(series, Series{Labels: metricLabels, Value: metricValue})
 				}
 			}
 			// MaxSeries caps the series that are sent: source series that differ only
@@ -91,76 +91,76 @@ func Parse(contentType string, body io.Reader, allow map[string]config.MetricSpe
 	}
 }
 
-func problems(mf *dto.MetricFamily) []nodetelemetry.Problem {
+func problems(metricFamily *dto.MetricFamily) []nodetelemetry.Problem {
 	var out []nodetelemetry.Problem
-	for _, m := range mf.Metric {
-		if v, ok := value(mf, m); !ok || v != 1 {
+	for _, metric := range metricFamily.Metric {
+		if metricValue, ok := value(metricFamily, metric); !ok || metricValue != 1 {
 			continue
 		}
-		p := nodetelemetry.Problem{Resources: map[string]string{}}
-		for k, v := range labels(m) {
+		problem := nodetelemetry.Problem{Resources: map[string]string{}}
+		for labelName, labelValue := range labels(metric) {
 			switch {
-			case k == problemLabelType:
-				p.Type = v
-			case k == problemLabelReason:
-				p.Reason = v
-			case strings.HasPrefix(k, problemLabelResourcePrefix):
-				p.Resources[camelCase(strings.TrimPrefix(k, problemLabelResourcePrefix))] = v
+			case labelName == problemLabelType:
+				problem.Type = labelValue
+			case labelName == problemLabelReason:
+				problem.Reason = labelValue
+			case strings.HasPrefix(labelName, problemLabelResourcePrefix):
+				problem.Resources[camelCase(strings.TrimPrefix(labelName, problemLabelResourcePrefix))] = labelValue
 			}
 		}
-		if p.Type != "" && p.Reason != "" {
-			out = append(out, p)
+		if problem.Type != "" && problem.Reason != "" {
+			out = append(out, problem)
 		}
 	}
 	return out
 }
 
-func value(mf *dto.MetricFamily, m *dto.Metric) (float64, bool) {
-	switch mf.GetType() {
+func value(metricFamily *dto.MetricFamily, metric *dto.Metric) (float64, bool) {
+	switch metricFamily.GetType() {
 	case dto.MetricType_GAUGE:
-		return m.GetGauge().GetValue(), m.Gauge != nil
+		return metric.GetGauge().GetValue(), metric.Gauge != nil
 	case dto.MetricType_COUNTER:
-		return m.GetCounter().GetValue(), m.Counter != nil
+		return metric.GetCounter().GetValue(), metric.Counter != nil
 	case dto.MetricType_UNTYPED:
-		return m.GetUntyped().GetValue(), m.Untyped != nil
+		return metric.GetUntyped().GetValue(), metric.Untyped != nil
 	}
 	return 0, false
 }
 
-func labels(m *dto.Metric) map[string]string {
-	out := make(map[string]string, len(m.Label))
-	for _, lp := range m.Label {
-		out[lp.GetName()] = lp.GetValue()
+func labels(metric *dto.Metric) map[string]string {
+	out := make(map[string]string, len(metric.Label))
+	for _, pair := range metric.Label {
+		out[pair.GetName()] = pair.GetValue()
 	}
 	return out
 }
 
-func camelCase(s string) string {
-	parts := strings.Split(s, "_")
-	for i := 1; i < len(parts); i++ {
-		if parts[i] != "" {
-			parts[i] = strings.ToUpper(parts[i][:1]) + parts[i][1:]
+func camelCase(snakeCase string) string {
+	parts := strings.Split(snakeCase, "_")
+	for index := 1; index < len(parts); index++ {
+		if parts[index] != "" {
+			parts[index] = strings.ToUpper(parts[index][:1]) + parts[index][1:]
 		}
 	}
 	return strings.Join(parts, "")
 }
 
 type limitReader struct {
-	r    io.Reader
-	left int64
+	reader io.Reader
+	left   int64
 }
 
-func (l *limitReader) Read(p []byte) (int, error) {
-	if l.left < 0 {
+func (limited *limitReader) Read(buffer []byte) (int, error) {
+	if limited.left < 0 {
 		return 0, errTooLarge
 	}
-	if int64(len(p)) > l.left+1 {
-		p = p[:l.left+1]
+	if int64(len(buffer)) > limited.left+1 {
+		buffer = buffer[:limited.left+1]
 	}
-	n, err := l.r.Read(p)
-	l.left -= int64(n)
-	if l.left < 0 {
-		return n, errTooLarge
+	count, err := limited.reader.Read(buffer)
+	limited.left -= int64(count)
+	if limited.left < 0 {
+		return count, errTooLarge
 	}
-	return n, err
+	return count, err
 }

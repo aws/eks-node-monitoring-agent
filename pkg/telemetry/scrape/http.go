@@ -77,8 +77,8 @@ func NewHTTPCollector(cfg HTTPConfig) *HTTPCollector {
 		cfg.Clock = time.Now
 	}
 	allow := map[string]config.MetricSpec{}
-	for _, m := range cfg.Metrics {
-		allow[m.Name] = m
+	for _, spec := range cfg.Metrics {
+		allow[spec.Name] = spec
 	}
 	return &HTTPCollector{
 		cfg:   cfg,
@@ -93,24 +93,24 @@ func NewHTTPCollector(cfg HTTPConfig) *HTTPCollector {
 }
 
 // Scope returns the target's component name.
-func (c *HTTPCollector) Scope() string { return c.cfg.Scope }
+func (collector *HTTPCollector) Scope() string { return collector.cfg.Scope }
 
 // Scrape scrapes the target once. Only one scrape should run at a time.
-func (c *HTTPCollector) Scrape(ctx context.Context) Result {
-	now := c.cfg.Clock()
-	parsed, reason := c.fetch(ctx)
-	if reason == "" && c.cfg.Identity != "" && !parsed.SawIdentity {
+func (collector *HTTPCollector) Scrape(ctx context.Context) Result {
+	now := collector.cfg.Clock()
+	parsed, reason := collector.fetch(ctx)
+	if reason == "" && collector.cfg.Identity != "" && !parsed.SawIdentity {
 		reason = ReasonIdentityMismatch
 	}
 	if reason != "" {
-		return c.failed(reason)
+		return collector.failed(reason)
 	}
-	c.failures, c.seen = 0, true
+	collector.failures, collector.seen = 0, true
 
-	res := Result{Scope: nodetelemetry.Scope{Name: c.cfg.Scope, Problems: parsed.Problems}}
+	res := Result{Scope: nodetelemetry.Scope{Name: collector.cfg.Scope, Problems: parsed.Problems}}
 	counters := map[string][]Series{}
 	for name, series := range parsed.Series {
-		spec := c.allow[name]
+		spec := collector.allow[name]
 		if spec.Type == config.MetricTypeCounter {
 			counters[name] = series
 			continue
@@ -118,45 +118,45 @@ func (c *HTTPCollector) Scrape(ctx context.Context) Result {
 		// TODO: constrain to accepted config fields after adding config validation
 		res.Metrics = append(res.Metrics, nodetelemetry.Metric{Name: name, Unit: spec.Unit, Gauges: gauges(series, spec)})
 	}
-	c.mu.Lock()
-	deltas := c.baselines.Observe(now, counters)
-	c.mu.Unlock()
-	for name, sums := range sums(deltas, c.allow) {
-		res.Metrics = append(res.Metrics, nodetelemetry.Metric{Name: name, Unit: c.allow[name].Unit, Sums: sums})
+	collector.mu.Lock()
+	deltas := collector.baselines.Observe(now, counters)
+	collector.mu.Unlock()
+	for name, sums := range sums(deltas, collector.allow) {
+		res.Metrics = append(res.Metrics, nodetelemetry.Metric{Name: name, Unit: collector.allow[name].Unit, Sums: sums})
 	}
-	sort.Slice(res.Metrics, func(i, j int) bool { return res.Metrics[i].Name < res.Metrics[j].Name })
+	sort.Slice(res.Metrics, func(left, right int) bool { return res.Metrics[left].Name < res.Metrics[right].Name })
 	res.Advance = func() {
-		c.mu.Lock()
-		defer c.mu.Unlock()
-		c.baselines.Advance()
+		collector.mu.Lock()
+		defer collector.mu.Unlock()
+		collector.baselines.Advance()
 	}
 	return res
 }
 
-func (c *HTTPCollector) fetch(ctx context.Context) (Parsed, string) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url, nil)
+func (collector *HTTPCollector) fetch(ctx context.Context) (Parsed, string) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, collector.url, nil)
 	if err != nil {
 		return Parsed{}, ReasonParseError
 	}
 	req.Header.Set("Accept", acceptHeader)
-	resp, err := c.client.Do(req)
+	resp, err := collector.client.Do(req)
 	if err != nil {
-		var ne net.Error
-		if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()) {
+		var netError net.Error
+		if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netError) && netError.Timeout()) {
 			return Parsed{}, ReasonTimeout
 		}
 		return Parsed{}, ReasonConnectionRefused
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= http.StatusMultipleChoices {
-		if resp.StatusCode != c.lastErrorStatus {
-			c.cfg.Logger.Info("scrape target returned a new error status", "component", c.cfg.Scope, "url", c.url, "status", resp.StatusCode)
-			c.lastErrorStatus = resp.StatusCode
+		if resp.StatusCode != collector.lastErrorStatus {
+			collector.cfg.Logger.Info("scrape target returned a new error status", "component", collector.cfg.Scope, "url", collector.url, "status", resp.StatusCode)
+			collector.lastErrorStatus = resp.StatusCode
 		}
 		return Parsed{}, ReasonConnectionRefused
 	}
-	c.lastErrorStatus = 0
-	parsed, err := Parse(resp.Header.Get("Content-Type"), resp.Body, c.allow, c.cfg.MaxBytes, c.cfg.Identity)
+	collector.lastErrorStatus = 0
+	parsed, err := Parse(resp.Header.Get("Content-Type"), resp.Body, collector.allow, collector.cfg.MaxBytes, collector.cfg.Identity)
 	switch {
 	case errors.Is(err, errTooLarge):
 		return Parsed{}, ReasonResponseTooLarge
@@ -166,15 +166,15 @@ func (c *HTTPCollector) fetch(ctx context.Context) (Parsed, string) {
 	return parsed, ""
 }
 
-func (c *HTTPCollector) failed(reason string) Result {
-	c.mu.Lock()
-	c.baselines.ScrapeFailed()
-	c.mu.Unlock()
-	res := Result{Scope: nodetelemetry.Scope{Name: c.cfg.Scope}, Failure: reason}
-	if c.cfg.OnceSeen && !c.seen {
+func (collector *HTTPCollector) failed(reason string) Result {
+	collector.mu.Lock()
+	collector.baselines.ScrapeFailed()
+	collector.mu.Unlock()
+	res := Result{Scope: nodetelemetry.Scope{Name: collector.cfg.Scope}, Failure: reason}
+	if collector.cfg.OnceSeen && !collector.seen {
 		return res
 	}
-	if c.failures++; c.failures >= c.cfg.NotReportingAfter {
+	if collector.failures++; collector.failures >= collector.cfg.NotReportingAfter {
 		res.NotReporting = reason
 	}
 	return res
@@ -182,19 +182,19 @@ func (c *HTTPCollector) failed(reason string) Result {
 
 func gauges(series []Series, spec config.MetricSpec) []nodetelemetry.GaugePoint {
 	byKey := map[string]*nodetelemetry.GaugePoint{}
-	for _, s := range series {
-		attrs := kept(s.Labels, spec.Labels)
+	for _, sample := range series {
+		attrs := kept(sample.Labels, spec.Labels)
 		key := seriesKey("", attrs)
-		p, ok := byKey[key]
+		point, ok := byKey[key]
 		switch {
 		case !ok:
-			byKey[key] = &nodetelemetry.GaugePoint{Value: s.Value, Attrs: attrs}
+			byKey[key] = &nodetelemetry.GaugePoint{Value: sample.Value, Attrs: attrs}
 		case spec.Aggregate == config.AggregateMax:
-			p.Value = max(p.Value, s.Value)
+			point.Value = max(point.Value, sample.Value)
 		case spec.Aggregate == config.AggregateMin:
-			p.Value = min(p.Value, s.Value)
+			point.Value = min(point.Value, sample.Value)
 		default:
-			p.Value += s.Value
+			point.Value += sample.Value
 		}
 	}
 	out := make([]nodetelemetry.GaugePoint, 0, len(byKey))
@@ -206,20 +206,20 @@ func gauges(series []Series, spec config.MetricSpec) []nodetelemetry.GaugePoint 
 
 func sums(deltas []Delta, allow map[string]config.MetricSpec) map[string][]nodetelemetry.SumPoint {
 	byKey := map[string]map[string]*nodetelemetry.SumPoint{}
-	for _, d := range deltas {
-		attrs := kept(d.Series.Labels, allow[d.Metric].Labels)
+	for _, delta := range deltas {
+		attrs := kept(delta.Series.Labels, allow[delta.Metric].Labels)
 		key := seriesKey("", attrs)
-		if byKey[d.Metric] == nil {
-			byKey[d.Metric] = map[string]*nodetelemetry.SumPoint{}
+		if byKey[delta.Metric] == nil {
+			byKey[delta.Metric] = map[string]*nodetelemetry.SumPoint{}
 		}
-		p, ok := byKey[d.Metric][key]
+		point, ok := byKey[delta.Metric][key]
 		if !ok {
-			p = &nodetelemetry.SumPoint{Attrs: attrs, StartTime: d.Start}
-			byKey[d.Metric][key] = p
+			point = &nodetelemetry.SumPoint{Attrs: attrs, StartTime: delta.Start}
+			byKey[delta.Metric][key] = point
 		}
-		p.Delta += d.Value
-		if d.Start.Before(p.StartTime) {
-			p.StartTime = d.Start
+		point.Delta += delta.Value
+		if delta.Start.Before(point.StartTime) {
+			point.StartTime = delta.Start
 		}
 	}
 	out := map[string][]nodetelemetry.SumPoint{}
@@ -233,9 +233,9 @@ func sums(deltas []Delta, allow map[string]config.MetricSpec) map[string][]nodet
 
 func kept(labels map[string]string, keep []string) nodetelemetry.Attrs {
 	out := nodetelemetry.Attrs{}
-	for _, k := range keep {
-		if v, ok := labels[k]; ok {
-			out[k] = v
+	for _, labelName := range keep {
+		if labelValue, ok := labels[labelName]; ok {
+			out[labelName] = labelValue
 		}
 	}
 	return out
