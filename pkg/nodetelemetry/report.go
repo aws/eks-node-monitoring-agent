@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/collector/pdata/pmetric/pmetricotlp"
 )
 
+// Resource attributes set on every report.
 const (
 	AttrNodeName       = "k8s.node.name"
 	AttrHostID         = "host.id"
@@ -22,6 +23,7 @@ const (
 	AttrComputeType    = "aws.eks.compute_type"
 )
 
+// Reserved metrics and their attributes.
 const (
 	MetricEksProblem       = "eks_problem"
 	MetricEksNotReporting  = "eks_not_reporting"
@@ -38,6 +40,7 @@ const MaxPointsPerMetric = 50
 
 var attrValueRe = regexp.MustCompile(`^[A-Za-z0-9._:/-]{1,64}$`)
 
+// NodeAttrs are the node's resource attributes. Empty values are omitted.
 type NodeAttrs struct {
 	NodeName       string
 	HostID         string
@@ -48,19 +51,26 @@ type NodeAttrs struct {
 	ComputeType    string
 }
 
+// Attrs are a data point's attributes.
 type Attrs map[string]string
 
+// GaugePoint is a gauge's value at the end of the report.
 type GaugePoint struct {
 	Value float64
 	Attrs Attrs
 }
 
+// SumPoint is a counter's increase since StartTime. Points with a zero Delta
+// are left out.
 type SumPoint struct {
-	Delta     float64
-	Attrs     Attrs
+	Delta float64
+	Attrs Attrs
+	// StartTime is when the increase started. If zero, the report's start
+	// time is used.
 	StartTime time.Time
 }
 
+// Metric is a metric's data points. Only one of Gauges or Sums may be set.
 type Metric struct {
 	Name   string
 	Unit   string
@@ -68,25 +78,33 @@ type Metric struct {
 	Sums   []SumPoint
 }
 
+// Problem is an active problem, sent as an eks_problem point.
 type Problem struct {
-	Type      string
-	Reason    string
+	Type   string
+	Reason string
+	// Resources identify what the problem is about, sent as "resource."
+	// attributes, e.g. {"instanceId": "i-0123"}.
 	Resources map[string]string
 }
 
+// Scope is one component's metrics and problems.
 type Scope struct {
-	Name         string
-	Metrics      []Metric
-	Problems     []Problem
+	Name     string
+	Metrics  []Metric
+	Problems []Problem
+	// NotReporting is the reason the component couldn't be collected. If set,
+	// the scope only carries eks_not_reporting.
 	NotReporting string
 }
 
+// Report is one OTLP metrics report for the node.
 type Report struct {
 	md         pmetric.Metrics
 	rm         pmetric.ResourceMetrics
 	start, end pcommon.Timestamp
 }
 
+// NewReport returns an empty report for the interval from start to end.
 func NewReport(node NodeAttrs, start, end time.Time) *Report {
 	md := pmetric.NewMetrics()
 	rm := md.ResourceMetrics().AppendEmpty()
@@ -112,6 +130,8 @@ func NewReport(node NodeAttrs, start, end time.Time) *Report {
 	}
 }
 
+// AddScope adds the scope to the report, or nothing if it's empty. Points with
+// invalid attribute values, or beyond MaxPointsPerMetric, are dropped.
 func (r *Report) AddScope(s Scope) {
 	if len(s.Metrics) == 0 && len(s.Problems) == 0 && s.NotReporting == "" {
 		return
@@ -196,6 +216,7 @@ func (r *Report) addProblems(sm pmetric.ScopeMetrics, problems []Problem) {
 	}
 }
 
+// Marshal returns the report as a gzipped OTLP protobuf request.
 func (r *Report) Marshal() ([]byte, error) {
 	// TODO: bound the raw and gzipped size, dropping points by priority.
 	raw, err := pmetricotlp.NewExportRequestFromMetrics(r.md).MarshalProto()

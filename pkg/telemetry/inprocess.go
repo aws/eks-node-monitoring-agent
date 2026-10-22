@@ -8,23 +8,30 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/pkg/telemetry/scrape"
 )
 
+// NMAScope is the report scope for NMA's own problems.
 const NMAScope = "node-monitoring-agent"
 
+// FatalSource provides NMA's unresolved fatal conditions.
 type FatalSource interface {
 	ActiveFatalConditions() []manager.ActiveFatalCondition
 }
 
+// InProcessCollector reports NMA's unresolved fatal conditions as problems.
 type InProcessCollector struct {
 	source    FatalSource
 	resources map[string]string
 }
 
+// NewInProcessCollector returns an InProcessCollector that attaches resources
+// to every problem.
 func NewInProcessCollector(source FatalSource, resources map[string]string) *InProcessCollector {
 	return &InProcessCollector{source: source, resources: resources}
 }
 
+// Scope returns NMAScope.
 func (c *InProcessCollector) Scope() string { return NMAScope }
 
+// Scrape returns the active fatal conditions. It never fails.
 func (c *InProcessCollector) Scrape(context.Context) scrape.Result {
 	res := scrape.Result{Scope: nodetelemetry.Scope{Name: NMAScope}}
 	// TODO: send Warning conditions too.

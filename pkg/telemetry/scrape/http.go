@@ -20,17 +20,23 @@ import (
 
 // HTTPConfig configures an HTTPCollector for one target.
 type HTTPConfig struct {
-	Scope             string
-	Endpoint          config.TargetEndpoint
-	Path              string
-	Timeout           time.Duration
-	MaxBytes          int64
-	Identity          string
-	Metrics           []config.MetricSpec
+	Scope    string
+	Endpoint config.TargetEndpoint
+	Path     string
+	Timeout  time.Duration
+	MaxBytes int64
+	// Identity, if set, is a metric every response must contain.
+	Identity string
+	// Metrics is the allowlist, with MaxSeries already resolved.
+	Metrics []config.MetricSpec
+	// NotReportingAfter is how many failed scrapes in a row it takes to report
+	// the target as not reporting.
 	NotReportingAfter int
-	OnceSeen          bool
-	Clock             func() time.Time
-	Logger            logr.Logger
+	// OnceSeen ignores failed scrapes until the first successful one.
+	OnceSeen bool
+	// Clock defaults to time.Now.
+	Clock  func() time.Time
+	Logger logr.Logger
 }
 
 // HTTPCollector scrapes one target's Prometheus metrics endpoint over plain
@@ -62,6 +68,7 @@ type HTTPCollector struct {
 	baselines *Baselines
 }
 
+// NewHTTPCollector returns an HTTPCollector for cfg.
 func NewHTTPCollector(cfg HTTPConfig) *HTTPCollector {
 	if cfg.Clock == nil {
 		cfg.Clock = time.Now
@@ -82,8 +89,10 @@ func NewHTTPCollector(cfg HTTPConfig) *HTTPCollector {
 	}
 }
 
+// Scope returns the target's component name.
 func (c *HTTPCollector) Scope() string { return c.cfg.Scope }
 
+// Scrape scrapes the target once. Only one scrape should run at a time.
 func (c *HTTPCollector) Scrape(ctx context.Context) Result {
 	now := c.cfg.Clock()
 	parsed, reason := c.fetch(ctx)
@@ -103,6 +112,7 @@ func (c *HTTPCollector) Scrape(ctx context.Context) Result {
 			counters[name] = series
 			continue
 		}
+		// TODO: constrain to accepted config fields after adding config validation
 		res.Metrics = append(res.Metrics, nodetelemetry.Metric{Name: name, Unit: spec.Unit, Gauges: gauges(series, spec)})
 	}
 	c.mu.Lock()

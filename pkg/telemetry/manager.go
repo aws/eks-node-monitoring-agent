@@ -19,23 +19,35 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/pkg/telemetry/scrape"
 )
 
+// Sender sends a report to the telemetry API.
 type Sender interface {
 	Send(ctx context.Context, r *nodetelemetry.Report) (nodetelemetry.Result, error)
 }
 
+// ManagerConfig configures a Manager.
 type ManagerConfig struct {
-	Interval   time.Duration
-	NodeName   string
+	// Interval is how often a report is sent.
+	Interval time.Duration
+	// NodeName spreads the first report time across nodes.
+	// TODO: start with rendered NodeAttrs and use the NodeName from there
+	NodeName string
+	// Node is the report's resource attributes. If ComputeType is empty, it's
+	// filled in from the runtime tags on each report.
 	Node       nodetelemetry.NodeAttrs
 	Collectors []scrape.Collector
+	// ScrapeWait is how long each interval waits for the collectors.
 	ScrapeWait time.Duration
 	Sender     Sender
+	// Registerer, if set, registers the manager's own metrics.
 	Registerer prometheus.Registerer
-	Clock      clock.WithTicker
-	Logger     logr.Logger
-	Runtime    *nmaconfig.RuntimeContext
+	// Clock defaults to the real clock.
+	Clock  clock.WithTicker
+	Logger logr.Logger
+	// Runtime defaults to the process's runtime context.
+	Runtime *nmaconfig.RuntimeContext
 }
 
+// Manager collects from its collectors and sends a report every interval.
 type Manager struct {
 	cfg      ManagerConfig
 	mu       sync.Mutex
@@ -46,6 +58,7 @@ type Manager struct {
 	apiNotRegistered bool
 }
 
+// NewManager returns a Manager for cfg.
 func NewManager(cfg ManagerConfig) *Manager {
 	if cfg.Clock == nil {
 		cfg.Clock = clock.RealClock{}
@@ -71,6 +84,7 @@ func NewManager(cfg ManagerConfig) *Manager {
 	return m
 }
 
+// Start sends reports until ctx is done, starting at FirstReportTime.
 func (m *Manager) Start(ctx context.Context) error {
 	clk := m.cfg.Clock
 	prev := clk.Now()
@@ -95,6 +109,8 @@ func (m *Manager) Start(ctx context.Context) error {
 	}
 }
 
+// FirstReportTime returns the node's first report time: a fixed offset into
+// the interval, derived from the node name so nodes don't all report at once.
 func FirstReportTime(now time.Time, interval time.Duration, nodeName string) time.Time {
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(nodeName))
@@ -212,6 +228,9 @@ wait:
 	return out
 }
 
+// BuildCollectors returns a collector for each target, and how long to wait for them each interval.
+// A target without an endpoint is considered inprocess, and only gets a collector if it allowlists eks_problem;
+// resources are attached to its problems.
 func BuildCollectors(cfg *config.Config, source FatalSource, resources map[string]string, logger logr.Logger) ([]scrape.Collector, time.Duration) {
 	var out []scrape.Collector
 	var wait time.Duration

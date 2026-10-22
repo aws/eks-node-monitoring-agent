@@ -38,9 +38,11 @@ func (ms MonitorSettings) IsEnabled() bool {
 type MonitorConfig struct {
 	Monitors map[string]MonitorSettings `yaml:"monitors,omitempty" json:"monitors,omitempty"`
 
+	// Telemetry configures sending node telemetry. Nil or empty means disabled.
 	Telemetry *telemetryconfig.Config `yaml:"telemetry,omitempty" json:"telemetry,omitempty"`
 }
 
+// TelemetryEnabled returns true if telemetry is enabled.
 func (mc *MonitorConfig) TelemetryEnabled() bool {
 	return mc != nil && mc.Telemetry.IsEnabled()
 }

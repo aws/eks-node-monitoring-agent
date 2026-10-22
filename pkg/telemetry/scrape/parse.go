@@ -16,17 +16,24 @@ import (
 
 var errTooLarge = errors.New("scrape response too large")
 
+// Series is one series of a scraped metric, with all of its labels.
 type Series struct {
 	Labels map[string]string
 	Value  float64
 }
 
+// Parsed is the allowlisted content of a scrape response.
 type Parsed struct {
-	Series      map[string][]Series
-	Problems    []nodetelemetry.Problem
+	// Series are the allowlisted metrics' series, by metric name.
+	Series map[string][]Series
+	// Problems are the active eks_problem points, if eks_problem is allowlisted.
+	Problems []nodetelemetry.Problem
+	// SawIdentity is whether the identity metric was in the response.
 	SawIdentity bool
 }
 
+// Parse decodes a Prometheus exposition body of the given Content-Type, keeping
+// only allowlisted metrics. It fails if the body is larger than maxBytes.
 func Parse(contentType string, body io.Reader, allow map[string]config.MetricSpec, maxBytes int64, identity string) (Parsed, error) {
 	format := expfmt.ResponseFormat(http.Header{"Content-Type": {contentType}})
 	if format.FormatType() == expfmt.TypeUnknown {

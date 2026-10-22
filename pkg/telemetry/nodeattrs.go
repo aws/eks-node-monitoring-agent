@@ -8,6 +8,7 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/pkg/nodetelemetry"
 )
 
+// NodeAttrsFromNode returns the report's resource attributes from the Node.
 func NodeAttrsFromNode(node *corev1.Node) nodetelemetry.NodeAttrs {
 	return nodetelemetry.NodeAttrs{
 		NodeName:       node.Name,
@@ -20,6 +21,8 @@ func NodeAttrsFromNode(node *corev1.Node) nodetelemetry.NodeAttrs {
 	}
 }
 
+// InstanceID returns the EC2 instance ID from an aws:// provider ID, or ""
+// if it isn't one.
 func InstanceID(providerID string) string {
 	id := providerID[strings.LastIndex(providerID, "/")+1:]
 	if !strings.HasPrefix(providerID, "aws://") || !strings.HasPrefix(id, "i-") {

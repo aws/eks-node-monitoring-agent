@@ -70,6 +70,7 @@ func (m *MonitorManager) Register(ctx context.Context, mon monitor.Monitor, cond
 	return mon.Register(ctx, makeManagerWrapper(m, mon))
 }
 
+// ActiveFatalConditions returns the exporter's unresolved fatal conditions
 func (m *MonitorManager) ActiveFatalConditions() []ActiveFatalCondition {
 	return m.exporter.ActiveFatalConditions()
 }

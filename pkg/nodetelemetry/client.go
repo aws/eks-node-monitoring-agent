@@ -15,25 +15,37 @@ import (
 
 const metricsAPIPath = "/apis/telemetry.eks.amazonaws.com/v1/metrics"
 
+// Outcome is how a send's response is handled.
 type Outcome int
 
 const (
+	// Accepted is a 2xx: counter baselines advance.
 	Accepted Outcome = iota
+	// Dropped is a non-429 4xx: the report should not be accepted if resent, so
+	// counter baselines should advance.
 	Dropped
+	// Hold is a 429, 5xx or transport error: counter baselines should not change
+	// so the next report covers the gap.
 	Hold
 	// TODO: add Skipped, for reports too large to send.
 )
 
+// String returns the outcome's name, as used in logs and metric labels.
 func (o Outcome) String() string {
 	return [...]string{"accepted", "dropped", "hold"}[o]
 }
 
+// Result is the result of sending a report.
 type Result struct {
 	Outcome Outcome
-	Status  int
+	// Status is the HTTP status code, or 0 if no response was received.
+	Status int
+	// Message is the first 512 bytes of the response body, or the transport
+	// error.
 	Message string
 }
 
+// Client sends reports to the telemetry API.
 type Client struct {
 	http *http.Client
 	url  string
@@ -45,6 +57,8 @@ type Client struct {
 // normally ends with the API server's 504 rather than this client giving up.
 const defaultSendTimeout = 75 * time.Second
 
+// NewClient returns a Client that sends to the telemetry API on cfg's host
+// with cfg's credentials.
 func NewClient(cfg *rest.Config) (*Client, error) {
 	cfg = rest.CopyConfig(cfg)
 	if cfg.Timeout == 0 {
@@ -57,10 +71,12 @@ func NewClient(cfg *rest.Config) (*Client, error) {
 	return NewClientFromURL(hc, strings.TrimSuffix(cfg.Host, "/")+metricsAPIPath), nil
 }
 
+// NewClientFromURL returns a Client that sends to url using hc.
 func NewClientFromURL(hc *http.Client, url string) *Client {
 	return &Client{http: hc, url: url}
 }
 
+// Send posts the report to the API server.
 func (c *Client) Send(ctx context.Context, r *Report) (Result, error) {
 	if r == nil {
 		return Result{}, errors.New("nodetelemetry: nil report")

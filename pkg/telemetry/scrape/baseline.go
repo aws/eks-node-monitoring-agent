@@ -9,6 +9,8 @@ import (
 
 const evictAfter = 3
 
+// Baselines tracks one target's counter values, so counters can be sent as
+// deltas.
 type Baselines struct {
 	series        map[string]*baseline
 	failedScrapes int
@@ -35,6 +37,7 @@ type baseline struct {
 	nextStart time.Time
 }
 
+// Delta is a counter series' increase since Start.
 type Delta struct {
 	Metric string
 	Series Series
@@ -42,6 +45,7 @@ type Delta struct {
 	Start  time.Time
 }
 
+// NewBaselines returns empty Baselines.
 func NewBaselines() *Baselines {
 	return &Baselines{series: map[string]*baseline{}}
 }
@@ -103,6 +107,8 @@ func (b *Baselines) Observe(now time.Time, counters map[string][]Series) []Delta
 	return out
 }
 
+// Advance makes each series' pending value from the last Observe its baseline.
+// Should be called once reports are Accepted or Dropped.
 func (b *Baselines) Advance() {
 	for _, base := range b.series {
 		if base.next != nil {
