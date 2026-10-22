@@ -1,0 +1,24 @@
+1097 1074 0:92 / /dev rw,nosuid - tmpfs tmpfs rw,seclabel,size=65536k,mode=755
+1144 1074 0:94 / /proc rw,nosuid,nodev,noexec,relatime - proc proc rw
+1170 1074 0:23 / /sys rw,nosuid,nodev,noexec,relatime - sysfs sysfs rw,seclabel
+1227 1074 259:2 / /host rw,noatime master:1 - xfs /dev/nvme0n1p1 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,sunit=1024,swidth=1024,noquota
+1256 1227 0:26 / /host/run rw,nosuid,nodev master:12 - tmpfs tmpfs rw,seclabel,size=1593040k,nr_inodes=819200,mode=755
+1262 1256 0:57 / /host/run/containerd/io.containerd.runtime.v2.task/k8s.io/d81215ef799a968041fc223a5f2acadcfb7ef65b1cd1c469db9651bb7ba91c6c/rootfs rw,relatime master:560 - overlay overlay rw,seclabel,lowerdir=/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/8/fs,upperdir=/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/9/fs,workdir=/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/9/work,uuid=on
+1555 1256 0:4 net:[4026532320] /host/run/netns/cni-0e62f77c-a533-9397-7e7e-c00755960237 rw master:693 - nsfs nsfs rw
+1275 1227 0:22 / /host/proc rw,nosuid,nodev,noexec,relatime master:13 - proc proc rw
+1277 1227 0:32 / /host/tmp rw,nosuid,nodev master:18 - tmpfs tmpfs rw,seclabel,size=3982600k,nr_inodes=1048576
+1278 1227 0:38 / /host/boot/efi rw,relatime master:24 - autofs systemd-1 rw,fd=56,pgrp=1,timeout=0,minproto=5,maxproto=5,direct,pipe_ino=2751
+1279 1278 259:4 / /host/boot/efi rw,noatime master:119 - vfat /dev/nvme0n1p128 rw,fmask=0077,dmask=0077,codepage=437,iocharset=ascii,shortname=winnt,errors=remount-ro
+1281 1227 9:127 / /host/mnt/k8s-disks/0 rw,noatime master:378 - xfs /dev/md127 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,sunit=1024,swidth=1024,noquota
+1282 1281 0:52 / /host/mnt/k8s-disks/0/kubelet/pods/853401db-bcbc-4429-b36d-7d804faa09d9/volumes/kubernetes.io~projected/kube-api-access-6hm5n rw,relatime master:467 - tmpfs tmpfs rw,seclabel,size=204800k,noswap
+1285 1227 9:127 /kubelet /host/var/lib/kubelet rw,noatime master:378 - xfs /dev/md127 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,sunit=1024,swidth=1024,noquota
+1286 1285 0:52 / /host/var/lib/kubelet/pods/853401db-bcbc-4429-b36d-7d804faa09d9/volumes/kubernetes.io~projected/kube-api-access-6hm5n rw,relatime master:467 - tmpfs tmpfs rw,seclabel,size=204800k,noswap
+1289 1227 9:127 /containerd /host/var/lib/containerd rw,noatime master:378 - xfs /dev/md127 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,sunit=1024,swidth=1024,noquota
+1290 1227 9:127 /soci-snapshotter-grpc /host/var/lib/soci-snapshotter-grpc rw,noatime master:378 - xfs /dev/md127 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,sunit=1024,swidth=1024,noquota
+1310 1227 9:127 /pods /host/var/log/pods rw,noatime master:378 - xfs /dev/md127 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,sunit=1024,swidth=1024,noquota
+1311 1074 9:127 /kubelet/pods/853401db-bcbc-4429-b36d-7d804faa09d9/etc-hosts /etc/hosts rw,noatime - xfs /dev/md127 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,sunit=1024,swidth=1024,noquota
+1312 1097 9:127 /kubelet/pods/853401db-bcbc-4429-b36d-7d804faa09d9/containers/eks-node-monitoring-agent/31b0e23b /dev/termination-log rw,noatime - xfs /dev/md127 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,sunit=1024,swidth=1024,noquota
+1313 1074 9:127 /containerd/io.containerd.grpc.v1.cri/sandboxes/d81215ef799a968041fc223a5f2acadcfb7ef65b1cd1c469db9651bb7ba91c6c/hostname /etc/hostname rw,noatime - xfs /dev/md127 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,sunit=1024,swidth=1024,noquota
+1314 1074 9:127 /containerd/io.containerd.grpc.v1.cri/sandboxes/d81215ef799a968041fc223a5f2acadcfb7ef65b1cd1c469db9651bb7ba91c6c/resolv.conf /etc/resolv.conf rw,noatime - xfs /dev/md127 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,sunit=1024,swidth=1024,noquota
+1315 1097 0:55 / /dev/shm rw,relatime - tmpfs shm rw,seclabel,size=65536k
+1316 1074 0:52 / /run/secrets/kubernetes.io/serviceaccount ro,relatime - tmpfs tmpfs rw,seclabel,size=204800k,noswap
