@@ -82,7 +82,7 @@ func (m *runtimeMonitor) Register(ctx context.Context, mgr monitor.Manager) erro
 	containerdHandler := util.NewChannelHandler(func(time.Time) error { return m.handleContainerd() }, util.TimeTickWithJitterContext(ctx, containerdDeprecationInterval))
 	go containerdHandler.Start(ctx)
 
-	if !slices.Contains(rtCtx.Tags(), config.Bottlerocket) {
+	if !slices.Contains(rtCtx.Tags(), config.Bottlerocket) || slices.Contains(rtCtx.Tags(), config.EKSAuto) {
 		handler := util.NewChannelHandler(func(time.Time) error { return m.handleSystemdServices() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute))
 		go handler.Start(ctx)
 	}
