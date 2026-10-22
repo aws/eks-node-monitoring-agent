@@ -22,6 +22,11 @@ import (
 // interval of the DCGM reader's fabric field and device count checks.
 const DevicesInterval = 5 * time.Minute
 
+// fabricStartWindow is how long a GPU's fabric can read NotStarted on an
+// instance whose Fabric Manager runs on the host before it is reported. It
+// leaves room for a slow Fabric Manager start after boot.
+const fabricStartWindow = 15 * time.Minute
+
 // Devices reads the GPU count and each GPU's fabric state, and reports GPUs
 // that have fallen off the bus. It reports:
 //   - The GPU count against the host's /dev/nvidia<N> files and against the
@@ -29,6 +34,13 @@ const DevicesInterval = 5 * time.Minute
 //   - Each GPU's Fabric Manager status and fabric health mask, translated
 //     the way DCGM translates them. A driver without the fabric call reads as
 //     NvmlTooOld, a Warning rate-limited like the DCGM reader's.
+//   - A GPU whose fabric has read NotStarted on every poll for
+//     fabricStartWindow, on an instance type whose Fabric Manager runs on
+//     the host, as FabricManagerNotRunning. On other instance types
+//     NotStarted can mean no Fabric Manager is needed, so it is not
+//     reported, and neither is it on an instance type that can't be looked
+//     up. Any other state, or a read that isn't observed, starts the window
+//     over.
 //   - One lost-GPU Fatal for each GPU that answered with ERROR_GPU_IS_LOST.
 //     That GPU's fabric is not read, and the counts are not compared in the
 //     same poll, so one lost GPU yields one condition.
@@ -50,8 +62,11 @@ type Devices struct {
 
 	now func() time.Time
 
-	// fabricWarnings is only touched by the goroutine that calls Poll.
-	fabricWarnings *renotify.Tracker[string]
+	// Only the goroutine that calls Poll touches the fields below.
+	// notStartedSince holds, for each GPU whose fabric read NotStarted on
+	// the last poll, the poll at which it started to.
+	fabricWarnings  *renotify.Tracker[string]
+	notStartedSince map[int]time.Time
 }
 
 // NewDevices registers the device checks with r. info gives the GPU count
@@ -69,8 +84,9 @@ func NewDevices(r *Reader, info instanceinfo.InstanceTypeInfoProvider) *Devices 
 		fabricV2: func(dev gonvml.Device) (gonvml.GpuFabricInfo_v2, gonvml.Return) {
 			return dev.GetGpuFabricInfoV().V2()
 		},
-		now:            time.Now,
-		fabricWarnings: renotify.New[string](classify.WarningReNotifyInterval),
+		now:             time.Now,
+		fabricWarnings:  renotify.New[string](classify.WarningReNotifyInterval),
+		notStartedSince: map[int]time.Time{},
 	}
 }
 
@@ -196,11 +212,14 @@ func fabricManagerStatus(state uint8, status uint32) int64 {
 
 // evaluate classifies one poll's readings.
 func (d *Devices) evaluate(ctx context.Context, r devicesReading, gpus []gpuIdentity) []monitor.Condition {
+	info := d.instanceType(ctx)
+	now := d.now()
 	var out []monitor.Condition
 	anyLost := false
 	for i, g := range r.gpus {
 		if g.lost {
 			anyLost = true
+			delete(d.notStartedSince, i)
 			out = append(out, lostGPU(i, gpus)...)
 			continue
 		}
@@ -208,19 +227,59 @@ func (d *Devices) evaluate(ctx context.Context, r devicesReading, gpus []gpuIden
 			FabricManagerStatus: g.fmStatus,
 			FabricHealthMask:    g.healthMask,
 		})...)
+		if d.fabricNotStarted(now, i, g) && info != nil && info.HostFabricManager {
+			out = append(out, reasons.FabricManagerNotRunning.Builder().
+				Message(fmt.Sprintf("%s: Fabric Manager status: NotStarted for at least %v", describeGPU(i, gpus), fabricStartWindow)).
+				Build())
+		}
 	}
 	// A lost GPU can also make the counts disagree, and it is already
 	// reported, so the counts are compared only when no GPU is lost.
 	if anyLost {
 		return out
 	}
-	return append(out, d.countConditions(ctx, uint(r.count), gpus)...)
+	return append(out, d.countConditions(ctx, uint(r.count), info, gpus)...)
+}
+
+// fabricNotStarted records this poll's fabric reading for GPU i and reports
+// whether its fabric has read NotStarted on every poll for at least
+// fabricStartWindow.
+func (d *Devices) fabricNotStarted(now time.Time, i int, g gpuDevice) bool {
+	if g.fmStatus == nil || *g.fmStatus != classify.DcgmFMStatusNotStarted {
+		delete(d.notStartedSince, i)
+		return false
+	}
+	since, ok := d.notStartedSince[i]
+	if !ok {
+		d.notStartedSince[i] = now
+		return false
+	}
+	return now.Sub(since) >= fabricStartWindow
+}
+
+// instanceType looks up this instance type's hardware. It returns nil when
+// there is no lookup, or the instance type can't be read or isn't in it.
+func (d *Devices) instanceType(ctx context.Context) *instanceinfo.InstanceInfo {
+	if d.instanceInfo == nil {
+		return nil
+	}
+	logger := log.FromContext(ctx)
+	info, err := d.instanceInfo.GetInstanceInfo(ctx)
+	switch {
+	case errors.Is(err, instanceinfo.ErrUnknownInstanceType):
+		logger.V(4).Info("instance type not in embedded lookup, skipping checks that need it", "error", err)
+		return nil
+	case err != nil:
+		logger.V(2).Info("could not determine the instance type, skipping checks that need it", "error", err)
+		return nil
+	}
+	return info
 }
 
 // countConditions compares the GPU count against the host's device files and
 // against the instance type's GPU count. A comparison whose other side can't
-// be read is skipped.
-func (d *Devices) countConditions(ctx context.Context, count uint, gpus []gpuIdentity) []monitor.Condition {
+// be read is skipped; info is nil when the instance type isn't known.
+func (d *Devices) countConditions(ctx context.Context, count uint, info *instanceinfo.InstanceInfo, gpus []gpuIdentity) []monitor.Condition {
 	logger := log.FromContext(ctx)
 	signals := classify.NormalizedSignals{GPUCount: &count}
 
@@ -231,16 +290,8 @@ func (d *Devices) countConditions(ctx context.Context, count uint, gpus []gpuIde
 		signals.GPUDeviceFileCount, signals.GPUDeviceFilePath = &files, dir
 	}
 
-	if d.instanceInfo != nil {
-		info, err := d.instanceInfo.GetInstanceInfo(ctx)
-		switch {
-		case errors.Is(err, instanceinfo.ErrUnknownInstanceType):
-			logger.V(4).Info("instance type not in embedded lookup, skipping GPU count validation", "error", err)
-		case err != nil:
-			logger.V(2).Info("could not determine expected GPU count for validation", "error", err)
-		default:
-			signals.ExpectedGPUCount = &info.NvidiaGPUCount
-		}
+	if info != nil {
+		signals.ExpectedGPUCount = &info.NvidiaGPUCount
 	}
 
 	conds := classify.Classify(signals)
