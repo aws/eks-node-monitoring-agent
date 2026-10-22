@@ -13,34 +13,35 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-const metricsAPIPath = "/apis/telemetry.eks.amazonaws.com/v1/metrics"
+const (
+	metricsAPIPath      = "/apis/telemetry.eks.amazonaws.com/v1/metrics"
+	protobufContentType = "application/x-protobuf"
+	gzipContentEncoding = "gzip"
+	// maxMessageBytes is how much of a response body is kept in Result.Message.
+	maxMessageBytes = 512
+)
 
 // Outcome is how a send's response is handled.
-type Outcome int
+type Outcome string
 
 const (
 	// Accepted is a 2xx: counter baselines advance.
-	Accepted Outcome = iota
+	Accepted Outcome = "accepted"
 	// Dropped is a non-429 4xx: the report should not be accepted if resent, so
 	// counter baselines should advance.
-	Dropped
+	Dropped Outcome = "dropped"
 	// Hold is a 429, 5xx or transport error: counter baselines should not change
 	// so the next report covers the gap.
-	Hold
+	Hold Outcome = "hold"
 	// TODO: add Skipped, for reports too large to send.
 )
-
-// String returns the outcome's name, as used in logs and metric labels.
-func (o Outcome) String() string {
-	return [...]string{"accepted", "dropped", "hold"}[o]
-}
 
 // Result is the result of sending a report.
 type Result struct {
 	Outcome Outcome
 	// Status is the HTTP status code, or 0 if no response was received.
 	Status int
-	// Message is the first 512 bytes of the response body, or the transport
+	// Message is the first maxMessageBytes of the response body, or the transport
 	// error.
 	Message string
 }
@@ -89,21 +90,21 @@ func (c *Client) Send(ctx context.Context, r *Report) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	req.Header.Set("Content-Type", "application/x-protobuf")
-	req.Header.Set("Content-Encoding", "gzip")
+	req.Header.Set("Content-Type", protobufContentType)
+	req.Header.Set("Content-Encoding", gzipContentEncoding)
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return Result{Outcome: Hold, Message: err.Error()}, nil
 	}
 	defer resp.Body.Close()
 	// TODO: decode partial-success counts and google.rpc.Status bodies.
-	msg, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+	msg, _ := io.ReadAll(io.LimitReader(resp.Body, maxMessageBytes))
 
 	res := Result{Status: resp.StatusCode, Message: strings.TrimSpace(string(msg))}
 	switch {
-	case resp.StatusCode < 300:
+	case resp.StatusCode < http.StatusMultipleChoices:
 		res.Outcome = Accepted
-	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500:
+	case resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= http.StatusInternalServerError:
 		res.Outcome = Hold
 	default:
 		res.Outcome = Dropped

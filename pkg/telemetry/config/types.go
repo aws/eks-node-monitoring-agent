@@ -90,9 +90,8 @@ type MetricSpec struct {
 	// Labels are the labels kept; series that differ only in dropped labels
 	// are combined into one.
 	Labels []string `json:"labels,omitempty"`
-	// Aggregate is how combined gauge series are merged: sum, max
-	// or min.
-	Aggregate string `json:"aggregate,omitempty"`
+	// Aggregate is how combined gauge series are merged.
+	Aggregate Aggregation `json:"aggregate,omitempty"`
 	// MaxSeries is the most series the metric may have after Labels are
 	// applied; with more, the metric is left out of the report.
 	MaxSeries int `json:"maxSeries,omitempty"`
@@ -105,6 +104,15 @@ type MetricType string
 const (
 	MetricTypeGauge   MetricType = "gauge"
 	MetricTypeCounter MetricType = "counter"
+)
+
+// Aggregation is how gauge series combined by Labels are merged.
+type Aggregation string
+
+const (
+	AggregateSum Aggregation = "sum"
+	AggregateMax Aggregation = "max"
+	AggregateMin Aggregation = "min"
 )
 
 // Defaults for unset fields.

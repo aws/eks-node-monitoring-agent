@@ -19,6 +19,17 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/pkg/telemetry/scrape"
 )
 
+// Values of the scrape metric's result label, besides not-reporting reasons.
+const (
+	scrapeResultOK      = "ok"
+	scrapeResultSkipped = "skipped"
+	scrapeResultLate    = "late"
+)
+
+// reportOutcomeError is the report metric's outcome when a report couldn't be
+// sent at all.
+const reportOutcomeError = "error"
+
 // Sender sends a report to the telemetry API.
 type Sender interface {
 	Send(ctx context.Context, r *nodetelemetry.Report) (nodetelemetry.Result, error)
@@ -143,10 +154,10 @@ func (m *Manager) runInterval(ctx context.Context, start, end time.Time) {
 	res, err := m.cfg.Sender.Send(ctx, rep)
 	if err != nil {
 		m.cfg.Logger.Error(err, "telemetry report not sent")
-		m.reports.WithLabelValues("error").Inc()
+		m.reports.WithLabelValues(reportOutcomeError).Inc()
 		return
 	}
-	m.reports.WithLabelValues(res.Outcome.String()).Inc()
+	m.reports.WithLabelValues(string(res.Outcome)).Inc()
 	notRegistered := res.Status == http.StatusNotFound
 	// only log first register/not-registered event to avoid log pollution
 	if res.Status != 0 && notRegistered != m.apiNotRegistered {
@@ -186,7 +197,7 @@ func (m *Manager) collect(ctx context.Context) []scrape.Result {
 		m.inFlight[i] = true
 		m.mu.Unlock()
 		if busy {
-			m.scrapes.WithLabelValues(c.Scope(), "skipped").Inc()
+			m.scrapes.WithLabelValues(c.Scope(), scrapeResultSkipped).Inc()
 			continue
 		}
 		launched[i] = true
@@ -219,10 +230,10 @@ wait:
 		r, ok := got[i]
 		switch {
 		case ok:
-			m.scrapes.WithLabelValues(c.Scope(), cmp.Or(r.Failure, "ok")).Inc()
+			m.scrapes.WithLabelValues(c.Scope(), cmp.Or(r.Failure, scrapeResultOK)).Inc()
 			out = append(out, r)
 		case launched[i]:
-			m.scrapes.WithLabelValues(c.Scope(), "late").Inc()
+			m.scrapes.WithLabelValues(c.Scope(), scrapeResultLate).Inc()
 		}
 	}
 	return out

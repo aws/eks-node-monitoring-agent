@@ -16,6 +16,13 @@ import (
 
 var errTooLarge = errors.New("scrape response too large")
 
+// Labels of a scraped eks_problem.
+const (
+	problemLabelType           = "type"
+	problemLabelReason         = "reason"
+	problemLabelResourcePrefix = "resource_"
+)
+
 // Series is one series of a scraped metric, with all of its labels.
 type Series struct {
 	Labels map[string]string
@@ -93,12 +100,12 @@ func problems(mf *dto.MetricFamily) []nodetelemetry.Problem {
 		p := nodetelemetry.Problem{Resources: map[string]string{}}
 		for k, v := range labels(m) {
 			switch {
-			case k == "type":
+			case k == problemLabelType:
 				p.Type = v
-			case k == "reason":
+			case k == problemLabelReason:
 				p.Reason = v
-			case strings.HasPrefix(k, "resource_"):
-				p.Resources[camelCase(strings.TrimPrefix(k, "resource_"))] = v
+			case strings.HasPrefix(k, problemLabelResourcePrefix):
+				p.Resources[camelCase(strings.TrimPrefix(k, problemLabelResourcePrefix))] = v
 			}
 		}
 		if p.Type != "" && p.Reason != "" {

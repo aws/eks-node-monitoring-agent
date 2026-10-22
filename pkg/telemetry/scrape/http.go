@@ -18,6 +18,9 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/pkg/telemetry/config"
 )
 
+// acceptHeader asks for delimited protobuf, falling back to the text format.
+const acceptHeader = "application/vnd.google.protobuf;proto=io.prometheus.client.MetricFamily;encoding=delimited;q=0.7,text/plain;version=0.0.4;q=0.3"
+
 // HTTPConfig configures an HTTPCollector for one target.
 type HTTPConfig struct {
 	Scope    string
@@ -135,7 +138,7 @@ func (c *HTTPCollector) fetch(ctx context.Context) (Parsed, string) {
 	if err != nil {
 		return Parsed{}, ReasonParseError
 	}
-	req.Header.Set("Accept", "application/vnd.google.protobuf;proto=io.prometheus.client.MetricFamily;encoding=delimited;q=0.7,text/plain;version=0.0.4;q=0.3")
+	req.Header.Set("Accept", acceptHeader)
 	resp, err := c.client.Do(req)
 	if err != nil {
 		var ne net.Error
@@ -145,7 +148,7 @@ func (c *HTTPCollector) fetch(ctx context.Context) (Parsed, string) {
 		return Parsed{}, ReasonConnectionRefused
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
+	if resp.StatusCode >= http.StatusMultipleChoices {
 		if resp.StatusCode != c.lastErrorStatus {
 			c.cfg.Logger.Info("scrape target returned a new error status", "component", c.cfg.Scope, "url", c.url, "status", resp.StatusCode)
 			c.lastErrorStatus = resp.StatusCode
@@ -186,9 +189,9 @@ func gauges(series []Series, spec config.MetricSpec) []nodetelemetry.GaugePoint 
 		switch {
 		case !ok:
 			byKey[key] = &nodetelemetry.GaugePoint{Value: s.Value, Attrs: attrs}
-		case spec.Aggregate == "max":
+		case spec.Aggregate == config.AggregateMax:
 			p.Value = max(p.Value, s.Value)
-		case spec.Aggregate == "min":
+		case spec.Aggregate == config.AggregateMin:
 			p.Value = min(p.Value, s.Value)
 		default:
 			p.Value += s.Value

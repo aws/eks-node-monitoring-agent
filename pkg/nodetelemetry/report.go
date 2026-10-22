@@ -38,6 +38,9 @@ const (
 // extension. Collectors that cap their own metrics should cap at or below it.
 const MaxPointsPerMetric = 50
 
+// unitDimensionless is the OTLP unit for a value without one.
+const unitDimensionless = "1"
+
 var attrValueRe = regexp.MustCompile(`^[A-Za-z0-9._:/-]{1,64}$`)
 
 // NodeAttrs are the node's resource attributes. Empty values are omitted.
@@ -139,7 +142,7 @@ func (r *Report) AddScope(s Scope) {
 	sm := r.rm.ScopeMetrics().AppendEmpty()
 	sm.Scope().SetName(s.Name)
 	if s.NotReporting != "" {
-		dp := gauge(sm, MetricEksNotReporting, "1").AppendEmpty()
+		dp := gauge(sm, MetricEksNotReporting, unitDimensionless).AppendEmpty()
 		dp.SetIntValue(1)
 		dp.SetTimestamp(r.end)
 		dp.Attributes().PutStr(NotReportingAttrReason, s.NotReporting)
@@ -199,7 +202,7 @@ func (r *Report) addSum(sm pmetric.ScopeMetrics, m Metric) {
 }
 
 func (r *Report) addProblems(sm pmetric.ScopeMetrics, problems []Problem) {
-	dps := gauge(sm, MetricEksProblem, "1")
+	dps := gauge(sm, MetricEksProblem, unitDimensionless)
 	for _, p := range problems {
 		attrs := Attrs{ProblemAttrType: p.Type, ProblemAttrReason: p.Reason}
 		for k, v := range p.Resources {
