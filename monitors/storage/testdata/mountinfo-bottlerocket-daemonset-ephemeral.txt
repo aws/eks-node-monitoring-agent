@@ -1,0 +1,38 @@
+798 797 0:174 / /proc rw,nosuid,nodev,noexec,relatime - proc proc rw
+802 797 0:181 / /dev rw,nosuid - tmpfs tmpfs rw,context="system_u:object_r:data_t:s0:c274,c314",size=65536k,mode=755
+842 797 0:23 / /sys rw,nosuid,nodev,noexec,relatime - sysfs sysfs rw,seclabel
+851 797 252:0 /x86_64-bottlerocket-linux-gnu/sys-root/usr/bin/kmod /usr/local/sbin/modprobe ro,relatime master:1 - erofs /dev/root ro,seclabel,user_xattr,acl,cache_strategy=readaround
+880 797 252:0 / /host rw,relatime master:1 - erofs /dev/root ro,seclabel,user_xattr,acl,cache_strategy=readaround
+1007 880 0:22 / /host/proc rw,nosuid,nodev,noexec,relatime master:5 - proc proc rw
+1108 880 0:26 / /host/run rw,nosuid,nodev,noexec master:13 - tmpfs tmpfs rw,seclabel,size=1592576k,nr_inodes=819200,mode=755
+1130 1108 0:80 / /host/run/containerd/io.containerd.runtime.v2.task/k8s.io/5a316d99a69dd96b53a9849c8bfd8aa1729c04f0707f9be1a5cde045e69d0616/rootfs rw,relatime master:378 - overlay overlay rw,context="system_u:object_r:data_t:s0:c93,c796",lowerdir=/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/1/fs,upperdir=/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/3/fs,workdir=/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/3/work,uuid=on
+1136 1108 0:4 net:[4026532284] /host/run/netns/cni-5d3d439a-9279-9a77-2d9b-2900b46897c4 rw master:444 - nsfs nsfs rw
+1177 1161 252:0 /x86_64-bottlerocket-linux-gnu/sys-root/usr/bin/kmod /host/run/containerd/io.containerd.runtime.v2.task/k8s.io/8ab4b62c46043d85cda5883e6eb308a66b6ff8b6399aa036161af5038b6539de/rootfs/usr/local/sbin/modprobe ro,relatime master:1 - erofs /dev/root ro,seclabel,user_xattr,acl,cache_strategy=readaround
+1178 880 0:31 / /host/etc rw,nosuid,nodev,noexec,noatime master:14 - tmpfs tmpfs rw,context=system_u:object_r:etc_t:s0,mode=755
+1184 880 0:34 / /host/tmp rw,nosuid,nodev,noexec master:19 - tmpfs tmpfs rw,seclabel,nr_inodes=1048576
+1185 880 259:5 / /host/boot ro,nosuid,nodev,noexec,noatime - ext4 /dev/nvme0n1p3 ro,seclabel
+1189 880 259:14 / /host/.bottlerocket rw,nosuid,nodev,noexec,noatime - ext4 /dev/nvme0n1p12 rw,context=system_u:object_r:private_t:s0
+1190 880 259:17 / /host/local rw,nosuid,nodev,noatime - xfs /dev/nvme1n1p1 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+1191 1190 252:0 /srv /host/local/opt ro,nosuid,nodev,noexec,relatime - erofs /dev/root ro,seclabel,user_xattr,acl,cache_strategy=readaround
+1192 1190 252:0 /srv /host/local/mnt ro,nosuid,nodev,noexec,relatime - erofs /dev/root ro,seclabel,user_xattr,acl,cache_strategy=readaround
+1193 1190 252:0 /srv /host/local/var ro,nosuid,nodev,noexec,relatime - erofs /dev/root ro,seclabel,user_xattr,acl,cache_strategy=readaround
+1194 880 259:17 /mnt /host/mnt rw,nosuid,nodev,noatime master:184 - xfs /dev/nvme1n1p1 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+1195 1194 259:1 / /host/mnt/.ephemeral rw,nosuid,nodev,noatime - xfs /dev/nvme2n1 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+1196 1195 252:0 /srv /host/mnt/.ephemeral/._var_lib_kubelet ro,nosuid,nodev,noexec,relatime - erofs /dev/root ro,seclabel,user_xattr,acl,cache_strategy=readaround
+1197 1195 252:0 /srv /host/mnt/.ephemeral/._var_lib_containerd ro,nosuid,nodev,noexec,relatime - erofs /dev/root ro,seclabel,user_xattr,acl,cache_strategy=readaround
+1198 1195 252:0 /srv /host/mnt/.ephemeral/._var_log_pods ro,nosuid,nodev,noexec,relatime - erofs /dev/root ro,seclabel,user_xattr,acl,cache_strategy=readaround
+1199 880 259:17 /opt /host/opt rw,nosuid,nodev,noatime master:210 - xfs /dev/nvme1n1p1 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+1201 1199 0:61 / /host/opt/cni rw,nosuid,nodev,noatime master:236 - overlay overlay rw,context=system_u:object_r:cni_exec_t:s0,lowerdir=/usr/libexec/cni,upperdir=/var/lib/cni-plugins/.overlay/upper,workdir=/var/lib/cni-plugins/.overlay/work,uuid=on
+1204 880 259:17 /var /host/var rw,nosuid,nodev,noatime master:215 - xfs /dev/nvme1n1p1 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+1205 1204 259:14 / /host/var/lib/bottlerocket rw,nosuid,nodev,noexec,noatime master:220 - ext4 /dev/nvme0n1p12 rw,context=system_u:object_r:private_t:s0
+1206 1204 252:0 /x86_64-bottlerocket-linux-gnu/sys-root/usr/share/bottlerocket/kernel-devel /host/var/lib/kernel-devel/.overlay/lower ro,relatime master:1 - erofs /dev/root ro,seclabel,user_xattr,acl,cache_strategy=readaround
+1207 1204 259:1 /._var_lib_containerd /host/var/lib/containerd rw,nosuid,nodev,noatime master:274 - xfs /dev/nvme2n1 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+1208 1204 259:1 /._var_lib_kubelet /host/var/lib/kubelet rw,nosuid,nodev,noatime master:324 - xfs /dev/nvme2n1 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+1209 1208 0:72 / /host/var/lib/kubelet/pods/a4ae7be7-da1e-4315-b876-80aba9ac67a5/volumes/kubernetes.io~projected/kube-api-access-2r67d rw,relatime master:341 - tmpfs tmpfs rw,seclabel,size=204800k,noswap
+1216 1204 259:1 /._var_log_pods /host/var/log/pods rw,nosuid,nodev,noatime master:330 - xfs /dev/nvme2n1 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+1217 880 0:55 / /host/x86_64-bottlerocket-linux-gnu/sys-root/usr/lib/modules rw,nosuid,nodev,noexec,noatime master:225 - overlay overlay rw,context=system_u:object_r:state_t:s0,lowerdir=/lib/modules,upperdir=/var/lib/kernel-modules/.overlay/upper,workdir=/var/lib/kernel-modules/.overlay/work,uuid=on
+1219 797 259:1 /._var_lib_kubelet/pods/a4ae7be7-da1e-4315-b876-80aba9ac67a5/etc-hosts /etc/hosts rw,noatime - xfs /dev/nvme2n1 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+1220 802 259:1 /._var_lib_kubelet/pods/a4ae7be7-da1e-4315-b876-80aba9ac67a5/containers/eks-node-monitoring-agent/2825c7cb /dev/termination-log rw,noatime - xfs /dev/nvme2n1 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+1221 797 259:1 /._var_lib_containerd/io.containerd.grpc.v1.cri/sandboxes/30f2befd6a81555e79cc4d8f67bbdb6c9cd23dcf5d052c1901b3524c58c79283/hostname /etc/hostname rw,noatime - xfs /dev/nvme2n1 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+1237 797 259:1 /._var_lib_containerd/io.containerd.grpc.v1.cri/sandboxes/30f2befd6a81555e79cc4d8f67bbdb6c9cd23dcf5d052c1901b3524c58c79283/resolv.conf /etc/resolv.conf rw,noatime - xfs /dev/nvme2n1 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+1254 797 0:72 / /run/secrets/kubernetes.io/serviceaccount ro,relatime - tmpfs tmpfs rw,seclabel,size=204800k,noswap

@@ -2,10 +2,15 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/moby/sys/mountinfo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -15,9 +20,10 @@ import (
 )
 
 type mockManager struct {
-	err error
-	obs observer.BaseObserver
-	res chan monitor.Condition
+	err       error
+	notifyErr error
+	obs       observer.BaseObserver
+	res       chan monitor.Condition
 }
 
 func (m *mockManager) Subscribe(resource.Type, []resource.Part) (<-chan string, error) {
@@ -25,6 +31,9 @@ func (m *mockManager) Subscribe(resource.Type, []resource.Part) (<-chan string, 
 }
 
 func (m *mockManager) Notify(ctx context.Context, condition monitor.Condition) error {
+	if m.notifyErr != nil {
+		return m.notifyErr
+	}
 	m.res <- condition
 	return nil
 }
@@ -229,4 +238,107 @@ func TestBlockDeviceIOErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSelectPartitions(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		fixture  string
+		hostRoot string
+		kubelet  deviceNumber
+		want     []partition
+	}{
+		{
+			name:     "DaemonSet on AL2023, kubelet on a RAID0 of instance store disks",
+			fixture:  "mountinfo-al2023-daemonset-raid0.txt",
+			hostRoot: "/host",
+			kubelet:  deviceNumber{9, 127},
+			want: []partition{
+				{device: deviceNumber{259, 2}, source: "/dev/nvme0n1p1", path: "/host", mountpoints: []string{"/"}},
+				{device: deviceNumber{259, 4}, source: "/dev/nvme0n1p128", path: "/host/boot/efi", mountpoints: []string{"/boot/efi"}},
+			},
+		},
+		{
+			name:     "DaemonSet on Bottlerocket, kubelet on ephemeral storage",
+			fixture:  "mountinfo-bottlerocket-daemonset-ephemeral.txt",
+			hostRoot: "/host",
+			kubelet:  deviceNumber{259, 1},
+			want: []partition{
+				{device: deviceNumber{259, 14}, source: "/dev/nvme0n1p12", path: "/host/.bottlerocket", mountpoints: []string{"/.bottlerocket", "/var/lib/bottlerocket"}},
+				{device: deviceNumber{259, 17}, source: "/dev/nvme1n1p1", path: "/host/local", mountpoints: []string{"/local", "/mnt", "/opt", "/var"}},
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f, err := os.Open(filepath.Join("testdata", tt.fixture))
+			require.NoError(t, err)
+			defer f.Close()
+			mounts, err := mountinfo.GetMountsFromReader(f, nil)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, selectPartitions(mounts, tt.hostRoot, map[deviceNumber]bool{tt.kubelet: true}))
+		})
+	}
+
+	t.Run("pod volumes", func(t *testing.T) {
+		mounts, err := mountinfo.GetMountsFromReader(strings.NewReader(
+			"30 25 259:3 / /var/lib/kubelet/plugins/kubernetes.io/csi/ebs.csi.aws.com/0a1b/globalmount rw,relatime - ext4 /dev/nvme3n1 rw\n"+
+				"31 25 259:3 / /var/lib/kubelet/pods/0a1b/volumes/kubernetes.io~csi/pvc-0a1b/mount rw,relatime - ext4 /dev/nvme3n1 rw\n"+
+				"32 25 259:4 / /var/log rw,relatime - xfs /dev/nvme4n1 rw\n",
+		), nil)
+		require.NoError(t, err)
+		assert.Equal(t, []partition{
+			{device: deviceNumber{259, 4}, source: "/dev/nvme4n1", path: "/var/log", mountpoints: []string{"/var/log"}},
+		}, selectPartitions(mounts, "/", nil))
+	})
+}
+
+func TestCheckPartition(t *testing.T) {
+	mgr := &mockManager{res: make(chan monitor.Condition, 10)}
+	mon := NewStorageMonitor()
+	mon.manager = mgr
+	now := time.Unix(0, 0)
+	mon.now = func() time.Time { return now }
+	var spaceUsed, inodesUsed float64
+	var usageErr error
+	mon.partitionUsage = func(string) (float64, float64, error) { return spaceUsed, inodesUsed, usageErr }
+	p := partition{device: deviceNumber{259, 12}, source: "/dev/nvme1n1p1", path: "/local", mountpoints: []string{"/local", "/var"}}
+
+	check := func(space, inodes float64) []string {
+		t.Helper()
+		spaceUsed, inodesUsed = space, inodes
+		require.NoError(t, mon.checkPartition(p))
+		var messages []string
+		for {
+			select {
+			case c := <-mgr.res:
+				assert.Equal(t, "PartitionNearlyFull", c.Reason)
+				assert.Equal(t, monitor.SeverityWarning, c.Severity)
+				messages = append(messages, c.Message)
+			default:
+				return messages
+			}
+		}
+	}
+
+	assert.Empty(t, check(0.90, 0.95), "at the thresholds")
+	assert.Equal(t, []string{"/dev/nvme1n1p1 mounted at /local, /var has 8.0% of its space free"}, check(0.92, 0.5))
+	assert.Empty(t, check(0.93, 0.5), "unchanged within the re-notify interval")
+
+	now = now.Add(partitionWarningReNotifyInterval)
+	assert.Len(t, check(0.93, 0.5), 1, "unchanged after the re-notify interval")
+	assert.Equal(t, []string{"/dev/nvme1n1p1 mounted at /local, /var has 7.0% of its space and 3.0% of its inodes free"}, check(0.93, 0.97), "inodes crossed as well")
+	assert.Equal(t, []string{"/dev/nvme1n1p1 mounted at /local, /var has 3.0% of its inodes free"}, check(0.5, 0.97), "space recovered")
+
+	assert.Empty(t, check(0.5, 0.5), "recovered")
+	assert.Len(t, check(0.92, 0.5), 1, "crossed again after recovering")
+
+	assert.Empty(t, check(0.5, 0.5), "recovered")
+	mgr.notifyErr = errors.New("notify failed")
+	spaceUsed = 0.92
+	assert.Error(t, mon.checkPartition(p))
+	mgr.notifyErr = nil
+	assert.Len(t, check(0.92, 0.5), 1, "retried after a failed notification")
+
+	usageErr = errors.New("statfs failed")
+	assert.Error(t, mon.checkPartition(p))
 }
