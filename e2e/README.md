@@ -49,6 +49,7 @@ make build-e2e
 | `--image` | (required) | NMA container image to deploy |
 | `--stage` | `prod` | EKS stage for running tests |
 | `--eks-endpoint` | | EKS control-plane endpoint. defaults to the endpoint for the configured region. also read from `AWS_ENDPOINT_URL_EKS`, `EKS_ENDPOINT`, `AWS_ENDPOINT_URL`. must be in the region requests are signed for |
+| `--nvidia-healthy-verdict` | `0` | Run only `TestNvidiaHealthyVerdict`, watching `AcceleratedHardwareReady` on NVIDIA nodes for this long (use at least `15m`). It prints `NMA_VERDICT=HEALTHY` or `NMA_VERDICT=UNHEALTHY`, and nothing when it gets no verdict. The rest of the suite is skipped while it is set |
 | `--test.run` | | Filter tests by name pattern |
 | `--test.timeout` | `10m` | Test timeout |
 
