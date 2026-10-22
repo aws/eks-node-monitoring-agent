@@ -39,21 +39,26 @@ type fakeGPU struct {
 
 	// Health values. fields answers the field values other than the
 	// NVLink totals; a field missing from it reads as NOT_SUPPORTED.
+	// scopes records the scope each field was last asked for.
 	fields       map[uint32]uint64
+	scopes       map[uint32]uint32
 	unrepairable uint32
 	ccMajor      int
+	migMode      int
+	links        []gonvml.EnableState // NVLink state by link
 
 	limitReads        int
 	fabricReads       int // fabric calls, either struct version
 	inforomReads      int // ValidateInforom calls
 	unrepairableReads int // GetUnrepairableMemoryFlag_v1 calls
+	linkReads         int // GetNvLinkState calls
 	registers         int // RegisterEvents calls
 	afterLost         int // calls made after a call returned ERROR_GPU_IS_LOST
 	lost              bool
 }
 
 func newFakeGPU() *fakeGPU {
-	return &fakeGPU{tempC: 40, powerMW: 300_000, limitMW: 700_000, ccMajor: 9, fail: map[string]gonvml.Return{}}
+	return &fakeGPU{tempC: 40, powerMW: 300_000, limitMW: 700_000, ccMajor: 9, fail: map[string]gonvml.Return{}, scopes: map[uint32]uint32{}}
 }
 
 // result returns call's configured return code.
@@ -105,6 +110,7 @@ func (f *fakeGPU) device() *mock.Device {
 			}
 			for i := range values {
 				id := values[i].FieldId
+				f.scopes[id] = values[i].ScopeId
 				values[i].ValueType = uint32(gonvml.VALUE_TYPE_UNSIGNED_LONG_LONG)
 				values[i].NvmlReturn = uint32(gonvml.ERROR_NOT_SUPPORTED)
 				for j, total := range nvlinkErrorTotals {
@@ -126,6 +132,16 @@ func (f *fakeGPU) device() *mock.Device {
 		},
 		GetCudaComputeCapabilityFunc: func() (int, int, gonvml.Return) {
 			return f.ccMajor, 0, f.result("computeCapability")
+		},
+		GetMigModeFunc: func() (int, int, gonvml.Return) {
+			return f.migMode, f.migMode, f.result("migMode")
+		},
+		GetNvLinkStateFunc: func(link int) (gonvml.EnableState, gonvml.Return) {
+			f.linkReads++
+			if link >= len(f.links) {
+				return 0, gonvml.ERROR_INVALID_ARGUMENT
+			}
+			return f.links[link], f.result(fmt.Sprintf("link%d", link))
 		},
 		ValidateInforomFunc: func() gonvml.Return {
 			f.inforomReads++
