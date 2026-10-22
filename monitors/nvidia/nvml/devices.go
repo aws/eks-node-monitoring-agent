@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	gonvml "github.com/NVIDIA/go-nvml/pkg/nvml"
@@ -90,7 +91,7 @@ func (d *Devices) Poll(ctx context.Context) (conds []monitor.Condition, ok bool)
 	}
 	// NvmlTooOld and an unrecognized fabric state report on every poll for
 	// as long as the node runs this driver, so they are rate-limited.
-	return classify.SuppressRepeatedWarnings(d.fabricWarnings, d.now(), d.evaluate(ctx, result), func(c monitor.Condition) bool {
+	return classify.SuppressRepeatedWarnings(d.fabricWarnings, d.now(), d.evaluate(ctx, result, d.reader.gpuIdentities()), func(c monitor.Condition) bool {
 		return c.Reason == reasons.FabricManagerNotRunningWarning.Template()
 	}), true
 }
@@ -194,13 +195,13 @@ func fabricManagerStatus(state uint8, status uint32) int64 {
 }
 
 // evaluate classifies one poll's readings.
-func (d *Devices) evaluate(ctx context.Context, r devicesReading) []monitor.Condition {
+func (d *Devices) evaluate(ctx context.Context, r devicesReading, gpus []gpuIdentity) []monitor.Condition {
 	var out []monitor.Condition
 	anyLost := false
 	for i, g := range r.gpus {
 		if g.lost {
 			anyLost = true
-			out = append(out, lostGPU(i)...)
+			out = append(out, lostGPU(i, gpus)...)
 			continue
 		}
 		out = append(out, classify.Classify(classify.NormalizedSignals{
@@ -213,15 +214,15 @@ func (d *Devices) evaluate(ctx context.Context, r devicesReading) []monitor.Cond
 	if anyLost {
 		return out
 	}
-	return append(out, d.countConditions(ctx, uint(r.count))...)
+	return append(out, d.countConditions(ctx, uint(r.count), gpus)...)
 }
 
 // countConditions compares the GPU count against the host's device files and
 // against the instance type's GPU count. A comparison whose other side can't
 // be read is skipped.
-func (d *Devices) countConditions(ctx context.Context, gpus uint) []monitor.Condition {
+func (d *Devices) countConditions(ctx context.Context, count uint, gpus []gpuIdentity) []monitor.Condition {
 	logger := log.FromContext(ctx)
-	signals := classify.NormalizedSignals{GPUCount: &gpus}
+	signals := classify.NormalizedSignals{GPUCount: &count}
 
 	files, dir, err := d.deviceFiles()
 	if err != nil {
@@ -242,14 +243,56 @@ func (d *Devices) countConditions(ctx context.Context, gpus uint) []monitor.Cond
 		}
 	}
 
-	return classify.Classify(signals)
+	conds := classify.Classify(signals)
+	// A GPU missing from NVML's count never enumerated, so NVML has no UUID
+	// for it. Listing the GPUs that are present still ties the condition to
+	// this set of GPUs.
+	if present := presentGPUs(gpus); present != "" {
+		for i := range conds {
+			conds[i].Message += "; GPUs present: " + present
+		}
+	}
+	return conds
+}
+
+// presentGPUs lists the UUIDs Init recorded, or "" when it recorded none.
+func presentGPUs(gpus []gpuIdentity) string {
+	var uuids []string
+	for _, g := range gpus {
+		if g.uuid != "" {
+			uuids = append(uuids, g.uuid)
+		}
+	}
+	return strings.Join(uuids, ", ")
 }
 
 // lostGPU reports a GPU that answered an NVML call with ERROR_GPU_IS_LOST.
 // NVIDIA documents XID 79 as a GPU that has fallen off the bus, so it uses
 // the reason a real XID 79 event reports, and the two land on one condition
 // reason.
-func lostGPU(index int) []monitor.Condition {
+func lostGPU(index int, gpus []gpuIdentity) []monitor.Condition {
 	return withMessage(classify.NormalizedSignals{XIDs: []uint{79}},
-		fmt.Sprintf("GPU %d has fallen off the bus: NVML returned GPU_IS_LOST", index))
+		fmt.Sprintf("%s has fallen off the bus: NVML returned GPU_IS_LOST", describeGPU(index, gpus)))
+}
+
+// describeGPU names the GPU at index, with the UUID and serial Init recorded
+// for it. Indexes can change between boots; the UUID and serial don't.
+func describeGPU(index int, gpus []gpuIdentity) string {
+	name := fmt.Sprintf("GPU %d", index)
+	if index >= len(gpus) {
+		// Init couldn't read the GPU list.
+		return name
+	}
+	g := gpus[index]
+	var ids []string
+	if g.uuid != "" {
+		ids = append(ids, "UUID "+g.uuid)
+	}
+	if g.serial != "" {
+		ids = append(ids, "serial "+g.serial)
+	}
+	if len(ids) == 0 {
+		return name
+	}
+	return name + " (" + strings.Join(ids, ", ") + ")"
 }

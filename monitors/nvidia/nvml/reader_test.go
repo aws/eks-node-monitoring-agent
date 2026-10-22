@@ -68,11 +68,14 @@ func TestNewerSymbolsAllLookedUp(t *testing.T) {
 }
 
 func TestRun(t *testing.T) {
-	c := &Check{name: "test", timeout: 20 * time.Millisecond}
+	started := time.Unix(100, 0)
+	now := started
+	c := newCheck("test", 20*time.Millisecond, func() time.Time { return now })
 
 	v, status := run(c, func() int { return 7 })
 	assert.Equal(t, Done, status)
 	assert.Equal(t, 7, v)
+	assert.Zero(t, c.inDriverSince.Load(), "a call that returned is not in the driver")
 
 	// A call that outlives its deadline reports Stuck and keeps running.
 	release := make(chan struct{})
@@ -81,38 +84,47 @@ func TestRun(t *testing.T) {
 	v, status = run(c, hang)
 	assert.Equal(t, Stuck, status)
 	assert.Zero(t, v)
-	assert.Equal(t, 1, c.StuckCycles())
+	assert.Equal(t, started.UnixNano(), c.inDriverSince.Load(), "the stuck call is in the driver since it started")
 
-	// While it is outstanding, later runs make no new call.
-	for i := 2; i <= stuckThreshold; i++ {
+	// While it is outstanding, later runs make no new call and don't move
+	// the start.
+	now = now.Add(time.Minute)
+	for range 4 {
 		_, status = run(c, hang)
 		assert.Equal(t, Stuck, status)
-		assert.Equal(t, i, c.StuckCycles())
 	}
 	assert.Equal(t, int32(1), calls.Load(), "only one call may be in the driver at a time")
+	assert.Equal(t, started.UnixNano(), c.inDriverSince.Load())
 
-	// Once the driver answers, the next run makes a new call and clears the count.
+	// The call's goroutine clears the start as soon as the call returns,
+	// before the check runs again.
 	close(release)
 	select {
 	case <-c.pending:
 	case <-time.After(time.Second):
 		t.Fatal("the released call never returned")
 	}
+	assert.Zero(t, c.inDriverSince.Load(), "a check whose driver answered must not look stalled until its next run")
 	v, status = run(c, func() int { return 9 })
 	assert.Equal(t, Done, status)
 	assert.Equal(t, 9, v)
-	assert.Zero(t, c.StuckCycles())
 }
 
-func TestAllStuck(t *testing.T) {
-	stuck := func(n int) *Check {
-		c := &Check{}
-		c.stuck.Store(int32(n))
+func TestStalledFor(t *testing.T) {
+	now := time.Unix(1000, 0)
+	inDriverFor := func(d time.Duration) *Check {
+		c := newCheck("c", DefaultTimeout, nil)
+		if d > 0 {
+			c.inDriverSince.Store(now.Add(-d).UnixNano())
+		}
 		return c
 	}
-	assert.False(t, allStuck(nil), "no checks is not a hung driver")
-	assert.False(t, allStuck([]*Check{stuck(stuckThreshold), stuck(stuckThreshold - 1)}))
-	assert.True(t, allStuck([]*Check{stuck(stuckThreshold), stuck(stuckThreshold + 3)}))
+	assert.False(t, stalledFor(nil, now, stallDuration), "no checks is not a hung driver")
+	assert.False(t, stalledFor([]*Check{inDriverFor(stallDuration), inDriverFor(0)}, now, stallDuration),
+		"a check with no call in the driver is answering")
+	assert.False(t, stalledFor([]*Check{inDriverFor(stallDuration), inDriverFor(stallDuration - time.Second)}, now, stallDuration),
+		"one call has been in the driver for less than the duration")
+	assert.True(t, stalledFor([]*Check{inDriverFor(stallDuration), inDriverFor(time.Hour)}, now, stallDuration))
 }
 
 func TestLibraryCandidates(t *testing.T) {
@@ -276,10 +288,12 @@ func TestReconcile_initHangs(t *testing.T) {
 	r, now := testReader(func() gonvml.Return { <-release; return gonvml.SUCCESS })
 	r.initCheck.timeout = 10 * time.Millisecond
 	ctx := t.Context()
-	*now = now.Add(time.Minute)
+	*now = now.Add(time.Minute) // past the grace period
 
-	for i := 1; i < stuckThreshold; i++ {
-		assert.Empty(t, r.Reconcile(ctx), "run %d", i)
+	// Init starts now and never returns. Reconcile runs every 30 seconds.
+	start := *now
+	for ; now.Sub(start) < stallDuration; *now = now.Add(30 * time.Second) {
+		assert.Empty(t, r.Reconcile(ctx), "Init in the driver for %v", now.Sub(start))
 	}
 	assertSingle(t, r.Reconcile(ctx), "NvidiaDriverNotResponding", monitor.SeverityWarning)
 	assert.Equal(t, float64(1), testutil.ToFloat64(driverNotResponding))
@@ -296,12 +310,13 @@ func TestReconcile_everyCheckStuck(t *testing.T) {
 	b := r.NewCheck("b", DefaultTimeout)
 	ctx := t.Context()
 	assert.Empty(t, r.Reconcile(ctx))
+	inDriverFor := func(c *Check, d time.Duration) { c.inDriverSince.Store(now.Add(-d).UnixNano()) }
 
-	a.stuck.Store(stuckThreshold)
-	b.stuck.Store(stuckThreshold - 1)
-	assert.Empty(t, r.Reconcile(ctx), "one check still answering means the driver is not hung")
+	inDriverFor(a, stallDuration)
+	inDriverFor(b, stallDuration-time.Second)
+	assert.Empty(t, r.Reconcile(ctx), "one check not yet stalled means the driver is not hung")
 
-	b.stuck.Store(stuckThreshold)
+	inDriverFor(b, stallDuration)
 	assertSingle(t, r.Reconcile(ctx), "NvidiaDriverNotResponding", monitor.SeverityWarning)
 	assert.Equal(t, float64(1), testutil.ToFloat64(driverNotResponding))
 	*now = now.Add(time.Minute)
@@ -310,10 +325,10 @@ func TestReconcile_everyCheckStuck(t *testing.T) {
 	assertSingle(t, r.Reconcile(ctx), "NvidiaDriverNotResponding", monitor.SeverityWarning)
 
 	// The driver answers: the gauge clears, and the next stall reports at once.
-	a.stuck.Store(0)
+	a.inDriverSince.Store(0)
 	assert.Empty(t, r.Reconcile(ctx))
 	assert.Equal(t, float64(0), testutil.ToFloat64(driverNotResponding))
-	a.stuck.Store(stuckThreshold)
+	inDriverFor(a, stallDuration)
 	assertSingle(t, r.Reconcile(ctx), "NvidiaDriverNotResponding", monitor.SeverityWarning)
 }
 
@@ -355,5 +370,5 @@ func TestConcurrentUse(t *testing.T) {
 
 	_, _, ok := r.Library()
 	assert.True(t, ok)
-	assert.Zero(t, c.StuckCycles())
+	assert.Zero(t, c.inDriverSince.Load(), "no call is left in the driver")
 }

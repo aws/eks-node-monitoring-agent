@@ -9,6 +9,7 @@ import (
 
 	gonvml "github.com/NVIDIA/go-nvml/pkg/nvml"
 	"github.com/NVIDIA/go-nvml/pkg/nvml/mock"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -48,9 +49,10 @@ func newEscalationHarness(t *testing.T) *escalationHarness {
 			return 0, gonvml.SUCCESS
 		}
 	}
+	noID := func() (string, gonvml.Return) { return "", gonvml.ERROR_NOT_SUPPORTED }
 	gpus := []gonvml.Device{
-		&mock.Device{GetPcieReplayCounterFunc: pcie(false)},
-		&mock.Device{GetPcieReplayCounterFunc: pcie(true)},
+		&mock.Device{GetPcieReplayCounterFunc: pcie(false), GetUUIDFunc: noID, GetSerialFunc: noID},
+		&mock.Device{GetPcieReplayCounterFunc: pcie(true), GetUUIDFunc: noID, GetSerialFunc: noID},
 	}
 	lib := &mock.Interface{
 		InitFunc: func() gonvml.Return { return gonvml.SUCCESS },
@@ -72,16 +74,17 @@ func newEscalationHarness(t *testing.T) *escalationHarness {
 	return h
 }
 
-// stall marks the checks that read the GPUs stuck for stuckThreshold runs.
+// stall marks the checks that read the GPUs as having had a call in the
+// driver for stallDuration.
 func (h *escalationHarness) stall() {
 	for _, c := range h.checks {
-		c.stuck.Store(stuckThreshold)
+		c.inDriverSince.Store(h.now.Add(-stallDuration).UnixNano())
 	}
 }
 
 func (h *escalationHarness) unstall() {
 	for _, c := range h.checks {
-		c.stuck.Store(0)
+		c.inDriverSince.Store(0)
 	}
 }
 
@@ -188,7 +191,7 @@ func TestEscalate_checksRecoverRestartsWindow(t *testing.T) {
 // toward the stall: it waits on the event set, so it can keep returning while
 // one GPU is wedged and the checks that read every GPU are stuck.
 func TestStallCountsChecksThatReadGPUs(t *testing.T) {
-	r, _ := testReader(func() gonvml.Return { return gonvml.SUCCESS })
+	r, now := testReader(func() gonvml.Return { return gonvml.SUCCESS })
 	p := NewPolicies(r)
 	d := NewDevices(r, nil)
 	NewXIDs(r)
@@ -196,8 +199,8 @@ func TestStallCountsChecksThatReadGPUs(t *testing.T) {
 
 	ctx := t.Context()
 	require.Empty(t, r.Reconcile(ctx))
-	p.check.stuck.Store(stuckThreshold)
-	d.check.stuck.Store(stuckThreshold)
+	p.check.inDriverSince.Store(now.Add(-stallDuration).UnixNano())
+	d.check.inDriverSince.Store(now.Add(-stallDuration).UnixNano())
 	assertSingle(t, r.Reconcile(ctx), "NvidiaDriverNotResponding", monitor.SeverityWarning)
 }
 
@@ -243,4 +246,114 @@ func TestHostMemoryPressure(t *testing.T) {
 	got, err := hostMemoryPressure()
 	require.NoError(t, err)
 	assert.Equal(t, 3.10, got)
+}
+
+// TestEscalationTiming runs Reconcile, Policies.Poll and Devices.Poll at the
+// nvidia monitor's cadence on a fake clock, against a driver that stops
+// answering, and checks when the Warning and the Fatal fire and that both
+// clear once the driver answers again. Only the calls that enter the driver
+// block: the PCIe replay counter, the NVLink field values and the fabric info.
+// The other reads are served from NVML's shared page and from state built at
+// Init, so they keep answering when the driver hangs.
+func TestEscalationTiming(t *testing.T) {
+	hung, release := make(chan struct{}), make(chan struct{})
+	inDriver := func() {
+		select {
+		case <-hung:
+			<-release
+		default:
+		}
+	}
+	gpu := func() gonvml.Device {
+		page := func() (uint32, gonvml.Return) { return 0, gonvml.SUCCESS }
+		return &mock.Device{
+			GetUUIDFunc:   func() (string, gonvml.Return) { return "GPU-aaaa", gonvml.SUCCESS },
+			GetSerialFunc: func() (string, gonvml.Return) { return "", gonvml.ERROR_NOT_SUPPORTED },
+			GetMemoryErrorCounterFunc: func(gonvml.MemoryErrorType, gonvml.EccCounterType, gonvml.MemoryLocation) (uint64, gonvml.Return) {
+				return 0, gonvml.SUCCESS
+			},
+			GetPcieReplayCounterFunc:  func() (int, gonvml.Return) { inDriver(); return 0, gonvml.SUCCESS },
+			GetRetiredPagesFunc:       func(gonvml.PageRetirementCause) ([]uint64, gonvml.Return) { return nil, gonvml.SUCCESS },
+			GetTemperatureFunc:        func(gonvml.TemperatureSensors) (uint32, gonvml.Return) { return page() },
+			GetPowerUsageFunc:         page,
+			GetEnforcedPowerLimitFunc: page,
+			GetFieldValuesFunc:        func([]gonvml.FieldValue) gonvml.Return { inDriver(); return gonvml.SUCCESS },
+		}
+	}
+	gpus := []gonvml.Device{gpu(), gpu()}
+	lib := &mock.Interface{
+		InitFunc: func() gonvml.Return { return gonvml.SUCCESS },
+		ExtensionsFunc: func() gonvml.ExtendedInterface {
+			return &mock.ExtendedInterface{LookupSymbolFunc: func(string) error { return nil }}
+		},
+		DeviceGetCountFunc:         func() (int, gonvml.Return) { return len(gpus), gonvml.SUCCESS },
+		DeviceGetHandleByIndexFunc: func(i int) (gonvml.Device, gonvml.Return) { return gpus[i], gonvml.SUCCESS },
+	}
+
+	start := time.Unix(0, 0)
+	now := start
+	clock := func() time.Time { return now }
+	r := newReader(Config{}, clock, func() []string { return []string{"/host/usr/lib64/" + libraryName} },
+		func(string) gonvml.Interface { return lib })
+	p := NewPolicies(r)
+	d := NewDevices(r, nil)
+	p.now, d.now = clock, clock
+	d.deviceFiles = func() (uint, string, error) { return uint(len(gpus)), "/host/dev", nil }
+	d.fabricV3 = func(gonvml.Device) (gonvml.GpuFabricInfo_v3, gonvml.Return) {
+		inDriver()
+		return gonvml.GpuFabricInfo_v3{State: gonvml.GPU_FABRIC_STATE_COMPLETED, Status: uint32(gonvml.SUCCESS), HealthMask: healthyFabricMask}, gonvml.SUCCESS
+	}
+	r.memoryPressure = func() (float64, error) { return 0, nil }
+	// Short deadlines keep the test fast. Stall timing comes from the fake
+	// clock, not from the deadlines.
+	p.check.timeout, d.check.timeout, r.probe.timeout = 5*time.Millisecond, 5*time.Millisecond, 5*time.Millisecond
+	ctx := t.Context()
+
+	const hangAt, recoverAt, end = time.Minute, 30 * time.Minute, 40 * time.Minute
+	warnAt, fatalAt := time.Duration(-1), time.Duration(-1)
+	var afterRecovery []string
+	for elapsed := time.Duration(0); elapsed <= end; elapsed += 10 * time.Second {
+		now = start.Add(elapsed)
+		if elapsed == hangAt {
+			close(hung)
+		}
+		if elapsed == recoverAt {
+			close(release)
+			for _, c := range []*Check{p.check, d.check, r.probe} {
+				select {
+				case <-c.pending:
+				case <-time.After(time.Second):
+					t.Fatalf("check %s never returned", c.name)
+				}
+			}
+		}
+		p.Poll()
+		if elapsed%DevicesInterval == 0 {
+			d.Poll(ctx)
+		}
+		if elapsed%(30*time.Second) != 0 {
+			continue
+		}
+		for _, c := range r.Reconcile(ctx) {
+			switch {
+			case elapsed > recoverAt:
+				afterRecovery = append(afterRecovery, c.Reason)
+			case c.Reason == "NvidiaDriverNotResponding" && warnAt < 0:
+				warnAt = elapsed
+			case c.Reason == "NvidiaDriverUnresponsive" && fatalAt < 0:
+				fatalAt = elapsed
+			}
+		}
+	}
+
+	// The driver hangs at 1m. The policy check's call enters it at 1m and
+	// the device check's at its next poll, 5m. Both have been in the driver
+	// for stallDuration at 7m, which is the Warning. The probe enters the
+	// driver at 7m, and escalationWindow later, at 22m, is the Fatal. The
+	// worst case is a hang just after a device poll: the Warning comes one
+	// device interval plus stallDuration after the hang, about 7 minutes.
+	assert.Equal(t, 7*time.Minute, warnAt, "Warning")
+	assert.Equal(t, 22*time.Minute, fatalAt, "Fatal")
+	assert.Empty(t, afterRecovery, "a driver that answers again raises nothing")
+	assert.Equal(t, float64(0), testutil.ToFloat64(driverNotResponding))
 }

@@ -12,14 +12,15 @@ import (
 // a check stops waiting before its own next run.
 const DefaultTimeout = 10 * time.Second
 
-// stuckThreshold is how many consecutive runs every check that reads the GPUs
-// must be stuck before the reader reports the driver as not responding. One
-// stuck run can be a short stall, such as a GPU reset or heavy load holding
-// the driver lock, and one stuck check can be a single slow call. Every such
-// check stuck for five runs in a row means the driver, or a GPU every read
-// waits on, has stopped answering. Because every check has to be stuck, the
-// slowest check's interval sets how long that takes.
-const stuckThreshold = 5
+// stallDuration is how long every check that reads the GPUs must have had a
+// call in the driver before the reader reports the driver as not responding.
+// A healthy driver answers a call in milliseconds, so a call still in the
+// driver after two minutes, twelve times DefaultTimeout, is not a slow call.
+// One stuck check can be a single slow call; every check stuck means the
+// driver, or a GPU every read waits on, has stopped answering. It is a
+// duration rather than a run count, so a check that polls every 5 minutes
+// doesn't take five polls to count as stalled.
+const stallDuration = 2 * time.Minute
 
 // Check runs one NVML call at a time under a deadline. The deadline returns
 // control to the caller but cannot cancel a cgo call: the goroutine and its OS
@@ -31,12 +32,21 @@ const stuckThreshold = 5
 type Check struct {
 	name    string
 	timeout time.Duration
+	now     func() time.Time
 
 	// pending is only touched by the goroutine that calls run. It is closed
 	// when the outstanding call returns, and nil when there is none.
 	pending <-chan struct{}
-	// stuck is written by run and read by Reconcile through StuckCycles.
-	stuck atomic.Int32
+	// inDriverSince is when the call now in the driver started, in Unix
+	// nanoseconds, and zero when no call is in the driver. run sets it when
+	// it starts a call. The call's own goroutine clears it as soon as the
+	// call returns, so a check whose driver answered doesn't look stalled
+	// until its next run. Reconcile reads it.
+	inDriverSince atomic.Int64
+}
+
+func newCheck(name string, timeout time.Duration, now func() time.Time) *Check {
+	return &Check{name: name, timeout: timeout, now: now}
 }
 
 // Status is the result of one run of a Check.
@@ -48,9 +58,6 @@ const (
 	// Stuck means a call is still in the driver, from this run or an earlier one.
 	Stuck
 )
-
-// StuckCycles returns how many runs in a row have ended Stuck.
-func (c *Check) StuckCycles() int { return int(c.stuck.Load()) }
 
 // run calls fn unless an earlier call of c is still outstanding, and waits up
 // to c's timeout for it. On Done it returns fn's value. On Stuck it returns
@@ -64,7 +71,6 @@ func run[T any](c *Check, fn func() T) (T, Status) {
 			// answered, so this run makes a new call.
 			c.pending = nil
 		default:
-			c.stuck.Add(1)
 			return zero, Stuck
 		}
 	}
@@ -72,9 +78,12 @@ func run[T any](c *Check, fn func() T) (T, Status) {
 	done := make(chan struct{})
 	result := make(chan T, 1)
 	c.pending = done
+	c.inDriverSince.Store(c.now().UnixNano())
 	go func() {
 		defer close(done)
-		result <- fn()
+		v := fn()
+		c.inDriverSince.Store(0)
+		result <- v
 	}()
 
 	timer := time.NewTimer(c.timeout)
@@ -82,22 +91,21 @@ func run[T any](c *Check, fn func() T) (T, Status) {
 	select {
 	case v := <-result:
 		c.pending = nil
-		c.stuck.Store(0)
 		return v, Done
 	case <-timer.C:
-		c.stuck.Add(1)
 		return zero, Stuck
 	}
 }
 
-// allStuck reports whether there is at least one check and every check has
-// been stuck for stuckThreshold consecutive runs.
-func allStuck(checks []*Check) bool {
+// stalledFor reports whether there is at least one check and every check has
+// had a call in the driver for at least d at now.
+func stalledFor(checks []*Check, now time.Time, d time.Duration) bool {
 	if len(checks) == 0 {
 		return false
 	}
 	for _, c := range checks {
-		if c.StuckCycles() < stuckThreshold {
+		since := c.inDriverSince.Load()
+		if since == 0 || now.Sub(time.Unix(0, since)) < d {
 			return false
 		}
 	}

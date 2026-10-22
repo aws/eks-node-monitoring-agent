@@ -42,7 +42,8 @@ type devicesHarness struct {
 type devicesOptions struct {
 	gpus           int
 	info           instanceinfo.InstanceTypeInfoProvider
-	noFabricSymbol bool // the loaded driver lacks nvmlDeviceGetGpuFabricInfoV
+	noFabricSymbol bool                    // the loaded driver lacks nvmlDeviceGetGpuFabricInfoV
+	setup          func(i int, g *fakeGPU) // runs before Init reads the GPUs
 }
 
 func newDevicesHarness(t *testing.T, o devicesOptions) *devicesHarness {
@@ -51,6 +52,9 @@ func newDevicesHarness(t *testing.T, o devicesOptions) *devicesHarness {
 	for range o.gpus {
 		g := newFakeGPU()
 		g.fabricState, g.fabricStatus, g.fabricMask = gonvml.GPU_FABRIC_STATE_COMPLETED, uint32(gonvml.SUCCESS), healthyFabricMask
+		if o.setup != nil {
+			o.setup(len(h.gpus), g)
+		}
 		h.gpus = append(h.gpus, g)
 	}
 	h.lib = fakeLibrary(h.gpus...)
@@ -299,7 +303,7 @@ func TestDevices_unknown(t *testing.T) {
 			assert.Empty(t, conds, msg)
 			assert.False(t, ok, "%s is unknown, not clean", msg)
 		}
-		assert.Equal(t, 2, h.d.check.StuckCycles())
+		assert.NotZero(t, h.d.check.inDriverSince.Load(), "the stuck call is still in the driver")
 
 		close(release)
 		select {
@@ -309,4 +313,54 @@ func TestDevices_unknown(t *testing.T) {
 		}
 		assert.Equal(t, 1, h.gpus[0].fabricReads, "a call still in the driver is not repeated")
 	})
+}
+
+func TestDevices_namesGPUsByIdentity(t *testing.T) {
+	// GPU 0 reports a UUID and serial; GPU 1 reports no serial.
+	ids := func(i int, g *fakeGPU) {
+		g.uuid = []string{"GPU-aaaa", "GPU-bbbb"}[i]
+		if i == 0 {
+			g.serial = "1320521012345"
+		} else {
+			g.fail["serial"] = gonvml.ERROR_NOT_SUPPORTED
+		}
+	}
+
+	t.Run("lost GPU", func(t *testing.T) {
+		h := newDevicesHarness(t, devicesOptions{gpus: 2, setup: ids})
+		h.gpus[0].fail["fabricV3"] = gonvml.ERROR_GPU_IS_LOST
+		h.gpus[1].fail["fabricV3"] = gonvml.ERROR_GPU_IS_LOST
+		assert.Equal(t, []string{
+			"NvidiaXID79Error|Fatal|GPU 0 (UUID GPU-aaaa, serial 1320521012345) has fallen off the bus: NVML returned GPU_IS_LOST",
+			"NvidiaXID79Error|Fatal|GPU 1 (UUID GPU-bbbb) has fallen off the bus: NVML returned GPU_IS_LOST",
+		}, h.poll(t), "NVML can't be asked about a lost GPU, so the identity comes from Init")
+	})
+
+	t.Run("count mismatch lists the GPUs present", func(t *testing.T) {
+		h := newDevicesHarness(t, devicesOptions{gpus: 2, setup: ids})
+		h.files = 3
+		assert.Equal(t, []string{
+			"NvidiaDeviceCountMismatch|Fatal|DCGM detected 2 GPUs but 3 nvidia device files were detected at /host/dev; GPUs present: GPU-aaaa, GPU-bbbb",
+		}, h.poll(t))
+	})
+}
+
+func TestReadGPUIdentities(t *testing.T) {
+	ok, noSerial, noHandle := newFakeGPU(), newFakeGPU(), newFakeGPU()
+	ok.uuid, ok.serial = "GPU-aaaa", "1320521012345"
+	noSerial.uuid = "GPU-bbbb"
+	noSerial.fail["serial"] = gonvml.ERROR_NOT_SUPPORTED
+	noHandle.fail["handle"] = gonvml.ERROR_UNKNOWN
+	assert.Equal(t, []gpuIdentity{
+		{uuid: "GPU-aaaa", serial: "1320521012345"},
+		{uuid: "GPU-bbbb"},
+		{},
+	}, readGPUIdentities(fakeLibrary(ok, noSerial, noHandle)))
+}
+
+func TestDescribeGPU(t *testing.T) {
+	gpus := []gpuIdentity{{uuid: "GPU-aaaa", serial: "1320521012345"}, {}}
+	assert.Equal(t, "GPU 0 (UUID GPU-aaaa, serial 1320521012345)", describeGPU(0, gpus))
+	assert.Equal(t, "GPU 1", describeGPU(1, gpus), "Init got no identity for this GPU")
+	assert.Equal(t, "GPU 2", describeGPU(2, gpus), "Init couldn't read the GPU list this far")
 }

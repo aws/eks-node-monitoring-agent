@@ -75,7 +75,7 @@ If auto repair is enabled, the repair actions that are listed start 10 minutes a
 
 |NvidiaDriverNotResponding
 |Event
-|Calls from the agent to the NVIDIA driver have not returned for several consecutive checks, so the agent cannot read GPU health. On its own, a call that has not returned is not treated as a GPU fault, because a busy or shared driver can also hold it. If a light probe of the driver also stops answering, the agent reports NvidiaDriverUnresponsive.
+|Calls from the agent to the NVIDIA driver have not returned for at least two minutes, so the agent cannot read GPU health. On its own, a call that has not returned is not treated as a GPU fault, because a busy or shared driver can also hold it. If a light probe of the driver also stops answering, the agent reports NvidiaDriverUnresponsive.
 
 |NvidiaDriverUnresponsive
 |Condition

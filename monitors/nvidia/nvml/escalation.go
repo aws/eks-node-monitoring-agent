@@ -24,8 +24,12 @@ import (
 const escalationWindow = 15 * time.Minute
 
 // maxHostMemoryPressure is the PSI "full avg60" value, in percent, above
-// which a stall stays a Warning. Under memory pressure every process on the
-// host stalls, the driver included, so the stall says nothing about the GPUs.
+// which a stall stays a Warning. Above 10%, every non-idle task on the host
+// was stalled on memory for more than 6 of the last 60 seconds. An idle EKS
+// GPU node reads 0.00, and systemd-oomd's default threshold for killing
+// processes on the same full-stall signal is 60%. Under memory pressure every
+// process on the host stalls, the driver included, so the stall says nothing
+// about the GPUs.
 const maxHostMemoryPressure = 10.0
 
 // escalate runs the driver probe while the checks that read the GPUs are

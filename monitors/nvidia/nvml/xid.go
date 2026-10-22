@@ -52,7 +52,7 @@ func NewXIDs(r *Reader) *XIDs {
 		// Not registered with the reader: the wait is on the event set, not
 		// on one GPU, so it can keep returning while one GPU is wedged, and
 		// counting it would hide that stall.
-		check:    &Check{name: "xid", timeout: DefaultTimeout},
+		check:    newCheck("xid", DefaultTimeout, r.now),
 		now:      time.Now,
 		sleep:    sleepContext,
 		lastSent: map[gonvml.Device]time.Time{},

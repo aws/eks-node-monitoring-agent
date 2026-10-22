@@ -30,6 +30,9 @@ type fakeGPU struct {
 	fail     map[string]gonvml.Return
 	block    chan struct{} // when set, the ECC and fabric reads wait on it
 
+	uuid   string
+	serial string
+
 	fabricState  uint8
 	fabricStatus uint32 // nvmlReturn_t of a completed fabric training
 	fabricMask   uint32
@@ -102,6 +105,12 @@ func (f *fakeGPU) device() *mock.Device {
 				}
 			}
 			return gonvml.SUCCESS
+		},
+		GetUUIDFunc: func() (string, gonvml.Return) {
+			return f.uuid, f.result("uuid")
+		},
+		GetSerialFunc: func() (string, gonvml.Return) {
+			return f.serial, f.result("serial")
 		},
 		RegisterEventsFunc: func(uint64, gonvml.EventSet) gonvml.Return {
 			f.registers++
@@ -358,7 +367,7 @@ func TestPolicies_stuckPollKeepsBaselines(t *testing.T) {
 		assert.Empty(t, conds, msg)
 		assert.False(t, ok, "%s is unknown, not clean", msg)
 	}
-	assert.Equal(t, 2, p.check.StuckCycles())
+	assert.NotZero(t, p.check.inDriverSince.Load(), "the stuck call is still in the driver")
 
 	close(release) // a closed channel no longer blocks later polls
 	select {
@@ -369,7 +378,7 @@ func TestPolicies_stuckPollKeepsBaselines(t *testing.T) {
 	conds, ok = p.Poll()
 	assert.True(t, ok)
 	assert.Equal(t, []string{"NvidiaDoubleBitError|Fatal|detected 4 Nvidia Double Bit error(s) on location Device"}, describe(conds))
-	assert.Zero(t, p.check.StuckCycles())
+	assert.Zero(t, p.check.inDriverSince.Load())
 }
 
 func TestFieldValueUint(t *testing.T) {
@@ -441,4 +450,16 @@ func TestPolicies_levelWarningsRateLimited(t *testing.T) {
 
 	now = now.Add(classify.WarningReNotifyInterval)
 	assert.Equal(t, []string{power709, thermal}, poll("both report again after the re-notify interval"))
+}
+
+func TestPolicies_lostGPUNamedByIdentity(t *testing.T) {
+	gpu := newFakeGPU()
+	gpu.uuid, gpu.serial = "GPU-aaaa", "1320521012345"
+	var p *Policies
+	initializedReader(t, fakeLibrary(gpu), func(r *Reader) { p = NewPolicies(r) })
+	gpu.fail["ecc"] = gonvml.ERROR_GPU_IS_LOST
+
+	conds, ok := p.Poll()
+	assert.True(t, ok)
+	assert.Equal(t, []string{"NvidiaXID79Error|Fatal|GPU 0 (UUID GPU-aaaa, serial 1320521012345) has fallen off the bus: NVML returned GPU_IS_LOST"}, describe(conds))
 }

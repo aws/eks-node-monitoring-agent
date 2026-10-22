@@ -140,7 +140,7 @@ func (p *Policies) Poll() (conds []monitor.Condition, ok bool) {
 		// grew during the stall is reported by the next poll that answers.
 		return nil, false
 	}
-	return p.evaluate(result.gpus), true
+	return p.evaluate(result.gpus, p.reader.gpuIdentities()), true
 }
 
 // reading is the result of one NVML call. ok is false when the value was not
@@ -290,14 +290,14 @@ func fieldValueUint(v gonvml.FieldValue) (uint64, bool) {
 
 // evaluate applies the policy rules to one poll's readings and updates the
 // counter baselines. Messages match the DCGM path's.
-func (p *Policies) evaluate(samples []gpuReadings) []monitor.Condition {
+func (p *Policies) evaluate(samples []gpuReadings, gpus []gpuIdentity) []monitor.Condition {
 	var out []monitor.Condition
 	for gpu, s := range samples {
 		if s.lost {
 			// A lost GPU's values are not observed, so its counters need two
 			// new readings before they can report growth.
 			p.clearBaselines(gpu)
-			out = append(out, lostGPU(gpu)...)
+			out = append(out, lostGPU(gpu, gpus)...)
 			continue
 		}
 
