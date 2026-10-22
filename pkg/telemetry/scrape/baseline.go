@@ -18,7 +18,7 @@ type Baselines struct {
 
 type baseline struct {
 	// acked is the counter value deltas are measured from: the value in the
-	// last report that was accepted or dropped, or 0 after a reset.
+	// last report that was accepted or dropped, or the value after a reset.
 	acked float64
 	// start is when acked was scraped, sent as the delta's start time.
 	start time.Time
@@ -58,10 +58,11 @@ func NewBaselines() *Baselines {
 // For each series in counters:
 //   - Seen for the first time: it gets a baseline at its current value and no
 //     delta this time.
-//   - Lower than its last observed value: the counter reset. The increase from
-//     the baseline up to the last observed value hasn't been acknowledged yet,
-//     so it's carried over, and the baseline moves to 0, since a counter starts
-//     over from 0.
+//   - Lower than its last observed value: the counter reset. Its current value
+//     becomes the new baseline, adding nothing for this interval. The increase
+//     from the old baseline up to the last observed value hasn't been
+//     acknowledged yet, so it's carried over; with nothing carried, there's no
+//     delta this time.
 //   - Otherwise: it returns the carried increase plus the increase over the
 //     baseline, starting at the baseline's time, and records the current value
 //     as pending, to become the new baseline on the next Advance.
@@ -86,7 +87,11 @@ func (baselines *Baselines) Observe(now time.Time, counters map[string][]Series)
 			base.missing = 0
 			if sample.Value < base.lastScraped {
 				base.carry += base.lastScraped - base.acked
-				base.acked = 0
+				base.acked = sample.Value
+				if base.carry == 0 {
+					*base = baseline{acked: sample.Value, lastScraped: sample.Value, start: now}
+					continue
+				}
 			}
 			base.lastScraped = sample.Value
 			current := sample.Value

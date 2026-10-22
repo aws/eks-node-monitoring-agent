@@ -29,9 +29,10 @@ func TestBaselines(t *testing.T) {
 	assert.Equal(t, t2, d[0].Start, "the baseline starts at the scrape it came from")
 
 	b.Advance()
-	d = b.Observe(time.Unix(1200, 0), counter(1))
-	assert.Equal(t, 1.0, d[0].Value, "a decrease resets the series, which starts over from 0")
-	assert.Equal(t, t3, d[0].Start)
+	assert.Empty(t, b.Observe(time.Unix(1200, 0), counter(1)), "a decrease resets the series at its current value")
+	d = b.Observe(time.Unix(1500, 0), counter(3))
+	assert.Equal(t, 2.0, d[0].Value)
+	assert.Equal(t, time.Unix(1200, 0), d[0].Start)
 }
 
 func TestBaselines_ResetAfterHeld(t *testing.T) {
@@ -41,10 +42,10 @@ func TestBaselines_ResetAfterHeld(t *testing.T) {
 	b.Observe(t1, counter(100))
 
 	d := b.Observe(t2, counter(20))
-	assert.Equal(t, 110.0, d[0].Value, "the held increase before the reset is carried over")
+	assert.Equal(t, 90.0, d[0].Value, "the held increase before the reset is carried over, and the reset adds nothing")
 	assert.Equal(t, t0, d[0].Start)
 	d = b.Observe(t3, counter(25))
-	assert.Equal(t, 115.0, d[0].Value, "the carry stays until it's advanced")
+	assert.Equal(t, 95.0, d[0].Value, "the carry stays until it's advanced")
 
 	b.Advance()
 	d = b.Observe(time.Unix(1200, 0), counter(30))
