@@ -55,7 +55,8 @@ func outcome(call string, ret gonvml.Return) Outcome {
 // treat false as ERROR_FUNCTION_NOT_FOUND. A field without a lookup in
 // lookupNewerSymbols fails TestNewerSymbolsAllLookedUp.
 type newerSymbols struct {
-	gpuFabricInfoV bool // nvmlDeviceGetGpuFabricInfoV
+	gpuFabricInfoV         bool // nvmlDeviceGetGpuFabricInfoV
+	unrepairableMemoryFlag bool // nvmlDeviceGetUnrepairableMemoryFlag_v1
 }
 
 // lookupNewerSymbols checks the loaded library for each newer function. It
@@ -63,7 +64,8 @@ type newerSymbols struct {
 func lookupNewerSymbols(ext gonvml.ExtendedInterface) newerSymbols {
 	has := func(name string) bool { return ext.LookupSymbol(name) == nil }
 	return newerSymbols{
-		gpuFabricInfoV: has("nvmlDeviceGetGpuFabricInfoV"),
+		gpuFabricInfoV:         has("nvmlDeviceGetGpuFabricInfoV"),
+		unrepairableMemoryFlag: has("nvmlDeviceGetUnrepairableMemoryFlag_v1"),
 	}
 }
 
