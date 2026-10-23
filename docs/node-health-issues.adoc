@@ -409,6 +409,10 @@ The monitoring condition is `StorageReady` for issues in the following table tha
 |Event
 |The `kubelet` is reporting slow disk usage while trying to access the filesystem. This potentially indicates insufficient disk input-output or filesystem issues.
 
+|PartitionNearlyFull
+|Event
+|A writable partition that the `kubelet` does not monitor for disk pressure, such as one holding `/var/log`, has less than 10% of its space or 5% of its inodes free. Writes to it fail once it is full, which can prevent logging and the creation of new pod sandboxes.
+
 |XFSSmallAverageClusterSize
 |Event
 |The XFS Average Cluster size is small, indicating excessive free space fragmentation. This can prevent file creation despite available inodes or free space.
