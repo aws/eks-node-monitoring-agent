@@ -49,6 +49,10 @@ If auto repair is enabled, the repair actions that are listed start 10 minutes a
 |Event
 |The NVIDIA Fabric Manager status could not be determined because the NVIDIA driver and DCGM versions do not match. This is not a GPU or fabric fault, and a replacement node with the same AMI would report the same.
 
+|FabricManagerNotStarted
+|Condition
+|NVIDIA Fabric Manager has not configured a GPU's NVLink fabric within 15 minutes on an instance type that runs Fabric Manager on the host, usually because Fabric Manager never started. Until it does, the GPUs can't use NVLink. Restarting the node restarts Fabric Manager.
+
 |NeuronDMAError
 |Condition
 |A DMA engine encountered an unrecoverable error.
