@@ -33,8 +33,24 @@ import (
 // Only entries where at least one field beyond InstanceType is non-zero
 // are written to the JSONL.
 type instanceInfo struct {
-	InstanceType   string `json:"instanceType"`
-	NvidiaGPUCount uint   `json:"nvidiaGpuCount,omitempty"`
+	InstanceType      string `json:"instanceType"`
+	NvidiaGPUCount    uint   `json:"nvidiaGpuCount,omitempty"`
+	HostFabricManager bool   `json:"hostFabricManager,omitempty"`
+}
+
+// hostFabricManagerTypes are the instance types whose NVSwitches NVIDIA
+// Fabric Manager manages from the instance and whose GPUs report fabric
+// state: the 8-GPU HGX systems with Hopper or newer GPUs. EC2 doesn't report
+// NVSwitches, so this list is kept by hand; add new HGX instance types here.
+// P4d and P4de are not listed because NVML reports fabric state only on
+// Hopper and newer. GB200 and GB300 manage their NVSwitches at the rack, not
+// from the instance, so they are not listed either.
+var hostFabricManagerTypes = map[string]bool{
+	"p5.48xlarge":      true,
+	"p5e.48xlarge":     true,
+	"p5en.48xlarge":    true,
+	"p6-b200.48xlarge": true,
+	"p6-b300.48xlarge": true,
 }
 
 const outputPath = "internal/pkg/instanceinfo/instance-info.jsonl"
@@ -111,7 +127,8 @@ func run() error {
 // Extend this function when adding new fields to instanceInfo.
 func collectInstanceInfo(it ec2types.InstanceTypeInfo) instanceInfo {
 	info := instanceInfo{
-		InstanceType: string(it.InstanceType),
+		InstanceType:      string(it.InstanceType),
+		HostFabricManager: hostFabricManagerTypes[string(it.InstanceType)],
 	}
 
 	if it.GpuInfo != nil {

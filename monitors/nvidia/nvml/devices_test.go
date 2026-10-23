@@ -276,6 +276,156 @@ func TestDevices_instanceTypeCount(t *testing.T) {
 	}
 }
 
+func TestDevices_fabricNotStarted(t *testing.T) {
+	const notStarted, inProgress, completed = gonvml.GPU_FABRIC_STATE_NOT_STARTED, gonvml.GPU_FABRIC_STATE_IN_PROGRESS, gonvml.GPU_FABRIC_STATE_COMPLETED
+	hgx := fakeInstanceInfo{info: &instanceinfo.InstanceInfo{InstanceType: "p5.48xlarge", NvidiaGPUCount: 1, HostFabricManager: true}}
+	untrained := func(status string) string {
+		return "FabricManagerNotStarted|Fatal|GPU 0: the NVLink fabric is not trained after at least 15m0s, Fabric Manager status: " + status
+	}
+	state := func(s uint8) func(g *fakeGPU) { return func(g *fakeGPU) { g.fabricState = s } }
+	failedTraining := func(g *fakeGPU) { g.fabricState, g.fabricStatus = completed, uint32(gonvml.ERROR_UNKNOWN) }
+	nothing := func(*fakeGPU) {}
+
+	type poll struct {
+		change func(g *fakeGPU) // applied before the poll; polls are DevicesInterval apart
+		want   []string
+	}
+	for _, tc := range []struct {
+		name  string
+		info  instanceinfo.InstanceTypeInfoProvider
+		polls []poll
+	}{
+		{
+			// The driver sends fabric probes from GPU load on, so a Fabric
+			// Manager that never starts leaves the fabric InProgress.
+			name: "InProgress for the whole window is Fatal on every poll after it",
+			info: hgx,
+			polls: []poll{
+				{change: state(inProgress)}, {change: nothing}, {change: nothing},
+				{change: nothing, want: []string{untrained("InProgress")}},
+				{change: nothing, want: []string{untrained("InProgress")}},
+			},
+		},
+		{
+			name: "NotStarted for the whole window is Fatal",
+			info: hgx,
+			polls: []poll{
+				{change: state(notStarted)}, {change: nothing}, {change: nothing},
+				{change: nothing, want: []string{untrained("NotStarted")}},
+			},
+		},
+		{
+			name: "NotStarted then InProgress counts as one window",
+			info: hgx,
+			polls: []poll{
+				{change: state(notStarted)}, {change: state(inProgress)}, {change: nothing},
+				{change: nothing, want: []string{untrained("InProgress")}},
+			},
+		},
+		{
+			name: "training that completes within the window reports nothing",
+			info: hgx,
+			polls: []poll{
+				{change: state(notStarted)}, {change: state(inProgress)}, {change: state(completed)}, {change: nothing},
+			},
+		},
+		{
+			name: "completed training starts the window over",
+			info: hgx,
+			polls: []poll{
+				{change: state(inProgress)}, {change: nothing}, {change: state(completed)},
+				{change: state(inProgress)}, {change: nothing}, {change: nothing},
+				{change: nothing, want: []string{untrained("InProgress")}},
+			},
+		},
+		{
+			name: "a fabric read that isn't observed starts the window over",
+			info: hgx,
+			polls: []poll{
+				{change: state(inProgress)}, {change: nothing},
+				{change: func(g *fakeGPU) { g.fail["fabricV3"] = gonvml.ERROR_UNKNOWN }},
+				{change: func(g *fakeGPU) { delete(g.fail, "fabricV3") }}, {change: nothing}, {change: nothing},
+				{change: nothing, want: []string{untrained("InProgress")}},
+			},
+		},
+		{
+			name: "a lost GPU starts the window over",
+			info: hgx,
+			polls: []poll{
+				{change: state(inProgress)}, {change: nothing},
+				{change: func(g *fakeGPU) { g.fail["handle"] = gonvml.ERROR_GPU_IS_LOST }, want: []string{
+					"NvidiaXID79Error|Fatal|GPU 0 has fallen off the bus: NVML returned GPU_IS_LOST",
+				}},
+				{change: func(g *fakeGPU) { g.lost = false; delete(g.fail, "handle") }}, {change: nothing}, {change: nothing},
+				{change: nothing, want: []string{untrained("InProgress")}},
+			},
+		},
+		{
+			name: "a failed training keeps its own reason",
+			info: hgx,
+			polls: []poll{
+				{change: failedTraining, want: []string{"FabricManagerNotRunning|Fatal|Fabric Manager status: Failure"}},
+				{change: nothing, want: []string{"FabricManagerNotRunning|Fatal|Fabric Manager status: Failure"}},
+				{change: nothing, want: []string{"FabricManagerNotRunning|Fatal|Fabric Manager status: Failure"}},
+				{change: nothing, want: []string{"FabricManagerNotRunning|Fatal|Fabric Manager status: Failure"}},
+			},
+		},
+		{
+			// GB200 and GB300 read NotStarted when the instance needs no
+			// Fabric Manager.
+			name: "an instance type without a host Fabric Manager reports nothing",
+			info: fakeInstanceInfo{info: &instanceinfo.InstanceInfo{InstanceType: "p6e-gb200.36xlarge", NvidiaGPUCount: 1}},
+			polls: []poll{
+				{change: state(notStarted)}, {change: nothing}, {change: state(inProgress)}, {change: nothing}, {change: nothing},
+			},
+		},
+		{
+			name: "an instance type missing from the lookup reports nothing",
+			info: fakeInstanceInfo{err: fmt.Errorf("%w: p99.large", instanceinfo.ErrUnknownInstanceType)},
+			polls: []poll{
+				{change: state(inProgress)}, {change: nothing}, {change: nothing}, {change: nothing}, {change: nothing},
+			},
+		},
+		{
+			name: "an instance type that can't be read reports nothing",
+			info: fakeInstanceInfo{err: errors.New("IMDS unavailable")},
+			polls: []poll{
+				{change: state(inProgress)}, {change: nothing}, {change: nothing}, {change: nothing}, {change: nothing},
+			},
+		},
+		{
+			name: "without an instance type lookup nothing reports",
+			polls: []poll{
+				{change: state(inProgress)}, {change: nothing}, {change: nothing}, {change: nothing}, {change: nothing},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newDevicesHarness(t, devicesOptions{gpus: 1, info: tc.info})
+			for i, p := range tc.polls {
+				p.change(h.gpus[0])
+				assert.Equal(t, p.want, h.poll(t), "poll at %v", time.Duration(i)*DevicesInterval)
+				h.now = h.now.Add(DevicesInterval)
+			}
+		})
+	}
+}
+
+func TestDevices_fabricNotStartedNamesTheGPU(t *testing.T) {
+	hgx := fakeInstanceInfo{info: &instanceinfo.InstanceInfo{InstanceType: "p5.48xlarge", NvidiaGPUCount: 2, HostFabricManager: true}}
+	h := newDevicesHarness(t, devicesOptions{gpus: 2, info: hgx, setup: func(i int, g *fakeGPU) {
+		g.uuid = fmt.Sprintf("GPU-%d", i)
+	}})
+	h.gpus[1].fabricState = gonvml.GPU_FABRIC_STATE_IN_PROGRESS
+	for range 3 {
+		assert.Empty(t, h.poll(t))
+		h.now = h.now.Add(DevicesInterval)
+	}
+	assert.Equal(t, []string{
+		"FabricManagerNotStarted|Fatal|GPU 1 (UUID GPU-1): the NVLink fabric is not trained after at least 15m0s, Fabric Manager status: InProgress",
+	}, h.poll(t))
+}
+
 func TestDevices_unknown(t *testing.T) {
 	t.Run("NVML not initialized", func(t *testing.T) {
 		r := newReader(Config{}, time.Now, func() []string { return nil }, nil)

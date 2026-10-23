@@ -406,6 +406,14 @@ AcceleratedHardwareReady:
       The NVIDIA Fabric Manager service is not running on this NVSwitch-equipped
       instance. Fabric Manager is required for multi-GPU NVLink communication.
       Without it, multi-GPU workloads will fail or silently degrade.
+  FabricManagerNotStarted:
+    Template: 'FabricManagerNotStarted'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      NVIDIA Fabric Manager has not configured a GPU's NVLink fabric within 15
+      minutes on an instance type that runs Fabric Manager on the host, usually
+      because Fabric Manager never started. Until it does, the GPUs can't use
+      NVLink. Restarting the node restarts Fabric Manager.
   NvidiaDriverNotResponding:
     Template: 'NvidiaDriverNotResponding'
     DefaultSeverity: 'Warning'
