@@ -73,10 +73,9 @@ type Policies struct {
 	now func() time.Time
 
 	// Only the goroutine that calls Poll touches the maps below. baselines
-	// holds each counter's last reading. notified holds a re-notify tracker
-	// for each GPU and level policy that has reported, and only for those.
+	// holds each counter's last reading.
 	baselines map[counterKey]uint64
-	notified  map[levelKey]*renotify.Tracker[struct{}]
+	notified  levelReports
 }
 
 type counterKey struct {
@@ -84,10 +83,10 @@ type counterKey struct {
 	dcgmField uint16
 }
 
-// levelKey identifies one GPU's level policy for rate limiting.
+// levelKey identifies one GPU's level signal for rate limiting.
 type levelKey struct {
 	gpu    int
-	policy string
+	signal string
 }
 
 // Level policies, rate-limited per GPU.
@@ -105,7 +104,7 @@ func NewPolicies(r *Reader) *Policies {
 		check:     r.NewCheck("policies", DefaultTimeout),
 		now:       time.Now,
 		baselines: map[counterKey]uint64{},
-		notified:  map[levelKey]*renotify.Tracker[struct{}]{},
+		notified:  levelReports{},
 	}
 }
 
@@ -275,17 +274,29 @@ func readGPU(lib gonvml.Interface, index int, readLimit bool) gpuReadings {
 	return g
 }
 
-// fieldValueUint decodes an unsigned NVML field value. NVML writes the value
-// in the host's byte order.
+// fieldValueUint decodes a non-negative integer NVML field value. NVML writes
+// the value in the host's byte order and reports its integer type with it, so
+// every integer type is accepted rather than reading a count as not observed
+// because of its encoding. A negative signed value is not a count, and a
+// double is not an integer, so neither is observed.
 func fieldValueUint(v gonvml.FieldValue) (uint64, bool) {
 	switch gonvml.ValueType(v.ValueType) {
+	case gonvml.VALUE_TYPE_UNSIGNED_SHORT:
+		return uint64(binary.NativeEndian.Uint16(v.Value[:2])), true
 	case gonvml.VALUE_TYPE_UNSIGNED_INT:
 		return uint64(binary.NativeEndian.Uint32(v.Value[:4])), true
 	case gonvml.VALUE_TYPE_UNSIGNED_LONG, gonvml.VALUE_TYPE_UNSIGNED_LONG_LONG:
 		return binary.NativeEndian.Uint64(v.Value[:]), true
-	default:
-		return 0, false
+	case gonvml.VALUE_TYPE_SIGNED_INT:
+		if n := int32(binary.NativeEndian.Uint32(v.Value[:4])); n >= 0 {
+			return uint64(n), true
+		}
+	case gonvml.VALUE_TYPE_SIGNED_LONG_LONG:
+		if n := int64(binary.NativeEndian.Uint64(v.Value[:])); n >= 0 {
+			return uint64(n), true
+		}
 	}
+	return 0, false
 }
 
 // evaluate applies the policy rules to one poll's readings and updates the
@@ -318,18 +329,18 @@ func (p *Policies) evaluate(samples []gpuReadings, gpus []gpuIdentity) []monitor
 		}
 
 		pagesObserved := s.retiredSBE.ok && s.retiredDBE.ok
-		if p.reportLevel(levelKey{gpu, retiredPagesPolicy}, pagesObserved, s.retiredSBE.value+s.retiredDBE.value > maxRetiredPages) {
+		if p.notified.report(p.now(), levelKey{gpu, retiredPagesPolicy}, pagesObserved, s.retiredSBE.value+s.retiredDBE.value > maxRetiredPages) {
 			out = append(out, withMessage(classify.NormalizedSignals{PageRetirement: true},
 				fmt.Sprintf("detected %d SBE, and %d DBE page retirements", s.retiredSBE.value, s.retiredDBE.value))...)
 		}
 
-		if p.reportLevel(levelKey{gpu, thermalPolicy}, s.temperatureC.ok, s.temperatureC.value > maxTemperatureC) {
+		if p.notified.report(p.now(), levelKey{gpu, thermalPolicy}, s.temperatureC.ok, s.temperatureC.value > maxTemperatureC) {
 			out = append(out, withMessage(classify.NormalizedSignals{ThermalViolation: true},
 				fmt.Sprintf("detected GPU thermals outside of thresholds with severity code %d", s.temperatureC.value))...)
 		}
 
 		watts, powerObserved, overPower := p.power(s)
-		if p.reportLevel(levelKey{gpu, powerPolicy}, powerObserved, overPower) {
+		if p.notified.report(p.now(), levelKey{gpu, powerPolicy}, powerObserved, overPower) {
 			out = append(out, withMessage(classify.NormalizedSignals{PowerViolation: true},
 				fmt.Sprintf("detected power usage outside of thresholds with severity code %d", watts))...)
 		}
@@ -365,30 +376,35 @@ func (p *Policies) clearBaselines(gpu int) {
 	}
 }
 
-// reportLevel reports whether a level policy should report for this poll. A
-// reading over the limit reports at most once per WarningReNotifyInterval
-// per GPU. A reading within the limit drops the GPU's tracker, so the next
-// violation reports at once. A reading that was not observed changes
-// nothing, because unknown is not clean.
+// levelReports rate-limits Warnings for signals that can stay over their
+// limit for many polls. It holds a re-notify tracker for each GPU and signal
+// that has reported, and only for those. Only the goroutine that polls
+// touches it.
+type levelReports map[levelKey]*renotify.Tracker[struct{}]
+
+// report reports whether a level signal should report at now. A reading over
+// the limit reports at most once per WarningReNotifyInterval per GPU and
+// signal. A reading within the limit drops the tracker, so the next violation
+// reports at once. A reading that was not observed changes nothing, because
+// unknown is not clean.
 //
-// The report is recorded here, not after it is sent, because Poll's caller
-// sends it later and nothing here learns whether that worked.
-func (p *Policies) reportLevel(key levelKey, observed, over bool) bool {
+// The report is recorded here, not after it is sent, because the poll's
+// caller sends it later and nothing here learns whether that worked.
+func (l levelReports) report(now time.Time, key levelKey, observed, over bool) bool {
 	if !observed {
 		return false
 	}
 	if !over {
-		delete(p.notified, key)
+		delete(l, key)
 		return false
 	}
-	now := p.now()
-	tracker, tracked := p.notified[key]
+	tracker, tracked := l[key]
 	if tracked && !tracker.ShouldNotify(struct{}{}, now) {
 		return false
 	}
 	if !tracked {
 		tracker = renotify.New[struct{}](classify.WarningReNotifyInterval)
-		p.notified[key] = tracker
+		l[key] = tracker
 	}
 	tracker.Notified(struct{}{}, now)
 	return true

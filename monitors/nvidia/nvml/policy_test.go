@@ -37,15 +37,28 @@ type fakeGPU struct {
 	fabricStatus uint32 // nvmlReturn_t of a completed fabric training
 	fabricMask   uint32
 
-	limitReads  int
-	fabricReads int // fabric calls, either struct version
-	registers   int // RegisterEvents calls
-	afterLost   int // calls made after a call returned ERROR_GPU_IS_LOST
-	lost        bool
+	// Health values. fields answers the field values other than the
+	// NVLink totals; a field missing from it reads as NOT_SUPPORTED.
+	// scopes records the scope each field was last asked for.
+	fields       map[uint32]uint64
+	scopes       map[uint32]uint32
+	unrepairable uint32
+	ccMajor      int
+	migMode      int
+	links        []gonvml.EnableState // NVLink state by link
+
+	limitReads        int
+	fabricReads       int // fabric calls, either struct version
+	inforomReads      int // ValidateInforom calls
+	unrepairableReads int // GetUnrepairableMemoryFlag_v1 calls
+	linkReads         int // GetNvLinkState calls
+	registers         int // RegisterEvents calls
+	afterLost         int // calls made after a call returned ERROR_GPU_IS_LOST
+	lost              bool
 }
 
 func newFakeGPU() *fakeGPU {
-	return &fakeGPU{tempC: 40, powerMW: 300_000, limitMW: 700_000, fail: map[string]gonvml.Return{}}
+	return &fakeGPU{tempC: 40, powerMW: 300_000, limitMW: 700_000, ccMajor: 9, fail: map[string]gonvml.Return{}, scopes: map[uint32]uint32{}}
 }
 
 // result returns call's configured return code.
@@ -96,15 +109,43 @@ func (f *fakeGPU) device() *mock.Device {
 				return ret
 			}
 			for i := range values {
+				id := values[i].FieldId
+				f.scopes[id] = values[i].ScopeId
+				values[i].ValueType = uint32(gonvml.VALUE_TYPE_UNSIGNED_LONG_LONG)
+				values[i].NvmlReturn = uint32(gonvml.ERROR_NOT_SUPPORTED)
 				for j, total := range nvlinkErrorTotals {
-					if values[i].FieldId == total.nvmlField {
-						values[i].ValueType = uint32(gonvml.VALUE_TYPE_UNSIGNED_LONG_LONG)
+					if id == total.nvmlField {
 						binary.NativeEndian.PutUint64(values[i].Value[:], f.nvlink[j])
 						values[i].NvmlReturn = uint32(f.result(fmt.Sprintf("nvlink%d", j)))
 					}
 				}
+				if v, ok := f.fields[id]; ok {
+					binary.NativeEndian.PutUint64(values[i].Value[:], v)
+					values[i].NvmlReturn = uint32(f.result(fmt.Sprintf("field%d", id)))
+				}
 			}
 			return gonvml.SUCCESS
+		},
+		GetUnrepairableMemoryFlag_v1Func: func() (gonvml.UnrepairableMemoryStatus_v1, gonvml.Return) {
+			f.unrepairableReads++
+			return gonvml.UnrepairableMemoryStatus_v1{BUnrepairableMemory: f.unrepairable}, f.result("unrepairable")
+		},
+		GetCudaComputeCapabilityFunc: func() (int, int, gonvml.Return) {
+			return f.ccMajor, 0, f.result("computeCapability")
+		},
+		GetMigModeFunc: func() (int, int, gonvml.Return) {
+			return f.migMode, f.migMode, f.result("migMode")
+		},
+		GetNvLinkStateFunc: func(link int) (gonvml.EnableState, gonvml.Return) {
+			f.linkReads++
+			if link >= len(f.links) {
+				return 0, gonvml.ERROR_INVALID_ARGUMENT
+			}
+			return f.links[link], f.result(fmt.Sprintf("link%d", link))
+		},
+		ValidateInforomFunc: func() gonvml.Return {
+			f.inforomReads++
+			return f.result("inforom")
 		},
 		GetUUIDFunc: func() (string, gonvml.Return) {
 			return f.uuid, f.result("uuid")
@@ -395,8 +436,12 @@ func TestFieldValueUint(t *testing.T) {
 		{value(gonvml.VALUE_TYPE_UNSIGNED_LONG_LONG, 1<<40), 1 << 40, true},
 		{value(gonvml.VALUE_TYPE_UNSIGNED_LONG, 7), 7, true},
 		{value(gonvml.VALUE_TYPE_UNSIGNED_INT, 9), 9, true},
+		{value(gonvml.VALUE_TYPE_UNSIGNED_SHORT, 5), 5, true},
+		{value(gonvml.VALUE_TYPE_SIGNED_LONG_LONG, 9), 9, true},
+		{value(gonvml.VALUE_TYPE_SIGNED_INT, 3), 3, true},
+		{value(gonvml.VALUE_TYPE_SIGNED_LONG_LONG, ^uint64(0)), 0, false},   // -1
+		{value(gonvml.VALUE_TYPE_SIGNED_INT, uint64(^uint32(0))), 0, false}, // -1
 		{value(gonvml.VALUE_TYPE_DOUBLE, 9), 0, false},
-		{value(gonvml.VALUE_TYPE_SIGNED_LONG_LONG, 9), 0, false},
 	} {
 		got, ok := fieldValueUint(tc.in)
 		assert.Equal(t, tc.wantOK, ok, "type %d", tc.in.ValueType)
