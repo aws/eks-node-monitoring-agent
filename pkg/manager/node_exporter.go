@@ -34,6 +34,15 @@ type NodeConditionConfig struct {
 	ReadyMessage string
 }
 
+// CaptureRequest is emitted on a healthy-to-failing condition transition so
+// automatic log capture can react. It names the condition and the failure.
+type CaptureRequest struct {
+	Condition corev1.NodeConditionType
+	Reason    string
+	Message   string
+	At        time.Time
+}
+
 // NewNodeExporter creates a new node exporter that updates Kubernetes node conditions
 func NewNodeExporter(
 	node *corev1.Node,
@@ -106,6 +115,20 @@ type nodeExporter struct {
 	// touches, so the condition reason can follow the most recent report
 	// while messages keep their arrival order.
 	reportSeq uint64
+
+	// Nil means capture is off. Guarded by managedConditionsLock. Sends are
+	// non-blocking: Fatal holds the lock and must never block on a slow or
+	// full consumer, so condition reporting is never stalled.
+	captureCh chan<- CaptureRequest
+}
+
+// SetCaptureChannel sets the capture request channel; nil disables capture.
+func (e *nodeExporter) SetCaptureChannel(ch chan<- CaptureRequest) {
+	// Guarded by the same lock Fatal reads captureCh under, so publishing the
+	// channel can't race a concurrent Fatal.
+	e.managedConditionsLock.Lock()
+	defer e.managedConditionsLock.Unlock()
+	e.captureCh = ch
 }
 
 // fatalEntry is one unresolved fatal reason, its latest message, and the
@@ -137,6 +160,11 @@ func (e *nodeExporter) Fatal(ctx context.Context, monitorCondition monitor.Condi
 	e.managedConditionsLock.Lock()
 	defer e.managedConditionsLock.Unlock()
 
+	// Read prior status before rebuildFatalCondition flips it to False, to
+	// tell a fresh failure from one that was already failing.
+	old, ok := e.managedConditions[conditionType]
+	wasNotFalse := !ok || old.Status != corev1.ConditionFalse
+
 	e.reportSeq++
 	entries := e.fatalEntries[conditionType]
 	updated := false
@@ -154,6 +182,20 @@ func (e *nodeExporter) Fatal(ctx context.Context, monitorCondition monitor.Condi
 	e.fatalEntries[conditionType] = entries
 
 	e.rebuildFatalCondition(conditionType)
+
+	// Only on the healthy -> failing edge. Non-blocking: a full queue drops
+	// the request rather than stall condition reporting under the held lock.
+	if wasNotFalse && e.captureCh != nil {
+		select {
+		case e.captureCh <- CaptureRequest{
+			Condition: conditionType,
+			Reason:    monitorCondition.Reason,
+			Message:   monitorCondition.Message,
+			At:        time.Now(),
+		}:
+		default:
+		}
+	}
 	return nil
 }
 
