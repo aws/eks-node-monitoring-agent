@@ -194,13 +194,15 @@ func TestStallCountsChecksThatReadGPUs(t *testing.T) {
 	r, now := testReader(func() gonvml.Return { return gonvml.SUCCESS })
 	p := NewPolicies(r)
 	d := NewDevices(r, nil)
+	h := NewHealth(r)
 	NewXIDs(r)
-	assert.ElementsMatch(t, []*Check{p.check, d.check}, r.checks)
+	assert.ElementsMatch(t, []*Check{p.check, d.check, h.check}, r.checks)
 
 	ctx := t.Context()
 	require.Empty(t, r.Reconcile(ctx))
-	p.check.inDriverSince.Store(now.Add(-stallDuration).UnixNano())
-	d.check.inDriverSince.Store(now.Add(-stallDuration).UnixNano())
+	for _, c := range []*Check{p.check, d.check, h.check} {
+		c.inDriverSince.Store(now.Add(-stallDuration).UnixNano())
+	}
 	assertSingle(t, r.Reconcile(ctx), "NvidiaDriverNotResponding", monitor.SeverityWarning)
 }
 
