@@ -20,7 +20,7 @@ func TestLoadEmbeddedInstanceInfo(t *testing.T) {
 		{"g5.2xlarge", 1, false},
 		{"p5.48xlarge", 8, true},
 		{"p5.4xlarge", 1, false},
-		{"p4d.24xlarge", 8, true},
+		{"p4d.24xlarge", 8, false},
 		{"p6-b200.48xlarge", 8, true},
 		{"p6e-gb200.36xlarge", 4, false},
 		{"g4dn.metal", 8, false},

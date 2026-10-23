@@ -39,13 +39,13 @@ type instanceInfo struct {
 }
 
 // hostFabricManagerTypes are the instance types whose NVSwitches NVIDIA
-// Fabric Manager manages from the instance: the 8-GPU HGX systems. EC2
-// doesn't report NVSwitches, so this list is kept by hand; add new HGX
-// instance types here. GB200 and GB300 manage their NVSwitches at the rack,
-// not from the instance, so they are not listed.
+// Fabric Manager manages from the instance and whose GPUs report fabric
+// state: the 8-GPU HGX systems with Hopper or newer GPUs. EC2 doesn't report
+// NVSwitches, so this list is kept by hand; add new HGX instance types here.
+// P4d and P4de are not listed because NVML reports fabric state only on
+// Hopper and newer. GB200 and GB300 manage their NVSwitches at the rack, not
+// from the instance, so they are not listed either.
 var hostFabricManagerTypes = map[string]bool{
-	"p4d.24xlarge":     true,
-	"p4de.24xlarge":    true,
 	"p5.48xlarge":      true,
 	"p5e.48xlarge":     true,
 	"p5en.48xlarge":    true,

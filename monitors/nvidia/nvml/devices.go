@@ -22,7 +22,7 @@ import (
 // interval of the DCGM reader's fabric field and device count checks.
 const DevicesInterval = 5 * time.Minute
 
-// fabricStartWindow is how long a GPU's fabric can read NotStarted on an
+// fabricStartWindow is how long a GPU's fabric can stay untrained on an
 // instance whose Fabric Manager runs on the host before it is reported. It
 // leaves room for a slow Fabric Manager start after boot.
 const fabricStartWindow = 15 * time.Minute
@@ -34,13 +34,15 @@ const fabricStartWindow = 15 * time.Minute
 //   - Each GPU's Fabric Manager status and fabric health mask, translated
 //     the way DCGM translates them. A driver without the fabric call reads as
 //     NvmlTooOld, a Warning rate-limited like the DCGM reader's.
-//   - A GPU whose fabric has read NotStarted on every poll for
-//     fabricStartWindow, on an instance type whose Fabric Manager runs on
-//     the host, as FabricManagerNotRunning. On other instance types
-//     NotStarted can mean no Fabric Manager is needed, so it is not
-//     reported, and neither is it on an instance type that can't be looked
-//     up. Any other state, or a read that isn't observed, starts the window
-//     over.
+//   - A GPU whose fabric has stayed untrained, reading NotStarted or
+//     InProgress on every poll for fabricStartWindow, on an instance type
+//     whose Fabric Manager runs on the host, as FabricManagerNotStarted. The
+//     driver reads NotStarted until the GPU sends its first fabric probe and
+//     InProgress until Fabric Manager answers, so a Fabric Manager that never
+//     starts usually shows as InProgress. On other instance types NotStarted
+//     can mean no Fabric Manager is needed, so nothing is reported, and
+//     nothing is on an instance type that can't be looked up. Any other
+//     state, or a read that isn't observed, starts the window over.
 //   - One lost-GPU Fatal for each GPU that answered with ERROR_GPU_IS_LOST.
 //     That GPU's fabric is not read, and the counts are not compared in the
 //     same poll, so one lost GPU yields one condition.
@@ -63,10 +65,10 @@ type Devices struct {
 	now func() time.Time
 
 	// Only the goroutine that calls Poll touches the fields below.
-	// notStartedSince holds, for each GPU whose fabric read NotStarted on
-	// the last poll, the poll at which it started to.
-	fabricWarnings  *renotify.Tracker[string]
-	notStartedSince map[int]time.Time
+	// untrainedSince holds, for each GPU whose fabric was untrained on the
+	// last poll, the poll at which it became so.
+	fabricWarnings *renotify.Tracker[string]
+	untrainedSince map[int]time.Time
 }
 
 // NewDevices registers the device checks with r. info gives the GPU count
@@ -84,9 +86,9 @@ func NewDevices(r *Reader, info instanceinfo.InstanceTypeInfoProvider) *Devices 
 		fabricV2: func(dev gonvml.Device) (gonvml.GpuFabricInfo_v2, gonvml.Return) {
 			return dev.GetGpuFabricInfoV().V2()
 		},
-		now:             time.Now,
-		fabricWarnings:  renotify.New[string](classify.WarningReNotifyInterval),
-		notStartedSince: map[int]time.Time{},
+		now:            time.Now,
+		fabricWarnings: renotify.New[string](classify.WarningReNotifyInterval),
+		untrainedSince: map[int]time.Time{},
 	}
 }
 
@@ -219,7 +221,7 @@ func (d *Devices) evaluate(ctx context.Context, r devicesReading, gpus []gpuIden
 	for i, g := range r.gpus {
 		if g.lost {
 			anyLost = true
-			delete(d.notStartedSince, i)
+			delete(d.untrainedSince, i)
 			out = append(out, lostGPU(i, gpus)...)
 			continue
 		}
@@ -227,9 +229,10 @@ func (d *Devices) evaluate(ctx context.Context, r devicesReading, gpus []gpuIden
 			FabricManagerStatus: g.fmStatus,
 			FabricHealthMask:    g.healthMask,
 		})...)
-		if d.fabricNotStarted(now, i, g) && info != nil && info.HostFabricManager {
-			out = append(out, reasons.FabricManagerNotRunning.Builder().
-				Message(fmt.Sprintf("%s: Fabric Manager status: NotStarted for at least %v", describeGPU(i, gpus), fabricStartWindow)).
+		if d.fabricUntrained(now, i, g) && info != nil && info.HostFabricManager {
+			out = append(out, reasons.FabricManagerNotStarted.Builder().
+				Message(fmt.Sprintf("%s: the NVLink fabric is not trained after at least %v, Fabric Manager status: %s",
+					describeGPU(i, gpus), fabricStartWindow, untrainedStatusName(*g.fmStatus))).
 				Build())
 		}
 	}
@@ -241,20 +244,29 @@ func (d *Devices) evaluate(ctx context.Context, r devicesReading, gpus []gpuIden
 	return append(out, d.countConditions(ctx, uint(r.count), info, gpus)...)
 }
 
-// fabricNotStarted records this poll's fabric reading for GPU i and reports
-// whether its fabric has read NotStarted on every poll for at least
-// fabricStartWindow.
-func (d *Devices) fabricNotStarted(now time.Time, i int, g gpuDevice) bool {
-	if g.fmStatus == nil || *g.fmStatus != classify.DcgmFMStatusNotStarted {
-		delete(d.notStartedSince, i)
+// fabricUntrained records this poll's fabric reading for GPU i and reports
+// whether its fabric has been untrained, NotStarted or InProgress, on every
+// poll for at least fabricStartWindow. A change between the two keeps the
+// window.
+func (d *Devices) fabricUntrained(now time.Time, i int, g gpuDevice) bool {
+	if g.fmStatus == nil || (*g.fmStatus != classify.DcgmFMStatusNotStarted && *g.fmStatus != classify.DcgmFMStatusInProgress) {
+		delete(d.untrainedSince, i)
 		return false
 	}
-	since, ok := d.notStartedSince[i]
+	since, ok := d.untrainedSince[i]
 	if !ok {
-		d.notStartedSince[i] = now
+		d.untrainedSince[i] = now
 		return false
 	}
 	return now.Sub(since) >= fabricStartWindow
+}
+
+// untrainedStatusName names an untrained fabric state for the message.
+func untrainedStatusName(status int64) string {
+	if status == classify.DcgmFMStatusInProgress {
+		return "InProgress"
+	}
+	return "NotStarted"
 }
 
 // instanceType looks up this instance type's hardware. It returns nil when
