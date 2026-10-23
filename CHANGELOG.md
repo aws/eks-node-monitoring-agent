@@ -5,6 +5,36 @@ All notable changes to the EKS Node Monitoring Agent will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.7.4] - 2026-10-23
+
+### What's Changed
+
+#### Features
+- Migrate Auto Mode IPAMD liveness to probe framework ([8b3efa2](https://github.com/aws/eks-node-monitoring-agent/commit/8b3efa20e0eae8ba4443340b693d3b8a5dc647b7))
+- Add missing pod log patterns for parity with eks-log-collector.sh ([fbcf66b](https://github.com/aws/eks-node-monitoring-agent/commit/fbcf66b85466aeb58aeb6f1a05bf78f0c863db61))
+- Add the NVML reader core ([e417439](https://github.com/aws/eks-node-monitoring-agent/commit/e417439ee7fa28779c02ca2d32fabe80eb0edc8a))
+- Add NVML policy checks and XID events ([5cf67a3](https://github.com/aws/eks-node-monitoring-agent/commit/5cf67a377b92269e97499240140abc9794a4555a))
+- Add NVML fabric and device checks, escalate a hung driver ([37eaf6f](https://github.com/aws/eks-node-monitoring-agent/commit/37eaf6fa091f9cafdfbb1b3b93c331a0180b1d75))
+
+#### Bug Fixes
+- Keep the sysctl dump when a single key cannot be read ([1e8fea2](https://github.com/aws/eks-node-monitoring-agent/commit/1e8fea280c01895fb1ff1063fcb84d876f0ff80d))
+- Move the eks-networking-config-agent readyz probe to port 62350 ([e4eedac](https://github.com/aws/eks-node-monitoring-agent/commit/e4eedacebc949025f051c0e349b3bd65ccd04d45), [df857d3](https://github.com/aws/eks-node-monitoring-agent/commit/df857d31dd37b7295a8e87973eb46af591a17c58))
+- Treat blank and version-mismatch fabric status as non-fatal, and rate-limit the resulting Warnings ([aa31b4e](https://github.com/aws/eks-node-monitoring-agent/commit/aa31b4ef7011d8da47373abe57dbca1c6fbad566))
+- Correct the link saturation check ([557c560](https://github.com/aws/eks-node-monitoring-agent/commit/557c560d4d8536f4d9d1176d938fd0da1a2e97f6))
+- Skip the Corefile readyz probe when the agent isn't installed ([380e4bb](https://github.com/aws/eks-node-monitoring-agent/commit/380e4bbd5a1fbecf9171d134dfde102d88cc4f97))
+- Drop the goroutineleakprofile GOEXPERIMENT for Go 1.27 ([3ffe453](https://github.com/aws/eks-node-monitoring-agent/commit/3ffe45352804dc9a5dc8b475344902117c36d9e1))
+- Restore the missing systemd monitor ([f8e0470](https://github.com/aws/eks-node-monitoring-agent/commit/f8e04707eef4a9d9d1b8a7ba4e02f41d5b1308d7))
+
+#### Dependencies
+- Bump golang.org/x/net to v0.60.0 ([62f9430](https://github.com/aws/eks-node-monitoring-agent/commit/62f9430a460ed3d5547d4b5bdfe9130237e6bfd4))
+- Bump Go to 1.27.2 and AWS SDK libs ([0210be3](https://github.com/aws/eks-node-monitoring-agent/commit/0210be31994eb9b32dce9ac1af15918c79781313))
+- Bump Go to 1.27.3 ([c4ff5f8](https://github.com/aws/eks-node-monitoring-agent/commit/c4ff5f86c11dc01ee978f49f17521d82896a2f57))
+
+#### CI & Build
+- Cut shared GitHub Actions runner usage ([a8089db](https://github.com/aws/eks-node-monitoring-agent/commit/a8089db85ba04d7ebc58a00c683f1deecdfa987e))
+- Make hack/helm-docs.sh not leave an -e file behind on mac ([eb2c568](https://github.com/aws/eks-node-monitoring-agent/commit/eb2c56801de0425c5f385dbe741d47c37da7a0c4))
+- Move GPU classification into a DCGM-free package ([640a418](https://github.com/aws/eks-node-monitoring-agent/commit/640a41842cd22e77e44fd00dd1831ebbb5013904))
+
 ## [v1.7.3] - 2026-10-05
 
 ### What's Changed
@@ -272,6 +302,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### What's Changed
 - Update base DCGM image to 4.5.2-4.8.1-ubuntu22.04 to resolve CVEs ([1a2cda4](https://github.com/aws/eks-node-monitoring-agent/commit/1a2cda4))
 
+[v1.7.4]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.7.3...v1.7.4
 [v1.7.3]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.7.2...v1.7.3
 [v1.7.2]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.7.1...v1.7.2
 [v1.7.1]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.7.0...v1.7.1
