@@ -565,6 +565,30 @@ func TestHealth_inforomValidatedHourly(t *testing.T) {
 	assert.Equal(t, 2, gpu.inforomReads, "a validation once the hour has passed")
 }
 
+func TestHealth_moreGPUsThanTheLastInforomValidation(t *testing.T) {
+	first, added := newFakeGPU(), newFakeGPU()
+	first.fields, added.fields = healthyFields(), healthyFields()
+	added.fail["inforom"] = gonvml.ERROR_CORRUPTED_INFOROM
+	lib := fakeLibrary(first, added)
+	count := 1
+	lib.DeviceGetCountFunc = func() (int, gonvml.Return) { return count, gonvml.SUCCESS }
+	var h *Health
+	initializedReader(t, lib, func(r *Reader) { h = NewHealth(r) })
+	now := time.Unix(0, 0)
+	h.now = func() time.Time { return now }
+
+	assert.Empty(t, pollHealth(t, h), "the first poll validates one GPU")
+
+	count = 2
+	now = now.Add(HealthInterval)
+	assert.Empty(t, pollHealth(t, h), "a GPU the last validation didn't see reads its InfoROM as not observed")
+	assert.Zero(t, added.inforomReads)
+
+	now = now.Add(inforomInterval)
+	assert.Equal(t, []string{"DCGMHealthCode9|Warning|GPU 1: the InfoROM is corrupted"}, pollHealth(t, h),
+		"the next validation reads it")
+}
+
 func TestHealth_unrepairableMemoryNeedsTheSymbol(t *testing.T) {
 	gpu := newFakeGPU()
 	gpu.fields = healthyFields()

@@ -527,8 +527,12 @@ func (h *Health) evaluate(now time.Time, samples []gpuHealth, gpus []gpuIdentity
 			fatal(codeFaultyMemory, "the GPU reports unrepairable memory")
 		}
 
-		// From the last validation, which runs at most hourly.
-		inforom := h.inforom[i]
+		// From the last validation, which runs at most hourly. A GPU that
+		// validation didn't see reads as not observed until the next one.
+		var inforom reading
+		if i < len(h.inforom) {
+			inforom = h.inforom[i]
+		}
 		warn(codeCorruptInforom, inforom.ok, inforom.value != 0, "the InfoROM is corrupted")
 
 		warn(codePowerUnreadable, s.powerUnreadable.ok, s.powerUnreadable.value != 0, "power usage could not be read")
