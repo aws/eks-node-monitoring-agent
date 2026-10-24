@@ -118,7 +118,9 @@ ContainerRuntimeReady:
     Template: 'ServiceFailedToStart'
     DefaultSeverity: 'Warning'
     Description: >-
-      A systemd unit failed to start.
+      A systemd unit failed to start. Repeated failures of the same unit are
+      reported at most once every 30 minutes. The next event counts the
+      failures held back since the last one.
   ContainerRuntimeFailed:
     Template: 'ContainerRuntimeFailed'
     DefaultSeverity: 'Warning'

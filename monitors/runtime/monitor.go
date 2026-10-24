@@ -32,17 +32,25 @@ func NewRuntimeMonitor(node *corev1.Node, kubeClient client.Client) *runtimeMoni
 		node:             node,
 		kubeClient:       kubeClient,
 		unitRestartCount: map[string]uint32{},
+		startFailures:    map[string]startFailure{},
+		now:              time.Now,
 	}
 }
 
 const (
 	containerdDeprecationInterval = time.Hour
+	// A crash-looping unit logs a start failure every few seconds. Reporting
+	// each one uses up the burst of 25 Warning events client-go allows NMA
+	// per node, and later events from every monitor are dropped.
+	startFailureReportInterval = 30 * time.Minute
 )
 
 type runtimeMonitor struct {
 	node             *corev1.Node
 	kubeClient       client.Client
 	unitRestartCount map[string]uint32
+	startFailures    map[string]startFailure
+	now              func() time.Time
 
 	manager monitor.Manager
 }
@@ -154,15 +162,42 @@ func unitName(s string) string {
 }
 
 func (m *runtimeMonitor) handleSystemd(line string) error {
-	if match := failedToStartRegexp.FindStringSubmatch(line); match != nil {
-		return m.manager.Notify(context.Background(),
-			reasons.ServiceFailedToStart.
-				Builder().
-				Message(line).
-				Build(),
-		)
+	match := failedToStartRegexp.FindStringSubmatch(line)
+	if match == nil {
+		return nil
 	}
-	return nil
+	message, ok := m.startFailureMessage(match[1], line)
+	if !ok {
+		return nil
+	}
+	return m.manager.Notify(context.Background(),
+		reasons.ServiceFailedToStart.
+			Builder().
+			Message(message).
+			Build(),
+	)
+}
+
+type startFailure struct {
+	reported   time.Time
+	suppressed int
+}
+
+// startFailureMessage reports the first start failure of a unit, then at most
+// one per startFailureReportInterval that counts the failures held back.
+func (m *runtimeMonitor) startFailureMessage(unit, line string) (string, bool) {
+	now := m.now()
+	last, seen := m.startFailures[unit]
+	if seen && now.Sub(last.reported) < startFailureReportInterval {
+		last.suppressed++
+		m.startFailures[unit] = last
+		return "", false
+	}
+	m.startFailures[unit] = startFailure{reported: now}
+	if last.suppressed > 0 {
+		return fmt.Sprintf("%s (failed %d more times since the last event)", line, last.suppressed), true
+	}
+	return line, true
 }
 
 var (

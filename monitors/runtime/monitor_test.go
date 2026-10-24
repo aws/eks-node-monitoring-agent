@@ -224,6 +224,42 @@ func TestRuntimeMonitor(t *testing.T) {
 	})
 }
 
+func TestHandleSystemdStartFailures(t *testing.T) {
+	const coreDNSFailure = "Failed to start CoreDNS DNS server."
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	mon := makeRuntimeMonitor()
+	mon.now = func() time.Time { return now }
+	mgr := &mockManager{res: make(chan monitor.Condition, 100)}
+	mon.manager = mgr
+	received := func() []string {
+		var messages []string
+		for len(mgr.res) > 0 {
+			messages = append(messages, (<-mgr.res).Message)
+		}
+		return messages
+	}
+
+	for range 25 {
+		assert.NoError(t, mon.handleSystemd(coreDNSFailure))
+	}
+	assert.Equal(t, []string{coreDNSFailure}, received(), "a crash loop reports once per interval")
+
+	assert.NoError(t, mon.handleSystemd("Failed to start containerd."))
+	assert.Equal(t, []string{"Failed to start containerd."}, received(), "other units are not held back")
+
+	now = now.Add(startFailureReportInterval - time.Second)
+	assert.NoError(t, mon.handleSystemd(coreDNSFailure))
+	assert.Empty(t, received())
+
+	now = now.Add(time.Second)
+	assert.NoError(t, mon.handleSystemd(coreDNSFailure))
+	assert.Equal(t, []string{coreDNSFailure + " (failed 25 more times since the last event)"}, received())
+
+	now = now.Add(startFailureReportInterval)
+	assert.NoError(t, mon.handleSystemd(coreDNSFailure))
+	assert.Equal(t, []string{coreDNSFailure}, received(), "the count resets after each event")
+}
+
 // TestUnitName tests the unitName helper function
 func TestUnitName(t *testing.T) {
 	tests := []struct {
