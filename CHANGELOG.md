@@ -5,6 +5,16 @@ All notable changes to the EKS Node Monitoring Agent will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.7.5] - 2026-10-24
+
+This release rebuilds the agent against the latest distro minimal image, and picks up the changes below.
+
+### What's Changed
+
+#### Features
+- Add the NVML health checks ([f4c3b01](https://github.com/aws/eks-node-monitoring-agent/commit/f4c3b01a5373ed95bd13ae5b139f018e559dd516))
+- Report a Fabric Manager that never starts ([8e79b5e](https://github.com/aws/eks-node-monitoring-agent/commit/8e79b5e2f67eb256530bf00884b8ffff3123d96a))
+
 ## [v1.7.4] - 2026-10-23
 
 ### What's Changed
@@ -302,6 +312,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### What's Changed
 - Update base DCGM image to 4.5.2-4.8.1-ubuntu22.04 to resolve CVEs ([1a2cda4](https://github.com/aws/eks-node-monitoring-agent/commit/1a2cda4))
 
+[v1.7.5]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.7.4...v1.7.5
 [v1.7.4]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.7.3...v1.7.4
 [v1.7.3]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.7.2...v1.7.3
 [v1.7.2]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.7.1...v1.7.2
