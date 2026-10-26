@@ -3,6 +3,7 @@ package manager
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -341,4 +342,26 @@ func (e *nodeExporter) reportManagedConditions(ctx context.Context) error {
 	e.managedConditionsDirty = false
 	log.FromContext(ctx).Info("reported node conditions")
 	return nil
+}
+
+func (e *nodeExporter) ActiveFatalConditions() []ActiveFatalCondition {
+	e.managedConditionsLock.Lock()
+	defer e.managedConditionsLock.Unlock()
+
+	if len(e.fatalEntries) == 0 {
+		return nil
+	}
+	types := make([]corev1.NodeConditionType, 0, len(e.fatalEntries))
+	for t := range e.fatalEntries {
+		types = append(types, t)
+	}
+	sort.Slice(types, func(i, j int) bool { return types[i] < types[j] })
+
+	var out []ActiveFatalCondition
+	for _, t := range types {
+		for _, entry := range e.fatalEntries[t] {
+			out = append(out, ActiveFatalCondition{ConditionType: t, Reason: entry.reason})
+		}
+	}
+	return out
 }
