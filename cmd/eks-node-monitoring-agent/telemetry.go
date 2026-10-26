@@ -2,9 +2,9 @@ package main
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/go-logr/logr"
-	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
 
@@ -15,12 +15,8 @@ import (
 
 const resourceInstanceID = "instanceId"
 
-func runTelemetry(ctx context.Context, logger logr.Logger, cfg *telemetryconfig.Config, restCfg *rest.Config, kubeClient client.Client, source telemetry.FatalSource) {
-	sender, err := nodetelemetry.NewClient(restCfg)
-	if err != nil {
-		logger.Error(err, "node telemetry disabled")
-		return
-	}
+func runTelemetry(ctx context.Context, logger logr.Logger, cfg *telemetryconfig.Config, httpClient *http.Client, host string, kubeClient client.Client, source telemetry.FatalSource) {
+	sender := nodetelemetry.NewClient(httpClient, host)
 	attrs, err := telemetry.WaitForNodeAttrs(ctx, logger, kubeClient, hostname)
 	if err != nil {
 		return

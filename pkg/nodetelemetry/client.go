@@ -4,13 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
-
-	"k8s.io/client-go/rest"
 )
 
 const (
@@ -52,24 +49,20 @@ type Client struct {
 	url  string
 }
 
-// defaultSendTimeout bounds a report's POST when the rest config doesn't set a
+// defaultSendTimeout bounds a report's POST when the HTTP client doesn't set a
 // Timeout, so a stalled request can't block the reporting loop. It's longer
 // than kube-apiserver's default request timeout (60s), so a stuck request
 // normally ends with the API server's 504 rather than this client giving up.
 const defaultSendTimeout = 75 * time.Second
 
-// NewClient returns a Client that sends to the telemetry API on cfg's host
-// with cfg's credentials.
-func NewClient(cfg *rest.Config) (*Client, error) {
-	cfg = rest.CopyConfig(cfg)
-	if cfg.Timeout == 0 {
-		cfg.Timeout = defaultSendTimeout
+// NewClient returns a Client that sends to the telemetry API on host using a
+// copy of httpClient, which shares its transport and credentials.
+func NewClient(httpClient *http.Client, host string) *Client {
+	copied := *httpClient
+	if copied.Timeout == 0 {
+		copied.Timeout = defaultSendTimeout
 	}
-	httpClient, err := rest.HTTPClientFor(cfg)
-	if err != nil {
-		return nil, fmt.Errorf("nodetelemetry: build http client: %w", err)
-	}
-	return NewClientFromURL(httpClient, strings.TrimSuffix(cfg.Host, "/")+metricsAPIPath), nil
+	return NewClientFromURL(&copied, strings.TrimSuffix(host, "/")+metricsAPIPath)
 }
 
 // NewClientFromURL returns a Client that sends to url using hc.

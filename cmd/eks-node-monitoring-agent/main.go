@@ -400,8 +400,7 @@ func run() error {
 			// --kubeconfig flag are not set in the DaemonSet config, leaving GetConfig() to pick up the service account
 			// token mount. for Auto, it assumes the --kubeconfig flag is set to one that specifies as:
 			// eks-auto:node-monitoring-agent
-			telemetryCfg := rest.CopyConfig(mgr.GetConfig())
-			go runTelemetry(ctx, logger.WithName("telemetry"), monitorConfig.Telemetry, telemetryCfg, monitoringKubeClient, monitorMgr)
+			go runTelemetry(ctx, logger.WithName("telemetry"), monitorConfig.Telemetry, mgr.GetHTTPClient(), mgr.GetConfig().Host, monitoringKubeClient, monitorMgr)
 		}
 
 		return monitorMgr.Start(ctx)

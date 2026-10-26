@@ -10,7 +10,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"k8s.io/client-go/rest"
 
 	"github.com/aws/eks-node-monitoring-agent/pkg/nodetelemetry"
 )
@@ -77,8 +76,7 @@ func TestClient_StalledServerIsHeld(t *testing.T) {
 	t.Cleanup(srv.Close)
 	t.Cleanup(func() { close(release) })
 
-	c, err := nodetelemetry.NewClient(&rest.Config{Host: srv.URL, Timeout: 100 * time.Millisecond})
-	require.NoError(t, err)
+	c := nodetelemetry.NewClient(&http.Client{Timeout: 100 * time.Millisecond}, srv.URL)
 	start := time.Now()
 	res, err := c.Send(context.Background(), nodetelemetry.NewReport(nodetelemetry.NewResource(sampleNode), time.Unix(0, 0), time.Unix(300, 0)))
 	require.NoError(t, err)
