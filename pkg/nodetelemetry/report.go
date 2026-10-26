@@ -18,6 +18,7 @@ const (
 	AttrHostID         = "host.id"
 	AttrHostArch       = "host.arch"
 	AttrHostType       = "host.type"
+	AttrHostImageID    = "host.image.id"
 	AttrZoneID         = "aws.zone_id"
 	AttrKubeletVersion = "k8s.kubelet.version"
 	AttrComputeType    = "aws.eks.compute_type"
@@ -49,6 +50,7 @@ type NodeAttrs struct {
 	HostID         string
 	HostArch       string
 	HostType       string
+	ImageID        string
 	ZoneID         string
 	KubeletVersion string
 	ComputeType    string
@@ -107,16 +109,21 @@ type Report struct {
 	start, end      pcommon.Timestamp
 }
 
-// NewReport returns an empty report for the interval from start to end.
-func NewReport(node NodeAttrs, start, end time.Time) *Report {
-	metrics := pmetric.NewMetrics()
-	resourceMetrics := metrics.ResourceMetrics().AppendEmpty()
-	attrs := resourceMetrics.Resource().Attributes()
+// Resource is the node's resource attributes, built once and copied into each
+// report.
+type Resource struct {
+	attrs pcommon.Map
+}
+
+// NewResource returns the resource for node.
+func NewResource(node NodeAttrs) Resource {
+	attrs := pcommon.NewMap()
 	for key, value := range map[string]string{
 		AttrNodeName:       node.NodeName,
 		AttrHostID:         node.HostID,
 		AttrHostArch:       node.HostArch,
 		AttrHostType:       node.HostType,
+		AttrHostImageID:    node.ImageID,
 		AttrZoneID:         node.ZoneID,
 		AttrKubeletVersion: node.KubeletVersion,
 		AttrComputeType:    node.ComputeType,
@@ -125,6 +132,14 @@ func NewReport(node NodeAttrs, start, end time.Time) *Report {
 			attrs.PutStr(key, value)
 		}
 	}
+	return Resource{attrs: attrs}
+}
+
+// NewReport returns an empty report for the interval from start to end.
+func NewReport(resource Resource, start, end time.Time) *Report {
+	metrics := pmetric.NewMetrics()
+	resourceMetrics := metrics.ResourceMetrics().AppendEmpty()
+	resource.attrs.CopyTo(resourceMetrics.Resource().Attributes())
 	return &Report{
 		metrics:         metrics,
 		resourceMetrics: resourceMetrics,

@@ -20,7 +20,6 @@ import (
 	"go.opentelemetry.io/collector/pdata/pmetric/pmetricotlp"
 	"sigs.k8s.io/yaml"
 
-	nmaconfig "github.com/aws/eks-node-monitoring-agent/pkg/config"
 	"github.com/aws/eks-node-monitoring-agent/pkg/nodetelemetry"
 	"github.com/aws/eks-node-monitoring-agent/pkg/telemetry/config"
 )
@@ -113,9 +112,7 @@ targets:
 	collectors, wait := BuildCollectors(cfg, fatal, map[string]string{"instanceId": "i-0123456789abcdef0"}, logr.Discard())
 	require.Len(t, collectors, 2)
 
-	runtime := &nmaconfig.RuntimeContext{}
 	m := NewManager(ManagerConfig{
-		Runtime:    runtime,
 		Node:       nodetelemetry.NodeAttrs{NodeName: "n"},
 		Collectors: collectors,
 		ScrapeWait: wait,
@@ -141,22 +138,12 @@ targets:
 		{value: 30, delta: 9},
 	}
 	for i, s := range steps {
-		if i == 3 {
-			runtime.AddTags(nmaconfig.Hybrid)
-		}
 		ipamd.set(s.value, s.down)
 		m.runInterval(context.Background(), time.Unix(int64(i)*300, 0), time.Unix(int64(i+1)*300, 0))
 		ext.mu.Lock()
 		require.Len(t, ext.reports, i+1, "one report per interval")
 		md := ext.reports[i]
 		ext.mu.Unlock()
-
-		computeType, ok := md.ResourceMetrics().At(0).Resource().Attributes().Get(nodetelemetry.AttrComputeType)
-		if i < 3 {
-			assert.False(t, ok, "step %d: no compute type without a tag", i)
-		} else {
-			assert.Equal(t, nmaconfig.Hybrid, computeType.Str(), "step %d: a tag added after start is picked up", i)
-		}
 
 		got := scopeMetrics(md, "ipamd")
 		if s.delta == 0 {

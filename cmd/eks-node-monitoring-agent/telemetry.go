@@ -2,12 +2,8 @@ package main
 
 import (
 	"context"
-	"time"
 
 	"github.com/go-logr/logr"
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/types"
-	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
@@ -25,23 +21,19 @@ func runTelemetry(ctx context.Context, logger logr.Logger, cfg *telemetryconfig.
 		logger.Error(err, "node telemetry disabled")
 		return
 	}
-	var node corev1.Node
-	if err := wait.PollUntilContextCancel(ctx, 30*time.Second, true, func(ctx context.Context) (bool, error) {
-		return kubeClient.Get(ctx, types.NamespacedName{Name: hostname}, &node) == nil, nil
-	}); err != nil {
+	attrs, err := telemetry.WaitForNodeAttrs(ctx, logger, kubeClient, hostname)
+	if err != nil {
 		return
 	}
-	attrs := telemetry.NodeAttrsFromNode(&node)
 	var resources map[string]string
 	if attrs.HostID != "" {
 		resources = map[string]string{resourceInstanceID: attrs.HostID}
 	}
 	collectors, scrapeWait := telemetry.BuildCollectors(cfg, source, resources, logger)
 
-	logger.Info("starting node telemetry", "interval", cfg.ReportInterval(), "collectors", len(collectors))
+	logger.Info("starting node telemetry", "interval", cfg.ReportInterval(), "collectors", len(collectors), "attributes", attrs)
 	_ = telemetry.NewManager(telemetry.ManagerConfig{
 		Interval:   cfg.ReportInterval(),
-		NodeName:   hostname,
 		Node:       attrs,
 		Collectors: collectors,
 		ScrapeWait: scrapeWait,

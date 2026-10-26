@@ -49,7 +49,7 @@ func TestFirstReportTime(t *testing.T) {
 func TestManager_Schedule(t *testing.T) {
 	clk := clocktesting.NewFakeClock(time.Unix(1_000_000, 0))
 	sender := &countingSender{}
-	m := NewManager(ManagerConfig{Interval: 5 * time.Minute, NodeName: "node-a", Sender: sender, Clock: clk, ScrapeWait: time.Second, Logger: logr.Discard()})
+	m := NewManager(ManagerConfig{Interval: 5 * time.Minute, Node: nodetelemetry.NodeAttrs{NodeName: "node-a"}, Sender: sender, Clock: clk, ScrapeWait: time.Second, Logger: logr.Discard()})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error)
 	go func() { done <- m.Start(ctx) }()

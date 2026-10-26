@@ -63,13 +63,13 @@ func metricNamed(t *testing.T, md pmetric.Metrics, scope, name string) pmetric.M
 }
 
 func TestReport_ResourceAttributes(t *testing.T) {
-	md := marshal(t, nodetelemetry.NewReport(nodetelemetry.NodeAttrs{NodeName: "n", HostID: "i-1"}, time.Unix(0, 0), time.Unix(300, 0)))
+	md := marshal(t, nodetelemetry.NewReport(nodetelemetry.NewResource(nodetelemetry.NodeAttrs{NodeName: "n", HostID: "i-1"}), time.Unix(0, 0), time.Unix(300, 0)))
 	attrs := md.ResourceMetrics().At(0).Resource().Attributes().AsRaw()
 	assert.Equal(t, map[string]any{nodetelemetry.AttrNodeName: "n", nodetelemetry.AttrHostID: "i-1"}, attrs, "empty fields are omitted")
 }
 
 func TestReport_GaugesAndSums(t *testing.T) {
-	r := nodetelemetry.NewReport(sampleNode, time.Unix(1000, 0), time.Unix(1300, 0))
+	r := nodetelemetry.NewReport(nodetelemetry.NewResource(sampleNode), time.Unix(1000, 0), time.Unix(1300, 0))
 	r.AddScope(nodetelemetry.Scope{Name: "ipamd", Metrics: []nodetelemetry.Metric{
 		{Name: "assigned", Unit: "1", Gauges: []nodetelemetry.GaugePoint{{Value: 4}}},
 		{Name: "errors", Unit: "1", Sums: []nodetelemetry.SumPoint{
@@ -94,7 +94,7 @@ func TestReport_GaugesAndSums(t *testing.T) {
 }
 
 func TestReport_DropsInvalidAndExtraPoints(t *testing.T) {
-	r := nodetelemetry.NewReport(sampleNode, time.Unix(0, 0), time.Unix(300, 0))
+	r := nodetelemetry.NewReport(nodetelemetry.NewResource(sampleNode), time.Unix(0, 0), time.Unix(300, 0))
 	pts := []nodetelemetry.GaugePoint{{Value: 1, Attrs: nodetelemetry.Attrs{"pod": "has space"}}}
 	for i := 0; i < nodetelemetry.MaxPointsPerMetric+5; i++ {
 		pts = append(pts, nodetelemetry.GaugePoint{Value: 1, Attrs: nodetelemetry.Attrs{"api": fmt.Sprintf("a%d", i)}})
@@ -104,7 +104,7 @@ func TestReport_DropsInvalidAndExtraPoints(t *testing.T) {
 }
 
 func TestReport_ProblemsAndNotReporting(t *testing.T) {
-	r := nodetelemetry.NewReport(sampleNode, time.Unix(0, 0), time.Unix(300, 0))
+	r := nodetelemetry.NewReport(nodetelemetry.NewResource(sampleNode), time.Unix(0, 0), time.Unix(300, 0))
 	r.AddScope(nodetelemetry.Scope{Name: "ipamd", Problems: []nodetelemetry.Problem{
 		{Type: "PodIPAllocationFailed", Reason: "InsufficientCidrBlocks", Resources: map[string]string{"subnetId": "subnet-0abc"}},
 		{Type: "IAMPermissionMissing", Reason: "UnauthorizedOperation"},
@@ -131,7 +131,7 @@ func TestReport_ProblemsAndNotReporting(t *testing.T) {
 }
 
 func TestReport_SkipsMetricsWithoutAKnownType(t *testing.T) {
-	r := nodetelemetry.NewReport(sampleNode, time.Unix(0, 0), time.Unix(300, 0))
+	r := nodetelemetry.NewReport(nodetelemetry.NewResource(sampleNode), time.Unix(0, 0), time.Unix(300, 0))
 	r.AddScope(nodetelemetry.Scope{Name: "s", Metrics: []nodetelemetry.Metric{
 		{Name: "typed", Unit: "1", Gauges: []nodetelemetry.GaugePoint{{Value: 1}}},
 		{Name: "untyped", Unit: "1"},

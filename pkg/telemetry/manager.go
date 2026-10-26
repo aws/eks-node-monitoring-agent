@@ -13,7 +13,6 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"k8s.io/utils/clock"
 
-	nmaconfig "github.com/aws/eks-node-monitoring-agent/pkg/config"
 	"github.com/aws/eks-node-monitoring-agent/pkg/nodetelemetry"
 	"github.com/aws/eks-node-monitoring-agent/pkg/telemetry/config"
 	"github.com/aws/eks-node-monitoring-agent/pkg/telemetry/scrape"
@@ -39,11 +38,7 @@ type Sender interface {
 type ManagerConfig struct {
 	// Interval is how often a report is sent.
 	Interval time.Duration
-	// NodeName spreads the first report time across nodes.
-	// TODO: start with rendered NodeAttrs and use the NodeName from there
-	NodeName string
-	// Node is the report's resource attributes. If ComputeType is empty, it's
-	// filled in from the runtime tags on each report.
+	// Node is the report's resource attributes.
 	Node       nodetelemetry.NodeAttrs
 	Collectors []scrape.Collector
 	// ScrapeWait is how long each interval waits for the collectors.
@@ -54,13 +49,12 @@ type ManagerConfig struct {
 	// Clock defaults to the real clock.
 	Clock  clock.WithTicker
 	Logger logr.Logger
-	// Runtime defaults to the process's runtime context.
-	Runtime *nmaconfig.RuntimeContext
 }
 
 // Manager collects from its collectors and sends a report every interval.
 type Manager struct {
 	cfg      ManagerConfig
+	resource nodetelemetry.Resource
 	mu       sync.Mutex
 	inFlight map[int]bool
 	scrapes  *prometheus.CounterVec
@@ -74,11 +68,9 @@ func NewManager(cfg ManagerConfig) *Manager {
 	if cfg.Clock == nil {
 		cfg.Clock = clock.RealClock{}
 	}
-	if cfg.Runtime == nil {
-		cfg.Runtime = nmaconfig.GetRuntimeContext()
-	}
 	manager := &Manager{
 		cfg:      cfg,
+		resource: nodetelemetry.NewResource(cfg.Node),
 		inFlight: map[int]bool{},
 		scrapes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "nma_telemetry_scrape_total",
@@ -99,7 +91,7 @@ func NewManager(cfg ManagerConfig) *Manager {
 func (manager *Manager) Start(ctx context.Context) error {
 	wallClock := manager.cfg.Clock
 	prev := wallClock.Now()
-	timer := wallClock.NewTimer(FirstReportTime(prev, manager.cfg.Interval, manager.cfg.NodeName).Sub(prev))
+	timer := wallClock.NewTimer(FirstReportTime(prev, manager.cfg.Interval, manager.cfg.Node.NodeName).Sub(prev))
 	defer timer.Stop()
 	select {
 	case <-ctx.Done():
@@ -134,19 +126,7 @@ func FirstReportTime(now time.Time, interval time.Duration, nodeName string) tim
 
 func (manager *Manager) runInterval(ctx context.Context, start, end time.Time) {
 	results := manager.collect(ctx)
-	node := manager.cfg.Node
-	tags := manager.cfg.Runtime.Tags()
-	if node.ComputeType == "" {
-		for _, tag := range []string{nmaconfig.EKSAuto, nmaconfig.Hybrid} {
-			// the hybrid tag may be added with a delay, so we check for it on every
-			// interval until the compute-type's been discovered
-			if slices.Contains(tags, tag) {
-				node.ComputeType = tag
-				break
-			}
-		}
-	}
-	report := nodetelemetry.NewReport(node, start, end)
+	report := nodetelemetry.NewReport(manager.resource, start, end)
 	for _, result := range results {
 		report.AddScope(result.Scope)
 	}

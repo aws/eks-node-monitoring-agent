@@ -38,7 +38,7 @@ func TestClient_Send(t *testing.T) {
 			t.Cleanup(srv.Close)
 
 			c := nodetelemetry.NewClientFromURL(srv.Client(), srv.URL+"/apis/telemetry.eks.amazonaws.com/v1/metrics")
-			r := nodetelemetry.NewReport(sampleNode, time.Unix(0, 0), time.Unix(300, 0))
+			r := nodetelemetry.NewReport(nodetelemetry.NewResource(sampleNode), time.Unix(0, 0), time.Unix(300, 0))
 			r.AddScope(nodetelemetry.Scope{Name: "ipamd", Metrics: []nodetelemetry.Metric{{Name: "assigned", Unit: "1", Gauges: []nodetelemetry.GaugePoint{{Value: 4}}}}})
 			res, err := c.Send(context.Background(), r)
 			require.NoError(t, err)
@@ -59,7 +59,7 @@ func TestClient_TransportErrorHolds(t *testing.T) {
 	srv := httptest.NewServer(http.NotFoundHandler())
 	srv.Close()
 	c := nodetelemetry.NewClientFromURL(srv.Client(), srv.URL)
-	res, err := c.Send(context.Background(), nodetelemetry.NewReport(sampleNode, time.Now(), time.Now()))
+	res, err := c.Send(context.Background(), nodetelemetry.NewReport(nodetelemetry.NewResource(sampleNode), time.Now(), time.Now()))
 	require.NoError(t, err)
 	assert.Equal(t, nodetelemetry.Hold, res.Outcome)
 }
@@ -80,7 +80,7 @@ func TestClient_StalledServerIsHeld(t *testing.T) {
 	c, err := nodetelemetry.NewClient(&rest.Config{Host: srv.URL, Timeout: 100 * time.Millisecond})
 	require.NoError(t, err)
 	start := time.Now()
-	res, err := c.Send(context.Background(), nodetelemetry.NewReport(sampleNode, time.Unix(0, 0), time.Unix(300, 0)))
+	res, err := c.Send(context.Background(), nodetelemetry.NewReport(nodetelemetry.NewResource(sampleNode), time.Unix(0, 0), time.Unix(300, 0)))
 	require.NoError(t, err)
 	assert.Equal(t, nodetelemetry.Hold, res.Outcome, "a timed-out send is held, not dropped")
 	assert.Less(t, time.Since(start), 5*time.Second)
