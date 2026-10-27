@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"syscall"
 	"time"
 
@@ -44,11 +45,13 @@ const (
 	minFreePercent = 12
 
 	logCaptureReportLog = "log-capture-errors.log"
-	skipReasonLowDisk   = "low disk"
+	// No category prefix, so it cannot collide with a "<category>/<type>" name.
+	triggerStepName   = "capture-trigger"
+	skipReasonLowDisk = "low disk"
 )
 
-// ErrLowDisk means too little free disk to start a capture.
-var ErrLowDisk = errors.New("not enough free disk space to start a log capture")
+// ErrLowDisk means too little free disk to collect logs; only the trigger note is written.
+var ErrLowDisk = errors.New("not enough free disk space to collect logs")
 
 // Step is one finished collector. Dir is removed once the handler returns.
 type Step struct {
@@ -71,8 +74,7 @@ type Skipped struct {
 	Reason string
 }
 
-// Summary describes a capture. Steps includes collectors whose folder
-// could not be created.
+// Summary describes a capture. Steps counts collectors only, not the trigger.
 type Summary struct {
 	Steps        int
 	Failed       int
@@ -90,28 +92,40 @@ type collectDeps struct {
 
 // CollectSteps runs the categories' collectors one at a time in a fixed order.
 // Each gets its own temp folder, removed after handle, so only one output is on disk.
-func CollectSteps(ctx context.Context, runtimeContext *config.RuntimeContext, categories []v1alpha1.LogCategory, handle StepFunc) (Summary, error) {
-	return collectSteps(ctx, runtimeContext, categories, handle, collectDeps{
+func CollectSteps(ctx context.Context, runtimeContext *config.RuntimeContext, categories []v1alpha1.LogCategory, trigger Trigger, handle StepFunc) (Summary, error) {
+	return collectSteps(ctx, runtimeContext, categories, trigger, handle, collectDeps{
 		freeDisk:   freeDiskBytes,
 		collectors: logcollection.GetCollectors,
 	})
 }
 
-func collectSteps(ctx context.Context, runtimeContext *config.RuntimeContext, categories []v1alpha1.LogCategory, handle StepFunc, deps collectDeps) (Summary, error) {
+func collectSteps(ctx context.Context, runtimeContext *config.RuntimeContext, categories []v1alpha1.LogCategory, trigger Trigger, handle StepFunc, deps collectDeps) (Summary, error) {
 	logger := log.FromContext(ctx)
 	var summary Summary
 
+	// Stop instead of finishing a run no one will use.
+	if err := ctx.Err(); err != nil {
+		return summary, err
+	}
+
+	// Written even on a full disk: a replaced node takes its logs with it, so
+	// this note may be the only record that a capture fired.
+	lowDisk := diskIsLow(logger, deps)
+	if lowDisk {
+		trigger.SkipReason = skipReasonLowDisk
+	}
+	runTriggerStep(ctx, logger, trigger, handle, &summary)
+	if lowDisk {
+		return summary, ErrLowDisk
+	}
+
 	queue := orderedCollectors(deps.collectors, categories)
 	for i, next := range queue {
-		// Stop instead of finishing a run no one will use.
 		if err := ctx.Err(); err != nil {
 			return summary, err
 		}
 
 		if diskIsLow(logger, deps) {
-			if i == 0 {
-				return Summary{}, ErrLowDisk
-			}
 			// A partial capture still helps, so this is not a failure.
 			for _, rest := range queue[i:] {
 				summary.Skipped = append(summary.Skipped, Skipped{Name: rest.name, Reason: skipReasonLowDisk})
@@ -133,6 +147,25 @@ func diskIsLow(logger logr.Logger, deps collectDeps) bool {
 		return false
 	}
 	return free < total*minFreePercent/100
+}
+
+// runTriggerStep is best effort: a failed note must never block the capture.
+// It is its own function so the deferred RemoveAll runs even on panic.
+func runTriggerStep(ctx context.Context, logger logr.Logger, trigger Trigger, handle StepFunc, summary *Summary) {
+	started := time.Now()
+
+	dir, err := os.MkdirTemp("", "eks-log-collector-*")
+	if err != nil {
+		logger.Error(err, "failed to create temp directory", "step", triggerStepName)
+		return
+	}
+	defer os.RemoveAll(dir)
+
+	if err := writeTrigger(dir, trigger); err != nil {
+		logger.Error(err, "failed to write capture trigger", "step", triggerStepName)
+		return
+	}
+	finishStep(ctx, logger, Step{Name: triggerStepName, Dir: dir}, started, handle, summary)
 }
 
 // runStep is its own function so the deferred RemoveAll runs even on panic.
@@ -158,18 +191,22 @@ func runStep(ctx context.Context, logger logr.Logger, runtimeContext *config.Run
 		step.Failed = true
 		summary.Failed++
 	}
+	finishStep(ctx, logger, step, started, handle, summary)
+}
 
-	step.Files, step.Bytes, err = dirSize(dir)
+// A handler failure loses only this step, so the caller keeps going.
+func finishStep(ctx context.Context, logger logr.Logger, step Step, started time.Time, handle StepFunc, summary *Summary) {
+	var err error
+	step.Files, step.Bytes, err = dirSize(step.Dir)
 	if err != nil {
-		logger.Error(err, "failed to measure collected logs", "step", next.name)
+		logger.Error(err, "failed to measure collected logs", "step", step.Name)
 	}
 	step.Duration = time.Since(started)
 	summary.Files += step.Files
 	summary.Bytes += step.Bytes
 
-	// A handler failure loses only this step, so keep collecting.
 	if err := handle(ctx, step); err != nil {
-		logger.Error(err, "failed to handle collected step", "step", next.name)
+		logger.Error(err, "failed to handle collected step", "step", step.Name)
 		summary.HandleErrors++
 	}
 }
@@ -234,4 +271,46 @@ func dirSize(dir string) (files int, size int64, err error) {
 		return nil
 	})
 	return files, size, err
+}
+
+// triggerFileName records why a capture happened: the Node condition goes with
+// the node, and the API server audit log is off by default.
+const triggerFileName = "capture-trigger.txt"
+
+// Trigger keeps the condition's own words: scoped capture can miss the log
+// line that raised the alarm.
+type Trigger struct {
+	Condition  corev1.NodeConditionType
+	Reason     string
+	Message    string
+	At         time.Time
+	Node       string
+	NMAVersion string
+	// SkipReason is set when nothing was collected, so the note says so.
+	SkipReason string
+}
+
+func (t Trigger) Render() string {
+	at := "unknown"
+	if !t.At.IsZero() {
+		at = t.At.UTC().Format(time.RFC3339)
+	}
+	// A newline in the message would look like an extra field.
+	message := strings.NewReplacer("\n", " ", "\r", " ").Replace(t.Message)
+
+	var b strings.Builder
+	b.WriteString("condition: " + string(t.Condition) + "\n")
+	b.WriteString("reason: " + t.Reason + "\n")
+	b.WriteString("message: " + message + "\n")
+	b.WriteString("time: " + at + "\n")
+	b.WriteString("node: " + t.Node + "\n")
+	b.WriteString("nma: " + t.NMAVersion + "\n")
+	if t.SkipReason != "" {
+		b.WriteString("collection: skipped (" + t.SkipReason + ")\n")
+	}
+	return b.String()
+}
+
+func writeTrigger(dir string, t Trigger) error {
+	return os.WriteFile(filepath.Join(dir, triggerFileName), []byte(t.Render()), 0644)
 }
