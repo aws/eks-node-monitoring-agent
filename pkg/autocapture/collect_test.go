@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -74,8 +75,17 @@ func testDeps(t *testing.T, byCategory map[v1alpha1.LogCategory][]collect.Collec
 	}, tmp
 }
 
+var testTrigger = Trigger{
+	Condition:  conditions.NetworkingReady,
+	Reason:     "InterfaceDown",
+	Message:    "eth0 is down",
+	At:         time.Date(2024, 3, 15, 10, 30, 0, 0, time.UTC),
+	Node:       "node-1",
+	NMAVersion: "v1",
+}
+
 func runSteps(ctx context.Context, deps collectDeps, handle StepFunc) (Summary, error) {
-	return collectSteps(ctx, &config.RuntimeContext{}, baseAndNetworking, handle, deps)
+	return collectSteps(ctx, &config.RuntimeContext{}, baseAndNetworking, testTrigger, handle, deps)
 }
 
 func requireEmptyDir(t *testing.T, dir string) {
@@ -106,6 +116,33 @@ func TestOrderedCollectors_RealRegistryIsStable(t *testing.T) {
 	}
 }
 
+func TestCollectSteps_TriggerIsTheFirstStepInItsOwnFolder(t *testing.T) {
+	deps, tmp := testDeps(t, fixture())
+
+	var names, dirs []string
+	summary, err := runSteps(context.Background(), deps, func(_ context.Context, step Step) error {
+		assert.NotContains(t, dirs, step.Dir, "the trigger needs a folder of its own")
+		names, dirs = append(names, step.Name), append(dirs, step.Dir)
+		if step.Name == triggerStepName {
+			got, err := os.ReadFile(filepath.Join(step.Dir, triggerFileName))
+			require.NoError(t, err)
+			assert.Equal(t, testTrigger.Render(), string(got))
+			assert.Equal(t, 1, step.Files)
+			assert.Equal(t, int64(len(got)), step.Bytes)
+		}
+		return nil
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"capture-trigger", "Base/alpha", "Base/bravo", "Base/delta", "Networking/charlie", "Networking/delta"}, names)
+	for _, dir := range dirs {
+		assert.NoDirExists(t, dir)
+	}
+	requireEmptyDir(t, tmp)
+	assert.Equal(t, 5, summary.Steps, "Steps counts collectors only")
+	assert.Equal(t, 1, summary.Files, "the trigger file counts toward Files")
+}
+
 func TestCollectSteps_EachStepGetsOwnFolderRemovedAfterHandle(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -126,14 +163,14 @@ func TestCollectSteps_EachStepGetsOwnFolderRemovedAfterHandle(t *testing.T) {
 			})
 
 			require.NoError(t, err)
-			assert.Len(t, dirs, 5)
+			assert.Len(t, dirs, 6, "the trigger plus five collectors")
 			for _, dir := range dirs {
 				assert.NoDirExists(t, dir, "the folder must be gone after handle returns")
 			}
 			requireEmptyDir(t, tmp)
 			assert.Equal(t, 5, summary.Steps)
 			if tc.handleErr != nil {
-				assert.Equal(t, 5, summary.HandleErrors)
+				assert.Equal(t, 6, summary.HandleErrors)
 			}
 		})
 	}
@@ -151,6 +188,9 @@ func TestCollectSteps_FailingCollectorIsRecordedInItsOwnFolder(t *testing.T) {
 	var steps []Step
 	var reports []string
 	summary, err := runSteps(context.Background(), deps, func(_ context.Context, step Step) error {
+		if step.Name == triggerStepName {
+			return nil
+		}
 		report, _ := os.ReadFile(filepath.Join(step.Dir, logCaptureReportLog))
 		steps, reports = append(steps, step), append(reports, string(report))
 		return nil
@@ -163,7 +203,7 @@ func TestCollectSteps_FailingCollectorIsRecordedInItsOwnFolder(t *testing.T) {
 	assert.Contains(t, reports[1], "Base/bravo")
 	assert.Empty(t, reports[0]+reports[2], "a failure must not leak into another step's folder")
 	assert.Equal(t, 1, summary.Failed)
-	assert.Equal(t, 2, summary.Files, "a.txt plus the error report")
+	assert.Equal(t, 3, summary.Files, "a.txt, the error report and the trigger file")
 }
 
 func TestCollectSteps_CancelledContextStopsBeforeNextCollector(t *testing.T) {
@@ -179,43 +219,57 @@ func TestCollectSteps_CancelledContextStopsBeforeNextCollector(t *testing.T) {
 	})
 
 	assert.ErrorIs(t, err, context.Canceled)
-	assert.Equal(t, []string{"Base/alpha"}, got, "no collector may start after cancellation")
-	assert.Equal(t, 1, summary.Steps, "the partial summary must be returned")
+	assert.Equal(t, []string{"capture-trigger"}, got, "no collector may start after cancellation")
+	assert.Equal(t, 0, summary.Steps, "the partial summary must be returned")
 }
 
 func TestCollectSteps_DiskChecks(t *testing.T) {
 	tests := []struct {
-		name        string
-		free        func(call int) (uint64, error)
-		wantRan     int
-		wantErr     error
-		wantSkipped []string
+		name         string
+		free         func(call int) (uint64, error)
+		breakTrigger bool // make the trigger step's temp folder fail
+		wantRan      int
+		wantHandled  int  // steps handed to the callback, trigger included
+		wantNote     bool // trigger file says the collection was skipped
+		wantErr      error
+		wantSkipped  []string
 	}{
 		{
-			name:    "low at start runs nothing",
-			free:    func(int) (uint64, error) { return testLimit - 1, nil },
-			wantErr: ErrLowDisk,
+			name:        "low at start only writes the trigger note",
+			free:        func(int) (uint64, error) { return testLimit - 1, nil },
+			wantHandled: 1,
+			wantNote:    true,
+			wantErr:     ErrLowDisk,
+		},
+		{
+			name:         "low at start still skips when the trigger step fails",
+			free:         func(int) (uint64, error) { return testLimit - 1, nil },
+			breakTrigger: true,
+			wantErr:      ErrLowDisk,
 		},
 		{
 			name: "low after two collectors skips the rest",
 			free: func(call int) (uint64, error) {
-				if call <= 2 {
+				if call <= 3 { // the start check, then one before each collector
 					return 2 * testLimit, nil
 				}
 				return testLimit - 1, nil
 			},
 			wantRan:     2,
+			wantHandled: 3,
 			wantSkipped: []string{"Base/delta", "Networking/charlie", "Networking/delta"},
 		},
 		{
-			name:    "exactly at the limit keeps going",
-			free:    func(int) (uint64, error) { return testLimit, nil },
-			wantRan: 5,
+			name:        "exactly at the limit keeps going",
+			free:        func(int) (uint64, error) { return testLimit, nil },
+			wantRan:     5,
+			wantHandled: 6,
 		},
 		{
-			name:    "free disk error does not block the capture",
-			free:    func(int) (uint64, error) { return 0, errors.New("statfs boom") },
-			wantRan: 5,
+			name:        "free disk error does not block the capture",
+			free:        func(int) (uint64, error) { return 0, errors.New("statfs boom") },
+			wantRan:     5,
+			wantHandled: 6,
 		},
 	}
 
@@ -230,9 +284,19 @@ func TestCollectSteps_DiskChecks(t *testing.T) {
 				return free, testTotal, err
 			}
 
+			if tc.breakTrigger {
+				t.Setenv("TMPDIR", filepath.Join(tmp, "missing"))
+			}
+
 			handled := 0
-			summary, err := runSteps(context.Background(), deps, func(context.Context, Step) error {
+			var note string
+			summary, err := runSteps(context.Background(), deps, func(_ context.Context, step Step) error {
 				handled++
+				if step.Name == triggerStepName {
+					got, err := os.ReadFile(filepath.Join(step.Dir, triggerFileName))
+					require.NoError(t, err)
+					note = string(got)
+				}
 				return nil
 			})
 
@@ -242,7 +306,12 @@ func TestCollectSteps_DiskChecks(t *testing.T) {
 				require.NoError(t, err, "stopping early is not a failure")
 			}
 			assert.Equal(t, tc.wantRan, summary.Steps)
-			assert.Equal(t, tc.wantRan, handled)
+			assert.Equal(t, tc.wantHandled, handled)
+			if tc.wantNote {
+				assert.Contains(t, note, "collection: skipped (low disk)")
+			} else {
+				assert.NotContains(t, note, "collection:")
+			}
 			var skipped []string
 			for _, s := range summary.Skipped {
 				assert.Equal(t, "low disk", s.Reason)
@@ -318,4 +387,57 @@ func TestDirSize(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 3, files)
 	assert.Equal(t, int64(10), size)
+}
+
+func TestTrigger_Render(t *testing.T) {
+	at := time.Date(2024, 3, 15, 10, 30, 0, 0, time.FixedZone("EST", -5*60*60))
+	tests := []struct {
+		name string
+		t    Trigger
+		want string
+	}{
+		{
+			name: "all fields set",
+			t: Trigger{
+				Condition:  "NetworkingReady",
+				Reason:     "InterfaceDown",
+				Message:    "eth0 is down",
+				At:         at,
+				Node:       "node-1",
+				NMAVersion: "v1.2.3 (abc123)",
+			},
+			want: "condition: NetworkingReady\n" +
+				"reason: InterfaceDown\n" +
+				"message: eth0 is down\n" +
+				"time: 2024-03-15T15:30:00Z\n" +
+				"node: node-1\n" +
+				"nma: v1.2.3 (abc123)\n",
+		},
+		{
+			name: "zero time renders unknown",
+			t:    Trigger{Condition: "KernelReady", Reason: "Oops", Message: "oops", Node: "node-2", NMAVersion: "v1"},
+			want: "condition: KernelReady\n" +
+				"reason: Oops\n" +
+				"message: oops\n" +
+				"time: unknown\n" +
+				"node: node-2\n" +
+				"nma: v1\n",
+		},
+		{
+			name: "newlines and carriage returns in the message are flattened",
+			t:    Trigger{Condition: "StorageReady", Reason: "Full", Message: "one\ntwo\r\nthree", At: at, Node: "node-3", NMAVersion: "v1"},
+			want: "condition: StorageReady\n" +
+				"reason: Full\n" +
+				"message: one two  three\n" +
+				"time: 2024-03-15T15:30:00Z\n" +
+				"node: node-3\n" +
+				"nma: v1\n",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tc.t.Render())
+		})
+	}
 }

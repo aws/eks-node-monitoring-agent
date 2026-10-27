@@ -10,6 +10,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/aws/eks-node-monitoring-agent/api/v1alpha1"
+	"github.com/aws/eks-node-monitoring-agent/internal/version"
 	"github.com/aws/eks-node-monitoring-agent/pkg/config"
 	"github.com/aws/eks-node-monitoring-agent/pkg/manager"
 	"github.com/aws/eks-node-monitoring-agent/pkg/util/captureguard"
@@ -25,6 +26,7 @@ const defaultCaptureTimeout = 10 * time.Minute
 type Worker struct {
 	requests <-chan manager.CaptureRequest
 	client   client.Reader
+	nodeName string
 	log      logr.Logger
 
 	// guard is shared with the NodeDiagnostic controller so the two never
@@ -46,21 +48,22 @@ type Worker struct {
 	lastCapture map[corev1.NodeConditionType]time.Time
 
 	// A field so tests can fake it.
-	collect func(ctx context.Context, categories []v1alpha1.LogCategory, handle StepFunc) (Summary, error)
+	collect func(ctx context.Context, categories []v1alpha1.LogCategory, trigger Trigger, handle StepFunc) (Summary, error)
 }
 
-func NewWorker(requests <-chan manager.CaptureRequest, reader client.Reader, runtimeContext *config.RuntimeContext, guard *captureguard.Guard, log logr.Logger) *Worker {
+func NewWorker(requests <-chan manager.CaptureRequest, reader client.Reader, runtimeContext *config.RuntimeContext, guard *captureguard.Guard, nodeName string, log logr.Logger) *Worker {
 	return &Worker{
 		requests:       requests,
 		client:         reader,
+		nodeName:       nodeName,
 		log:            log,
 		guard:          guard,
 		cooldown:       defaultCooldown,
 		now:            time.Now,
 		captureTimeout: defaultCaptureTimeout,
 		lastCapture:    make(map[corev1.NodeConditionType]time.Time),
-		collect: func(ctx context.Context, categories []v1alpha1.LogCategory, handle StepFunc) (Summary, error) {
-			return CollectSteps(ctx, runtimeContext, categories, handle)
+		collect: func(ctx context.Context, categories []v1alpha1.LogCategory, trigger Trigger, handle StepFunc) (Summary, error) {
+			return CollectSteps(ctx, runtimeContext, categories, trigger, handle)
 		},
 	}
 }
@@ -133,6 +136,15 @@ func (w *Worker) handle(ctx context.Context, req manager.CaptureRequest) {
 	defer cancel()
 	started := w.now()
 
+	trigger := Trigger{
+		Condition:  req.Condition,
+		Reason:     req.Reason,
+		Message:    req.Message,
+		At:         req.At,
+		Node:       w.nodeName,
+		NMAVersion: version.String(),
+	}
+
 	type collectResult struct {
 		summary Summary
 		err     error
@@ -140,7 +152,7 @@ func (w *Worker) handle(ctx context.Context, req manager.CaptureRequest) {
 	// Buffered so the send never blocks after handle stops waiting.
 	done := make(chan collectResult, 1)
 	go func() {
-		summary, err := w.collect(ctxCap, CategoriesFor(req.Condition), func(_ context.Context, step Step) error {
+		summary, err := w.collect(ctxCap, CategoriesFor(req.Condition), trigger, func(_ context.Context, step Step) error {
 			// Per-collector detail is for debugging; the end summary is what
 			// an operator needs.
 			w.log.V(3).Info("collector collected",
@@ -169,9 +181,9 @@ func (w *Worker) handle(ctx context.Context, req manager.CaptureRequest) {
 		return
 	case res := <-done:
 		if errors.Is(res.err, ErrLowDisk) {
-			// Keep the cooldown entry: a full disk won't clear soon,
-			// so a retry would only skip again.
-			w.log.Info("capture skipped: not enough free disk",
+			// Keep the cooldown entry: a full disk won't clear soon, so a retry
+			// would only write the trigger note again.
+			w.log.Info("capture not collected: not enough free disk",
 				"condition", req.Condition, "reason", req.Reason, "minFreePercent", minFreePercent)
 			return
 		}

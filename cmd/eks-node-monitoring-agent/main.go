@@ -208,7 +208,7 @@ func run() error {
 	// Shared with the NodeDiagnostic controller below so the two never
 	// collect logs at the same time.
 	guard := &captureguard.Guard{}
-	captureWorker := autocapture.NewWorker(captureCh, mgr.GetClient(), runtimeContext, guard, logger.WithName("auto-log-capture"))
+	captureWorker := autocapture.NewWorker(captureCh, mgr.GetClient(), runtimeContext, guard, hostname, logger.WithName("auto-log-capture"))
 	if err := mgr.Add(crmanager.RunnableFunc(captureWorker.Start)); err != nil {
 		logger.Error(err, "failed to add auto log capture worker")
 		return err
