@@ -1,6 +1,7 @@
-//go:build !darwin
-
-package dcgm
+// Package classify maps GPU health signals to NMA node conditions. It holds
+// the classification policy for the nvidia monitor and has no dependency on
+// any signal source, so a DCGM reader and an NVML reader share it.
+package classify
 
 import (
 	"fmt"
@@ -13,15 +14,17 @@ import (
 // NormalizedSignals is a source-agnostic snapshot of GPU health signals.
 //
 // It is the seam between signal *acquisition* and signal *classification*.
-// Today the DCGM reader (dcgm_policies.go / dcgm_watchfield.go / dcgm_devices.go) is the only
-// producer, but additional signal sources may populate it in the future.
+// Today package dcgm (dcgm_policies.go, dcgm_watchfield.go, dcgm_devices.go)
+// is the only producer, but additional signal sources may populate it.
 // Because Classify is a pure function over this struct, the classification
 // policy and its unit tests bind to any source unchanged, provided the source
 // fills each field in its documented encoding. Some fields use a DCGM-specific
 // encoding: FabricManagerStatus is a dcgmFabricManagerStatus_t, so a non-DCGM
 // source (e.g. NVML, which reports fabric state and status separately) must
 // translate its values to that enum, and the resulting messages name DCGM's
-// statuses.
+// statuses. FabricHealthMask and FabricManagerStatus may also hold DCGM's blank
+// values (see isInt64Blank), which mean DCGM could not read the field;
+// Classify treats them as not observed.
 type NormalizedSignals struct {
 	XIDs                []uint  // observed XID error codes (DCGM XidPolicy today)
 	FabricHealthMask    *uint64 // NVLink fabric health mask; nil when not applicable/observed
@@ -44,8 +47,7 @@ type NormalizedSignals struct {
 func Classify(s NormalizedSignals) []monitor.Condition {
 	var out []monitor.Condition
 
-	// XID: well-known => Fatal, otherwise Warning. Mirrors handleXidFinding so
-	// this can replace it once the DCGM reader emits NormalizedSignals.
+	// XID: well-known => Fatal, otherwise Warning (see WellKnownXidCodes).
 	for _, xid := range s.XIDs {
 		if isWellKnownXid(xid) {
 			out = append(out, reasons.NvidiaXIDError.Builder(xid).
@@ -60,8 +62,9 @@ func Classify(s NormalizedSignals) []monitor.Condition {
 
 	// Fabric health mask: decoded via the shared fabricHealthMaskFaults.
 	// Reusing it keeps the 0x80-is-healthy semantics in one spec-backed,
-	// driver-version-aware place that tests can pin.
-	if s.FabricHealthMask != nil {
+	// driver-version-aware place that tests can pin. A blank value means DCGM
+	// could not read the mask, so there is nothing to decode.
+	if s.FabricHealthMask != nil && !isInt64Blank(int64(*s.FabricHealthMask)) {
 		if faults := fabricHealthMaskFaults(int64(*s.FabricHealthMask)); len(faults) > 0 {
 			out = append(out, reasons.NvidiaFabricError.Builder().
 				Message(fmt.Sprintf("GPU fabric health mask 0x%x: %s", *s.FabricHealthMask, strings.Join(faults, ", "))).
@@ -69,19 +72,31 @@ func Classify(s NormalizedSignals) []monitor.Condition {
 		}
 	}
 
-	// Fabric Manager status: see handleFabricField (dcgm_watchfield.go) for why
-	// NotSupported, NotStarted, InProgress, and Success are treated as healthy.
-	if s.FabricManagerStatus != nil {
+	// Fabric Manager status. A blank value means DCGM could not read the
+	// status, so there is nothing to classify.
+	if s.FabricManagerStatus != nil && !isInt64Blank(*s.FabricManagerStatus) {
 		switch status := *s.FabricManagerStatus; status {
 		case DcgmFMStatusSuccess, DcgmFMStatusNotSupported, DcgmFMStatusInProgress, DcgmFMStatusNotStarted:
 			// Healthy or not applicable: no condition.
+			// NotSupported: FM not applicable (e.g. single-GPU, or rack-level
+			// NVSwitch like GB200/GB300).
+			// NotStarted: FM hasn't started yet; skipped to avoid false
+			// positives on instances where FM is not needed but DCGM doesn't
+			// report NotSupported (e.g. GB200/GB300).
+			// InProgress: FM is still performing fabric training during boot.
+			// Success: FM is running and healthy.
+		case DcgmFMStatusUnrecognized, DcgmFMStatusNvmlTooOld, dcgmStatusBadParam:
+			// The driver/NVML and DCGM versions do not match, so the status is
+			// unknown rather than failed: NvmlTooOld means NVML has no fabric
+			// API, and DCGM stores DCGM_ST_BADPARAM (-1) instead of Unrecognized
+			// when NVML reports a fabric state DCGM does not know. A replacement
+			// node with the same AMI would report the same, so this is a Warning.
+			out = append(out, reasons.FabricManagerNotRunningWarning.Builder().
+				Message(fabricManagerStatusMessage(status)).
+				Build())
 		default:
-			name := fabricManagerStatusNames[status]
-			if name == "" {
-				name = fmt.Sprintf("Unknown(%d)", status)
-			}
 			out = append(out, reasons.FabricManagerNotRunning.Builder().
-				Message(fmt.Sprintf("Fabric Manager status: %s", name)).
+				Message(fabricManagerStatusMessage(status)).
 				Build())
 		}
 	}
@@ -105,9 +120,10 @@ func Classify(s NormalizedSignals) []monitor.Condition {
 		out = append(out, reasons.NvidiaPCIeError.Builder().Message("GPU PCIe replay").Build())
 	}
 
-	// Device count: DCGM and the host's device files must agree, and DCGM must
-	// see at least as many GPUs as the instance type provides (see DeviceCount,
-	// dcgm_devices.go, for why both checks are needed).
+	// Device count: the reader's GPU count and the host's device files must
+	// agree, and the reader must see at least as many GPUs as the instance type
+	// provides. The second check catches a GPU that failed to enumerate on the
+	// PCIe bus at boot, where both counts agree on the wrong, lower number.
 	if s.GPUCount != nil && s.GPUDeviceFileCount != nil && *s.GPUCount != *s.GPUDeviceFileCount {
 		out = append(out, reasons.NvidiaDeviceCountMismatch.Builder().
 			Message(fmt.Sprintf("DCGM detected %d GPUs but %d nvidia device files were detected at %s", *s.GPUCount, *s.GPUDeviceFileCount, s.GPUDeviceFilePath)).
@@ -121,6 +137,16 @@ func Classify(s NormalizedSignals) []monitor.Condition {
 	}
 
 	return out
+}
+
+// fabricManagerStatusMessage names a dcgmFabricManagerStatus_t value, or
+// Unknown(<n>) for a value outside the enum.
+func fabricManagerStatusMessage(status int64) string {
+	name := fabricManagerStatusNames[status]
+	if name == "" {
+		name = fmt.Sprintf("Unknown(%d)", status)
+	}
+	return fmt.Sprintf("Fabric Manager status: %s", name)
 }
 
 func isWellKnownXid(xid uint) bool {

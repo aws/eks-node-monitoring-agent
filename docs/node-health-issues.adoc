@@ -45,6 +45,14 @@ If auto repair is enabled, the repair actions that are listed start 10 minutes a
 |Condition
 |The NVIDIA Fabric Manager service is not running on this NVSwitch-equipped instance. Fabric Manager is required for multi-GPU NVLink communication. Without it, multi-GPU workloads will fail or silently degrade.
 
+|FabricManagerNotRunning
+|Event
+|The NVIDIA Fabric Manager status could not be determined because the NVIDIA driver and DCGM versions do not match. This is not a GPU or fabric fault, and a replacement node with the same AMI would report the same.
+
+|FabricManagerNotStarted
+|Condition
+|NVIDIA Fabric Manager has not configured a GPU's NVLink fabric within 15 minutes on an instance type that runs Fabric Manager on the host, usually because Fabric Manager never started. Until it does, the GPUs can't use NVLink. Restarting the node restarts Fabric Manager.
+
 |NeuronDMAError
 |Condition
 |A DMA engine encountered an unrecoverable error.
@@ -69,9 +77,21 @@ If auto repair is enabled, the repair actions that are listed start 10 minutes a
 |Condition
 |A double bit error was produced by the GPU driver.
 
+|NvidiaDriverNotResponding
+|Event
+|Calls from the agent to the NVIDIA driver have not returned for at least two minutes, so the agent cannot read GPU health. On its own, a call that has not returned is not treated as a GPU fault, because a busy or shared driver can also hold it. If a light probe of the driver also stops answering, the agent reports NvidiaDriverUnresponsive.
+
+|NvidiaDriverUnresponsive
+|Condition
+|The NVIDIA driver has stopped answering. The agent's GPU health checks stopped answering first, and a light probe of the driver then stayed stuck for 15 minutes while the host was not under memory pressure. The node cannot run GPU work, and a reboot clears a hung driver.
+
 |NvidiaFabricError
 |Condition
 |One or more GPUs reported a non-success fabric status, indicating NVSwitch fabric training failure. Affected GPUs cannot participate in multi-GPU NVLink communication. This condition persists across reboots and requires instance replacement.
+
+|NvidiaLibraryNotFound
+|Event
+|The agent could not load the NVIDIA management library (libnvidia-ml.so.1) from the host, so it cannot read GPU health. This is an agent packaging or driver installation issue, not a GPU fault.
 
 |NvidiaNCCLError
 |Event

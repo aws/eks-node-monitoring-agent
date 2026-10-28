@@ -8,6 +8,8 @@ import (
 	dcgmapi "github.com/NVIDIA/go-dcgm/pkg/dcgm"
 
 	"github.com/aws/eks-node-monitoring-agent/internal/pkg/instanceinfo"
+	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/classify"
+	"github.com/aws/eks-node-monitoring-agent/pkg/util/renotify"
 )
 
 func NewDCGMSystem(dcgmClient DCGM, diagType dcgmapi.DiagType) *DCGMSystem {
@@ -22,6 +24,9 @@ func NewDCGMSystemWithInstanceTypeInfoProvider(dcgmClient DCGM, diagType dcgmapi
 		diagType:                 diagType,
 		instanceTypeInfoProvider: provider,
 		fieldValueWindow:         5 * time.Minute,
+		fieldWarnings:            renotify.New[string](classify.WarningReNotifyInterval),
+		healthWarnings:           renotify.New[string](classify.WarningReNotifyInterval),
+		now:                      time.Now,
 	}
 }
 
@@ -33,4 +38,13 @@ type DCGMSystem struct {
 	// fieldValueWindow is the time window used to fetch changes in field
 	// identifiers watched by dcgm.
 	fieldValueWindow time.Duration
+
+	// fieldWarnings and healthWarnings track the Warnings that WatchFields and
+	// HealthCheck report on every call for an unchanged Fabric Manager status,
+	// so repeats are not reported (see classify.SuppressRepeatedWarnings).
+	fieldWarnings  *renotify.Tracker[string]
+	healthWarnings *renotify.Tracker[string]
+
+	// now is the clock for fieldWarnings and healthWarnings; tests replace it.
+	now func() time.Time
 }

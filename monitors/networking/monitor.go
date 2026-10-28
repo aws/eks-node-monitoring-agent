@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coreos/go-systemd/v22/dbus"
 	"github.com/go-logr/logr"
 	"github.com/shirou/gopsutil/v4/process"
 	"golang.org/x/time/rate"
@@ -35,8 +34,10 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/monitors/networking/npa"
 	"github.com/aws/eks-node-monitoring-agent/pkg/config"
 	"github.com/aws/eks-node-monitoring-agent/pkg/osext"
+	"github.com/aws/eks-node-monitoring-agent/pkg/probe"
 	"github.com/aws/eks-node-monitoring-agent/pkg/reasons"
 	"github.com/aws/eks-node-monitoring-agent/pkg/util"
+	"github.com/aws/eks-node-monitoring-agent/pkg/util/renotify"
 )
 
 var _ monitor.Monitor = (*NetworkingMonitor)(nil)
@@ -235,7 +236,7 @@ func (m *NetworkingMonitor) Register(ctx context.Context, mgr monitor.Manager) e
 	}
 
 	for _, handler := range []interface{ Start(context.Context) error }{
-		util.NewChannelHandler(func(time.Time) error { return makeEthtoolMonitor(mgr).handleEthtool() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
+		util.NewChannelHandler(ethtoolTickHandler(mgr, readEthtoolStats), util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleIPRulesAndRoutes() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleIPTables() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleInterfaces() }, util.TimeTickWithJitterContext(ctx, interfaceMonitorPeriod)),
@@ -248,6 +249,17 @@ func (m *NetworkingMonitor) Register(ctx context.Context, mgr monitor.Manager) e
 		go handler.Start(ctx)
 	}
 
+	// Subagent health probes (Auto Mode: IPAMD liveness). Runners emit
+	// through this monitor's manager, so probe findings surface under the
+	// NetworkingReady condition like any handler-derived condition.
+	for _, spec := range m.probeSpecs() {
+		runner, err := probe.NewRunner(spec, mgr, m.log)
+		if err != nil {
+			return err
+		}
+		go runner.Start(ctx)
+	}
+
 	// NPA (Network Policy Agent) D-Bus state monitoring (crash-loop + not-running) — Auto Mode only.
 	if npaEnabled {
 		go util.NewChannelHandler(
@@ -256,10 +268,9 @@ func (m *NetworkingMonitor) Register(ctx context.Context, mgr monitor.Manager) e
 		).Start(ctx)
 	}
 
-	// CoreDNS Corefile agent /readyz polling, Auto Mode only. Short cadence
-	// because the agent's outcome changes on a ConfigMap edit, not on
-	// long-lived resource state.
-	if slices.Contains(m.runtimeContext.Tags(), config.EKSAuto) {
+	// Corefile agent /readyz polling on Auto Mode nodes that have the agent.
+	// Short cadence because the outcome changes on a ConfigMap edit.
+	if slices.Contains(m.runtimeContext.Tags(), config.EKSAuto) && corefile.AgentInstalled(ctx, m.log) {
 		corefileDetector := corefile.New(mgr, m.log)
 		go util.NewChannelHandler(
 			func(time.Time) error { return corefileDetector.HandleState() },
@@ -340,21 +351,9 @@ func (m *NetworkingMonitor) handleIPAMDLogs(line string) error {
 
 func (m *NetworkingMonitor) handleIPAMD() error {
 	if slices.Contains(m.runtimeContext.Tags(), config.EKSAuto) {
-		// on the system, indicating ipamd should be running if there are no errors.
-		dbus, err := dbus.NewWithContext(context.Background())
-		if err != nil {
-			return err
-		}
-		defer dbus.Close()
-		property, err := dbus.GetUnitPropertyContext(context.Background(), "ipamd.service", "ActiveState")
-		if err != nil {
-			return err
-		}
-		ipamdRunning := false
-		if property.Value.Value().(string) == "active" {
-			ipamdRunning = true
-		}
-		return m.checkIPAMD(ipamdRunning)
+		// Liveness of ipamd.service is owned by the IPAMD probe registered in
+		// probeSpecs; only the checkpoint/CRI cross-check runs here.
+		return m.checkIPAMD(true)
 	} else {
 		ipamdRunning := false
 		podName, isInstalled, err := m.isVPCCNIInstalled()
@@ -545,9 +544,19 @@ const (
 	PPSExceeded          = "pps_allowance_exceeded"
 )
 
+// ethtoolWarningReNotifyInterval is how often the allowance-exceeded Warnings
+// may be reported for an interface. Every NMA Warning on a node shares one
+// client-go spam-filter bucket, so reporting every tick (interfaceMonitorPeriod)
+// would crowd out other Warning events.
+const ethtoolWarningReNotifyInterval = 30 * time.Minute
+
 type ethtoolMonitor struct {
 	statExceededCache map[compoundStatKey]*statTracker
-	manager           monitor.Manager
+	// notified rate-limits the allowance-exceeded Warnings per interface. It
+	// only holds interfaces that have sent a Warning.
+	notified map[string]*renotify.Tracker[struct{}]
+	manager  monitor.Manager
+	now      func() time.Time
 }
 
 type statTracker struct {
@@ -582,14 +591,39 @@ func makeEthtoolMonitor(manager monitor.Manager) *ethtoolMonitor {
 	return &ethtoolMonitor{
 		manager:           manager,
 		statExceededCache: make(map[compoundStatKey]*statTracker),
+		notified:          make(map[string]*renotify.Tracker[struct{}]),
+		now:               time.Now,
 	}
 }
 
-func (m *ethtoolMonitor) handleEthtool() (merr error) {
+// ethtoolStatsReader returns ethtool stats keyed by interface name. A non-nil
+// error may accompany partial results for the interfaces that succeeded.
+type ethtoolStatsReader func() (map[string]map[string]int, error)
+
+// ethtoolTickHandler returns the periodic handler that runs the ethtool check
+// on each tick. The monitor is created once so its stat cache and rate
+// limiters persist across ticks; otherwise every reading looks like the first
+// and allowance-exceeded spikes are never detected.
+func ethtoolTickHandler(mgr monitor.Manager, readStats ethtoolStatsReader) func(time.Time) error {
+	m := makeEthtoolMonitor(mgr)
+	return func(time.Time) error { return m.handleEthtool(readStats) }
+}
+
+func (m *ethtoolMonitor) handleEthtool(readStats ethtoolStatsReader) error {
+	statsByInterface, merr := readStats()
+	for interfaceName, stats := range statsByInterface {
+		merr = errors.Join(merr, m.checkEthtool(interfaceName, stats))
+	}
+	return merr
+}
+
+// readEthtoolStats runs `ethtool -S` on every host interface.
+func readEthtoolStats() (_ map[string]map[string]int, merr error) {
 	netInterfaces, err := net.Interfaces()
 	if err != nil {
-		return err
+		return nil, err
 	}
+	statsByInterface := make(map[string]map[string]int, len(netInterfaces))
 	for _, netInterface := range netInterfaces {
 		ethtoolCmd := []string{"ethtool", "-S", netInterface.Name}
 		ethtoolOut, err := osext.NewExec(config.HostRoot()).Command(ethtoolCmd[0], ethtoolCmd[1:]...).CombinedOutput()
@@ -606,14 +640,21 @@ func (m *ethtoolMonitor) handleEthtool() (merr error) {
 			merr = errors.Join(merr, err)
 			continue
 		}
-		merr = errors.Join(merr, m.checkEthtool(netInterface.Name, stats))
+		statsByInterface[netInterface.Name] = stats
 	}
-	return merr
+	return statsByInterface, merr
 }
 
 // checkEthtool checks whether the allowance exceeded metrics from ethtool are
 // breached at an unhealthy rate.
+// Warnings are reported at most once per ethtoolWarningReNotifyInterval for
+// each interface; all stats exceeded on the reporting tick are included.
 func (m *ethtoolMonitor) checkEthtool(interfaceName string, stats map[string]int) (merr error) {
+	now := m.now()
+	// an interface without a tracker has never fired a Warning, so it may
+	// notify right away. trackers are only created once a Warning is sent.
+	tracker, tracked := m.notified[interfaceName]
+	shouldNotify, sent := !tracked || tracker.ShouldNotify(struct{}{}, now), false
 	for statKey, rateLimiterConstructor := range statLimiterConstructors {
 		if statValue, ok := stats[statKey]; ok {
 			cacheKey := makeCompoundStatKey(interfaceName, statKey)
@@ -622,14 +663,18 @@ func (m *ethtoolMonitor) checkEthtool(interfaceName string, stats map[string]int
 				// node. reporting when they increase or are non-zero gets pretty noisy and
 				// doesn't directly indicate any issues. instead, the approach here is to only
 				// emit the event when there is a noticeable spike in the exceeded stats.
-				if exceededCntDelta := statValue - statCache.recorded; !statCache.rateLimiter.AllowN(time.Now(), exceededCntDelta) {
-					merr = errors.Join(m.manager.Notify(context.TODO(),
+				if exceededCntDelta := statValue - statCache.recorded; !statCache.rateLimiter.AllowN(now, exceededCntDelta) && shouldNotify {
+					if err := m.manager.Notify(context.TODO(),
 						statReasons[statKey].
 							Builder().
 							Message(fmt.Sprintf("%s increased on interface %q from %d to %d", statKey, interfaceName, statCache.recorded, statValue)).
 							Severity(monitor.SeverityWarning).
 							Build(),
-					))
+					); err != nil {
+						merr = errors.Join(merr, err)
+					} else {
+						sent = true
+					}
 				}
 				statCache.recorded = statValue
 			} else {
@@ -644,6 +689,14 @@ func (m *ethtoolMonitor) checkEthtool(interfaceName string, stats map[string]int
 				m.statExceededCache[cacheKey] = &statCacheEntry
 			}
 		}
+	}
+	// only record a sent notification so a failed Notify is retried next tick.
+	if sent {
+		if !tracked {
+			tracker = renotify.New[struct{}](ethtoolWarningReNotifyInterval)
+			m.notified[interfaceName] = tracker
+		}
+		tracker.Notified(struct{}{}, now)
 	}
 	return merr
 }

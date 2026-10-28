@@ -30,6 +30,14 @@ var (
 		template:        "FabricManagerNotRunning",
 		defaultSeverity: "Fatal",
 	}
+	FabricManagerNotRunningWarning = ReasonMeta{
+		template:        "FabricManagerNotRunning",
+		defaultSeverity: "Warning",
+	}
+	FabricManagerNotStarted = ReasonMeta{
+		template:        "FabricManagerNotStarted",
+		defaultSeverity: "Fatal",
+	}
 	NeuronDMAError = ReasonMeta{
 		template:        "NeuronDMAError",
 		defaultSeverity: "Fatal",
@@ -54,9 +62,21 @@ var (
 		template:        "NvidiaDoubleBitError",
 		defaultSeverity: "Fatal",
 	}
+	NvidiaDriverNotResponding = ReasonMeta{
+		template:        "NvidiaDriverNotResponding",
+		defaultSeverity: "Warning",
+	}
+	NvidiaDriverUnresponsive = ReasonMeta{
+		template:        "NvidiaDriverUnresponsive",
+		defaultSeverity: "Fatal",
+	}
 	NvidiaFabricError = ReasonMeta{
 		template:        "NvidiaFabricError",
 		defaultSeverity: "Fatal",
+	}
+	NvidiaLibraryNotFound = ReasonMeta{
+		template:        "NvidiaLibraryNotFound",
+		defaultSeverity: "Warning",
 	}
 	NvidiaNCCLError = ReasonMeta{
 		template:        "NvidiaNCCLError",
@@ -350,13 +370,18 @@ var byName = map[string]ReasonMeta{
 	"DCGMHealthCode":                       DCGMHealthCode,
 	"DCGMHealthCodeFatal":                  DCGMHealthCodeFatal,
 	"FabricManagerNotRunning":              FabricManagerNotRunning,
+	"FabricManagerNotRunningWarning":       FabricManagerNotRunningWarning,
+	"FabricManagerNotStarted":              FabricManagerNotStarted,
 	"NeuronDMAError":                       NeuronDMAError,
 	"NeuronHBMUncorrectableError":          NeuronHBMUncorrectableError,
 	"NeuronNCUncorrectableError":           NeuronNCUncorrectableError,
 	"NeuronSRAMUncorrectableError":         NeuronSRAMUncorrectableError,
 	"NvidiaDeviceCountMismatch":            NvidiaDeviceCountMismatch,
 	"NvidiaDoubleBitError":                 NvidiaDoubleBitError,
+	"NvidiaDriverNotResponding":            NvidiaDriverNotResponding,
+	"NvidiaDriverUnresponsive":             NvidiaDriverUnresponsive,
 	"NvidiaFabricError":                    NvidiaFabricError,
+	"NvidiaLibraryNotFound":                NvidiaLibraryNotFound,
 	"NvidiaNCCLError":                      NvidiaNCCLError,
 	"NvidiaNVLinkError":                    NvidiaNVLinkError,
 	"NvidiaPCIeError":                      NvidiaPCIeError,
