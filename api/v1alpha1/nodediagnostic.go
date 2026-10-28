@@ -29,8 +29,9 @@ type NodeDiagnosticList struct {
 }
 
 type NodeDiagnosticSpec struct {
-	*LogCapture    `json:"logCapture,omitempty"`
-	*PacketCapture `json:"packetCapture,omitempty"`
+	*LogCapture     `json:"logCapture,omitempty"`
+	*PacketCapture  `json:"packetCapture,omitempty"`
+	*AutoLogCapture `json:"autoLogCapture,omitempty"`
 }
 
 type NodeDiagnosticStatus struct {
@@ -47,6 +48,19 @@ type LogCapture struct {
 	// +optional
 	// +kubebuilder:default={All}
 	Categories []LogCategory `json:"categories"`
+}
+
+// AutoLogCapture configures automatic log capture when a managed node
+// condition fails. Unlike logCapture and packetCapture, the NodeDiagnostic
+// that holds this field does not need to be named after a node. Any name
+// works. If more than one NodeDiagnostic sets this field, the newest one
+// is used.
+type AutoLogCapture struct {
+	// Bucket is the S3 bucket that receives capture bundles. Omit to turn
+	// automatic capture off.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`
+	Bucket string `json:"bucket,omitempty"`
 }
 
 // UploadDestination is a URL describing where to deliver a diagnostic artifact.
