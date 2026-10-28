@@ -88,6 +88,8 @@ func (o *fileObserver) watchLoop(ctx context.Context) error {
 		}
 		if err := workFunc(); err != nil {
 			logger.Error(err, "error in workloop")
+			// The loop period is 0, so a repeating error would spin.
+			time.Sleep(100 * time.Millisecond)
 		}
 	}, 0)
 
@@ -131,7 +133,8 @@ func (o *fileObserver) reconcileWatcher() error {
 func (o *fileObserver) openReader() error {
 	var err error
 	if o.fileHandle != nil {
-		o.fileHandle.Close()
+		// Close() alone leaves the reader on the closed file, so readAll spins.
+		o.closeHandle()
 	}
 	o.fileHandle, err = os.Open(o.path)
 	if err != nil {
