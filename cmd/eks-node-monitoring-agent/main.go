@@ -32,6 +32,7 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 	"github.com/aws/eks-node-monitoring-agent/api/v1alpha1"
 	"github.com/aws/eks-node-monitoring-agent/internal/version"
+	"github.com/aws/eks-node-monitoring-agent/pkg/autocapture"
 	"github.com/aws/eks-node-monitoring-agent/pkg/conditions"
 	"github.com/aws/eks-node-monitoring-agent/pkg/config"
 	"github.com/aws/eks-node-monitoring-agent/pkg/controllers"
@@ -197,6 +198,18 @@ func run() error {
 		return err
 	}
 
+	// captureCh carries one request per healthy-to-failing condition
+	// transition from the node exporter to the auto log capture worker. It is
+	// buffered so the exporter's non-blocking send rarely drops a request;
+	// the worker drains it. The worker reads NodeDiagnostics through the
+	// manager's cached client.
+	captureCh := make(chan manager.CaptureRequest, 4)
+	captureWorker := autocapture.NewWorker(captureCh, mgr.GetClient(), logger.WithName("auto-log-capture"))
+	if err := mgr.Add(crmanager.RunnableFunc(captureWorker.Start)); err != nil {
+		logger.Error(err, "failed to add auto log capture worker")
+		return err
+	}
+
 	// registered is closed once monitor registration completes. Observer startup
 	// cannot gate readiness: fileObserver.Init polls indefinitely for absent
 	// sources such as /var/log/cron.log, which never appears on Bottlerocket.
@@ -351,6 +364,7 @@ func run() error {
 			monitoringEventRecorder,
 			conditionConfigs,
 		)
+		nodeExporter.SetCaptureChannel(captureCh)
 		go nodeExporter.Run(ctx)
 
 		// Initialize monitoring manager
