@@ -9,6 +9,7 @@ import (
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -156,6 +157,7 @@ func (s *countingSink) Info(level int, msg string, kv ...any) { s.counts[msg]++ 
 const (
 	msgOff     = "auto log capture is off: no NodeDiagnostic sets spec.autoLogCapture.bucket"
 	msgRequest = "capture requested"
+	msgSkip    = "capture skipped: cooldown active"
 )
 
 func TestWorker_NoBucketLogsOffOnce(t *testing.T) {
@@ -202,4 +204,100 @@ func TestWorker_StartReturnsNilOnCancel(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Start did not return after context cancel")
 	}
+}
+
+func TestWorker_Cooldown(t *testing.T) {
+	base := time.Unix(1_000_000, 0)
+	const condA = "NetworkingReady"
+	const condB = "StorageReady"
+
+	// step is one request: at offset from base, for a condition.
+	type step struct {
+		offset    time.Duration
+		condition corev1.NodeConditionType
+	}
+	tests := []struct {
+		name        string
+		steps       []step
+		wantRequest int
+		wantSkip    int
+	}{
+		{
+			name: "second request for same condition inside window is dropped",
+			steps: []step{
+				{0, condA},
+				{29 * time.Minute, condA},
+			},
+			wantRequest: 1,
+			wantSkip:    1,
+		},
+		{
+			name: "request exactly at the window is handled",
+			steps: []step{
+				{0, condA},
+				{30 * time.Minute, condA},
+			},
+			wantRequest: 2,
+		},
+		{
+			name: "request after the window is handled",
+			steps: []step{
+				{0, condA},
+				{31 * time.Minute, condA},
+			},
+			wantRequest: 2,
+		},
+		{
+			name: "different conditions do not block each other",
+			steps: []step{
+				{0, condA},
+				{1 * time.Minute, condB},
+			},
+			wantRequest: 2,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			counts := map[string]int{}
+			c := fake.NewClientBuilder().WithScheme(testScheme(t)).
+				WithObjects(autoLogDiagnostic("alpha", "my-bucket", time.Unix(100, 0))).Build()
+			w := NewWorker(make(chan manager.CaptureRequest), c, countingLogger(counts))
+
+			var cur time.Time
+			w.now = func() time.Time { return cur }
+			for _, s := range tc.steps {
+				cur = base.Add(s.offset)
+				w.handle(context.Background(), manager.CaptureRequest{Condition: s.condition, Reason: "Down"})
+			}
+
+			assert.Equal(t, tc.wantRequest, counts[msgRequest], "capture-requested count")
+			assert.Equal(t, tc.wantSkip, counts[msgSkip], "cooldown-skip count")
+		})
+	}
+}
+
+func TestWorker_NoBucketDoesNotStartCooldown(t *testing.T) {
+	counts := map[string]int{}
+	// A NodeDiagnostic whose bucket we flip on later, backing the same client.
+	nd := autoLogDiagnostic("alpha", "", time.Unix(100, 0))
+	c := fake.NewClientBuilder().WithScheme(testScheme(t)).WithObjects(nd).Build()
+	w := NewWorker(make(chan manager.CaptureRequest), c, countingLogger(counts))
+
+	cur := time.Unix(1_000_000, 0)
+	w.now = func() time.Time { return cur }
+
+	// First request: no bucket, so nothing is captured and no cooldown starts.
+	w.handle(context.Background(), manager.CaptureRequest{Condition: "NetworkingReady", Reason: "Down"})
+	assert.Equal(t, 0, counts[msgRequest])
+
+	// Configure the bucket, then a request one minute later must be handled,
+	// proving the earlier no-bucket request did not start a cooldown.
+	nd.Spec.AutoLogCapture.Bucket = "my-bucket"
+	require.NoError(t, c.Update(context.Background(), nd))
+
+	cur = cur.Add(1 * time.Minute)
+	w.handle(context.Background(), manager.CaptureRequest{Condition: "NetworkingReady", Reason: "Down"})
+	assert.Equal(t, 1, counts[msgRequest], "a request after a bucket is set must be handled")
+	assert.Equal(t, 0, counts[msgSkip])
 }
