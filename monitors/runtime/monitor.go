@@ -18,12 +18,23 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/pkg/reasons"
 	"github.com/aws/eks-node-monitoring-agent/pkg/util"
 	"github.com/coreos/go-systemd/v22/dbus"
+	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 	"golang.org/x/time/rate"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/metrics"
 )
+
+var systemdUnitRestarts = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+	Name: "systemd_unit_restarts",
+	Help: "NRestarts of each systemd service unit.",
+}, []string{"unit"})
+
+func init() {
+	metrics.Registry.MustRegister(systemdUnitRestarts)
+}
 
 var _ monitor.Monitor = (*runtimeMonitor)(nil)
 
@@ -43,6 +54,7 @@ type runtimeMonitor struct {
 	node             *corev1.Node
 	kubeClient       client.Client
 	unitRestartCount map[string]uint32
+	reportedUnits    map[string]bool
 
 	manager monitor.Manager
 }
@@ -105,6 +117,8 @@ func (m *runtimeMonitor) handleSystemdServices() error {
 	if err != nil {
 		return fmt.Errorf("listing units, %w", err)
 	}
+	var merr error
+	seen := map[string]bool{}
 	for _, unit := range units {
 		// we only look at services
 		if !strings.HasSuffix(unit.Name, ".service") {
@@ -113,7 +127,7 @@ func (m *runtimeMonitor) handleSystemdServices() error {
 
 		properties, err := dc.GetAllPropertiesContext(ctx, unit.Name)
 		if err != nil {
-			return fmt.Errorf("getting properties for unit %q, %w", unit.Name, err)
+			return errors.Join(merr, fmt.Errorf("getting properties for unit %q, %w", unit.Name, err))
 		}
 		nRestarts, ok := properties["NRestarts"]
 		if !ok {
@@ -121,28 +135,41 @@ func (m *runtimeMonitor) handleSystemdServices() error {
 		}
 		currentRestarts, ok := nRestarts.(uint32)
 		if !ok {
-			return fmt.Errorf("unexpected type for NRestarts, %T", nRestarts)
+			return errors.Join(merr, fmt.Errorf("unexpected type for NRestarts, %T", nRestarts))
 		}
-		if currentRestarts == 0 {
-			// just saves storing the current restart count for services that never restart
-			continue
+		seen[unit.Name] = true
+		merr = errors.Join(merr, m.handleUnitRestarts(unit.Name, currentRestarts))
+	}
+	for name := range m.reportedUnits {
+		if !seen[name] {
+			systemdUnitRestarts.DeleteLabelValues(name)
 		}
+	}
+	m.reportedUnits = seen
+	return merr
+}
 
-		previousRestarts := m.unitRestartCount[unit.Name]
-		m.unitRestartCount[unit.Name] = currentRestarts
-		const MinOccurrences = 3
-		if currentRestarts > MinOccurrences && currentRestarts > previousRestarts {
-			// we don't use the MinOccurrences support in the manager as we know exactly
-			// how many times it was restarted already and it would only increase once per
-			// five minutes if a service is constantly restarting. By doing the check ourself
-			// we can always report more accurately.
-			return m.manager.Notify(context.Background(),
-				reasons.RepeatedRestart.
-					Builder(unitName(unit.Name)).
-					Message(fmt.Sprintf("Systemd unit %q has restarted (NRestarts %d -> %d)", unit.Name, previousRestarts, currentRestarts)).
-					Build(),
-			)
-		}
+func (m *runtimeMonitor) handleUnitRestarts(name string, currentRestarts uint32) error {
+	systemdUnitRestarts.WithLabelValues(name).Set(float64(currentRestarts))
+	if currentRestarts == 0 {
+		// just saves storing the current restart count for services that never restart
+		return nil
+	}
+
+	previousRestarts := m.unitRestartCount[name]
+	m.unitRestartCount[name] = currentRestarts
+	const MinOccurrences = 3
+	if currentRestarts > MinOccurrences && currentRestarts > previousRestarts {
+		// we don't use the MinOccurrences support in the manager as we know exactly
+		// how many times it was restarted already and it would only increase once per
+		// five minutes if a service is constantly restarting. By doing the check ourself
+		// we can always report more accurately.
+		return m.manager.Notify(context.Background(),
+			reasons.RepeatedRestart.
+				Builder(unitName(name)).
+				Message(fmt.Sprintf("Systemd unit %q has restarted (NRestarts %d -> %d)", name, previousRestarts, currentRestarts)).
+				Build(),
+		)
 	}
 	return nil
 }
