@@ -221,6 +221,7 @@ func TestCollectSteps_CancelledContextStopsBeforeNextCollector(t *testing.T) {
 	assert.ErrorIs(t, err, context.Canceled)
 	assert.Equal(t, []string{"capture-trigger"}, got, "no collector may start after cancellation")
 	assert.Equal(t, 0, summary.Steps, "the partial summary must be returned")
+	assert.Len(t, summary.Skipped, 5, "every collector a cancel cut off is listed")
 }
 
 func TestCollectSteps_DiskChecks(t *testing.T) {
