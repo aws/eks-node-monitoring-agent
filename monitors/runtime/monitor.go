@@ -129,6 +129,10 @@ func (m *runtimeMonitor) handleSystemdServices() error {
 		if err != nil {
 			return errors.Join(merr, fmt.Errorf("getting properties for unit %q, %w", unit.Name, err))
 		}
+		// systemd only restarts, and counts NRestarts for, units with a Restart= policy
+		if restart, _ := properties["Restart"].(string); restart == "no" {
+			continue
+		}
 		nRestarts, ok := properties["NRestarts"]
 		if !ok {
 			continue
