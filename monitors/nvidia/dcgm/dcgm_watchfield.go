@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	dcgmapi "github.com/NVIDIA/go-dcgm/pkg/dcgm"
@@ -30,6 +31,7 @@ func (s *DCGMSystem) WatchFields(ctx context.Context) ([]monitor.Condition, erro
 	}
 
 	var conditions []monitor.Condition
+	var masks []uint64
 
 	for _, fieldValue := range fieldValues {
 		// Fabric fields encode health in the field value, not in fieldValue.Status,
@@ -37,7 +39,12 @@ func (s *DCGMSystem) WatchFields(ctx context.Context) ([]monitor.Condition, erro
 		// DCGM_ST_OK for a successfully-read fabric field even when the value
 		// indicates Failure (e.g. FM_STATUS=Failure on a node where
 		// nvidia-fabricmanager.service has exited). The handler suppresses
-		// emission for healthy/unsupported states internally.
+		// emission for healthy/unsupported states internally. Health masks are
+		// classified after the loop (see classifyFabricHealthMasks).
+		if fieldValue.FieldID == dcgmapi.DCGM_FI_DEV_FABRIC_HEALTH_MASK {
+			masks = append(masks, uint64(fieldValue.Int64()))
+			continue
+		}
 		if c, handled := handleFabricField(fieldValue); handled {
 			if c != nil {
 				conditions = append(conditions, *c)
@@ -71,43 +78,64 @@ func (s *DCGMSystem) WatchFields(ctx context.Context) ([]monitor.Condition, erro
 		)
 	}
 
-	// A version-mismatch Fabric Manager status is reported as a Warning on
-	// every call (and once per GPU) for as long as the node is up, so repeats
-	// are rate-limited.
+	conditions = append(conditions, s.classifyFabricHealthMasks(ctx, masks)...)
+
+	// These Warnings repeat on every call and once per GPU, so they are
+	// rate-limited.
 	return classify.SuppressRepeatedWarnings(s.fieldWarnings, s.now(), conditions, func(c monitor.Condition) bool {
-		return c.Reason == reasons.FabricManagerNotRunningWarning.Template()
+		return c.Reason == reasons.FabricManagerNotRunningWarning.Template() ||
+			c.Reason == reasons.NvidiaFabricWarning.Template()
 	}), nil
 }
 
-// handleFabricField checks whether the field is a fabric-related field and
-// returns the appropriate condition. Returns (nil, true) when the field is
-// recognized but healthy, and (*condition, true) when unhealthy. Returns
-// (nil, false) when the field is not a fabric field.
+// classifyFabricHealthMasks classifies one call's fabric health masks. If any
+// mask is a fault, nvidia-smi is read once and passed with every mask.
+func (s *DCGMSystem) classifyFabricHealthMasks(ctx context.Context, masks []uint64) []monitor.Condition {
+	var signals classify.NormalizedSignals
+	if slices.ContainsFunc(masks, classify.FabricHealthMaskHasFault) {
+		signals.FabricCrossCheck, signals.GPUCount = s.readFabricCrossCheck(ctx)
+	}
+	var conditions []monitor.Condition
+	for _, mask := range masks {
+		signals.FabricHealthMask = &mask
+		conditions = append(conditions, classify.Classify(signals)...)
+	}
+	return conditions
+}
+
+// readFabricCrossCheck returns nvidia-smi's view and DCGM's GPU count, or nil
+// for both if either cannot be read.
+func (s *DCGMSystem) readFabricCrossCheck(ctx context.Context) (*classify.FabricCrossCheck, *uint) {
+	logger := log.FromContext(ctx)
+	gpuCount, err := s.dcgm.GetDeviceCount()
+	if err != nil {
+		logger.Error(err, "could not get the DCGM GPU count to cross-check a fabric health mask fault")
+		return nil, nil
+	}
+	check, err := s.fabricCrossCheck(ctx)
+	if err != nil {
+		logger.Error(err, "could not cross-check a fabric health mask fault with nvidia-smi")
+		return nil, nil
+	}
+	return check, &gpuCount
+}
+
+// handleFabricField handles the Fabric Manager status field. Returns (nil, true)
+// when healthy, (*condition, true) when unhealthy, and (nil, false) for any
+// other field.
 func handleFabricField(fv dcgmapi.FieldValue_v2) (*monitor.Condition, bool) {
-	switch fv.FieldID {
-	case dcgmapi.DCGM_FI_DEV_FABRIC_MANAGER_STATUS:
-		status := fv.Int64()
-		// classify.Classify decides which statuses are healthy, a Warning
-		// (driver/NVML and DCGM version mismatch), or Fatal. Blank values
-		// (DCGM could not read the field) produce no condition.
-		conds := classify.Classify(classify.NormalizedSignals{FabricManagerStatus: &status})
-		if len(conds) == 0 {
-			return nil, true
-		}
-		return &conds[0], true
-	case dcgmapi.DCGM_FI_DEV_FABRIC_HEALTH_MASK:
-		mask := uint64(fv.Int64())
-		// classify.Classify decodes the packed 2-bit sub-fields and flags only
-		// those in a fault state, so a non-zero healthy mask such as 0x80 is
-		// not a fault. Blank values produce no condition.
-		conds := classify.Classify(classify.NormalizedSignals{FabricHealthMask: &mask})
-		if len(conds) == 0 {
-			return nil, true
-		}
-		return &conds[0], true
-	default:
+	if fv.FieldID != dcgmapi.DCGM_FI_DEV_FABRIC_MANAGER_STATUS {
 		return nil, false
 	}
+	status := fv.Int64()
+	// classify.Classify decides which statuses are healthy, a Warning
+	// (driver/NVML and DCGM version mismatch), or Fatal. Blank values
+	// (DCGM could not read the field) produce no condition.
+	conds := classify.Classify(classify.NormalizedSignals{FabricManagerStatus: &status})
+	if len(conds) == 0 {
+		return nil, true
+	}
+	return &conds[0], true
 }
 
 // ref: https://github.com/NVIDIA/DCGM/blob/6e947dcac9b3160d61d98fea4741d51d4bec5c1f/dcgmlib/dcgm_fields.h#L99-L103

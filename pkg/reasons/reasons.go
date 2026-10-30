@@ -74,6 +74,10 @@ var (
 		template:        "NvidiaFabricError",
 		defaultSeverity: "Fatal",
 	}
+	NvidiaFabricWarning = ReasonMeta{
+		template:        "NvidiaFabricWarning",
+		defaultSeverity: "Warning",
+	}
 	NvidiaLibraryNotFound = ReasonMeta{
 		template:        "NvidiaLibraryNotFound",
 		defaultSeverity: "Warning",
@@ -381,6 +385,7 @@ var byName = map[string]ReasonMeta{
 	"NvidiaDriverNotResponding":            NvidiaDriverNotResponding,
 	"NvidiaDriverUnresponsive":             NvidiaDriverUnresponsive,
 	"NvidiaFabricError":                    NvidiaFabricError,
+	"NvidiaFabricWarning":                  NvidiaFabricWarning,
 	"NvidiaLibraryNotFound":                NvidiaLibraryNotFound,
 	"NvidiaNCCLError":                      NvidiaNCCLError,
 	"NvidiaNVLinkError":                    NvidiaNVLinkError,
