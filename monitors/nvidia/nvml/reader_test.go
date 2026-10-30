@@ -272,14 +272,28 @@ func TestReconcile_driverNotLoaded(t *testing.T) {
 	*now = now.Add(time.Minute)
 	assertSingle(t, r.Reconcile(ctx), "DCGMError", monitor.SeverityFatal)
 
-	// The driver loads. The next Reconcile initializes on the same library.
+	// The driver loads. The next Reconcile initializes on the same library
+	// and resolves the DCGMError it reported.
 	ret = gonvml.SUCCESS
-	assert.Empty(t, r.Reconcile(ctx))
+	got := r.Reconcile(ctx)
+	assertSingle(t, got, "DCGMError", monitor.SeverityFatal)
+	assert.True(t, got[0].Resolved, "a later Init that succeeds resolves the DCGMError")
 	lib, syms, ok := r.Library()
 	assert.True(t, ok)
 	assert.NotNil(t, lib)
 	assert.True(t, syms.gpuFabricInfoV)
 	assert.Empty(t, r.Reconcile(ctx), "an initialized reader with no checks reports nothing")
+}
+
+func TestReconcile_initRecoveredInGracePeriodResolvesNothing(t *testing.T) {
+	ret := gonvml.ERROR_DRIVER_NOT_LOADED
+	r, now := testReader(func() gonvml.Return { return ret })
+	ctx := t.Context()
+
+	assert.Empty(t, r.Reconcile(ctx), "silent inside the grace period")
+	*now = now.Add(30 * time.Second)
+	ret = gonvml.SUCCESS
+	assert.Empty(t, r.Reconcile(ctx), "no DCGMError was reported, so there is nothing to resolve")
 }
 
 func TestReconcile_initHangs(t *testing.T) {
