@@ -513,6 +513,14 @@ StorageReady:
       The `kubelet` is reporting slow disk usage while trying to access the
       filesystem. This potentially indicates insufficient disk input-output or
       filesystem issues.
+  PartitionNearlyFull:
+    Template: 'PartitionNearlyFull'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      A writable partition that the `kubelet` does not monitor for disk
+      pressure, such as one holding `/var/log`, has less than 10% of its space
+      or 5% of its inodes free. Writes to it fail once it is full, which can
+      prevent logging and the creation of new pod sandboxes.
   XFSSmallAverageClusterSize:
     Template: 'XFSSmallAverageClusterSize'
     DefaultSeverity: 'Warning'
