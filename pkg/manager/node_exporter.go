@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/tools/reference"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -65,6 +66,10 @@ func makeNodeReference(node *corev1.Node) *corev1.ObjectReference {
 	}
 	// remove the resource version, it's not useful to us
 	ref.ResourceVersion = ""
+	// kubectl describe node matches events by UID, falling back to the node name like kubelet
+	if ref.UID == "" {
+		ref.UID = types.UID(node.Name)
+	}
 	return ref
 }
 
