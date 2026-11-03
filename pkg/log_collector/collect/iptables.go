@@ -5,10 +5,21 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 )
 
 type IPTables struct{}
+
+// moduleLoaded reports whether a kernel module is loaded on the host, or built
+// in. ipvsadm runs modprobe when ip_vs is absent, and ipset can trigger kernel
+// module autoloading, so neither may run unless its module is already present:
+// a capture must not change kernel state, or its own evidence.
+var moduleLoaded = func(acc *Accessor, name string) bool {
+	_, err := os.Stat(filepath.Join(acc.cfg.Root, "/sys/module", name))
+	return err == nil
+}
 
 var _ Collector = (*IPTables)(nil)
 
@@ -32,10 +43,14 @@ func (i IPTables) Collect(acc *Accessor) error {
 }
 
 // ipvs collects the IPVS virtual server table, which holds the kube-proxy
-// state when it runs in IPVS mode. ipvsadm is not installed on most nodes, so
-// absence skips collection; individual command failures (e.g. the ip_vs
-// module not being loaded) are recorded as best-effort.
+// state when it runs in IPVS mode. Collection is skipped when the ip_vs module
+// is not loaded or ipvsadm is not installed; individual command failures are
+// recorded as best-effort.
 func ipvs(acc *Accessor) error {
+	if !moduleLoaded(acc, "ip_vs") {
+		acc.logger.Info("ip_vs module not loaded")
+		return nil
+	}
 	if _, err := acc.CombinedOutput("ipvsadm", "--version"); err != nil {
 		acc.logger.Info("ipvsadm not installed")
 		return nil
@@ -51,9 +66,13 @@ func ipvs(acc *Accessor) error {
 }
 
 // ipset collects the ipset contents that iptables rules reference (used by
-// kube-proxy in IPVS mode and some network policy implementations). ipset is
-// not installed on most nodes, so absence skips collection.
+// kube-proxy in IPVS mode and some network policy implementations). Collection
+// is skipped when the ip_set module is not loaded or ipset is not installed.
 func ipset(acc *Accessor) error {
+	if !moduleLoaded(acc, "ip_set") {
+		acc.logger.Info("ip_set module not loaded")
+		return nil
+	}
 	if _, err := acc.CombinedOutput("ipset", "version"); err != nil {
 		acc.logger.Info("ipset not installed")
 		return nil

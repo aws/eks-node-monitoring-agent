@@ -16,9 +16,9 @@ var defaultModules []string = []string{
 	"lustre",
 }
 
-// watchedLoadedModules are matched against lsmod output: ip_vs for kube-proxy
-// IPVS mode and nf_conntrack for connection tracking state. lsmod shows what
-// is actually loaded (and its refcounts), which modinfo cannot.
+// watchedLoadedModules are matched against the loaded-module list: ip_vs for
+// kube-proxy IPVS mode and nf_conntrack for connection tracking state. The
+// list shows what is actually loaded (and its refcounts), which modinfo cannot.
 var watchedLoadedModules = []string{"ip_vs", "nf_conntrack"}
 
 func (k *Kernel) Collect(acc *Accessor) error {
@@ -53,12 +53,13 @@ func modinfo(acc *Accessor) error {
 	return merr
 }
 
-// loadedModules writes the lsmod lines for the watched modules to
-// modinfo/ip_vs, matching the path the log collector script uses. The file is
-// written even when no watched module is loaded, so "nothing loaded" is
-// distinguishable from "not collected".
+// loadedModules writes the /proc/modules lines for the watched modules to
+// modinfo/ip_vs, matching the path the log collector script uses. It reads
+// /proc/modules (the source lsmod formats) so it doesn't depend on lsmod being
+// installed on the host. The file is written even when no watched module is
+// loaded, so "nothing loaded" is distinguishable from "not collected".
 func loadedModules(acc *Accessor) error {
-	output, err := acc.CombinedOutput("lsmod")
+	output, err := os.ReadFile(filepath.Join(acc.cfg.Root, "/proc/modules"))
 	if err != nil {
 		return err
 	}

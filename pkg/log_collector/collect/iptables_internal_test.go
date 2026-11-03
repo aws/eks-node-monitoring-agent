@@ -27,6 +27,7 @@ esac
 `
 		require.NoError(t, os.WriteFile(filepath.Join(bin, "ipvsadm"), []byte(script), 0o755))
 		t.Setenv("PATH", bin)
+		stubModuleLoaded(t, true)
 
 		dst := t.TempDir()
 		acc, err := NewAccessor(context.Background(), Config{Root: "/", Destination: dst})
@@ -48,6 +49,7 @@ stats table
 
 	t.Run("ipvsadm absent skips without error", func(t *testing.T) {
 		t.Setenv("PATH", t.TempDir())
+		stubModuleLoaded(t, true)
 
 		dst := t.TempDir()
 		acc, err := NewAccessor(context.Background(), Config{Root: "/", Destination: dst})
@@ -72,6 +74,7 @@ esac
 `
 		require.NoError(t, os.WriteFile(filepath.Join(bin, "ipset"), []byte(script), 0o755))
 		t.Setenv("PATH", bin)
+		stubModuleLoaded(t, true)
 
 		dst := t.TempDir()
 		acc, err := NewAccessor(context.Background(), Config{Root: "/", Destination: dst})
@@ -91,6 +94,7 @@ create KUBE-LOOP-BACK hash:ip,port,ip
 
 	t.Run("ipset absent skips without error", func(t *testing.T) {
 		t.Setenv("PATH", t.TempDir())
+		stubModuleLoaded(t, true)
 
 		dst := t.TempDir()
 		acc, err := NewAccessor(context.Background(), Config{Root: "/", Destination: dst})
@@ -100,4 +104,52 @@ create KUBE-LOOP-BACK hash:ip,port,ip
 		_, err = os.Stat(filepath.Join(dst, "networking/ipset.txt"))
 		assert.True(t, os.IsNotExist(err), "no output file expected when ipset is absent")
 	})
+}
+
+// stubModuleLoaded replaces moduleLoaded for the duration of the test, so the
+// collectors can run with Root "/" (which keeps commands from being chrooted).
+func stubModuleLoaded(t *testing.T, loaded bool) {
+	t.Helper()
+	orig := moduleLoaded
+	moduleLoaded = func(*Accessor, string) bool { return loaded }
+	t.Cleanup(func() { moduleLoaded = orig })
+}
+
+// A capture must not change kernel state: ipvsadm and ipset must not run at
+// all when their module isn't loaded, because ipvsadm modprobes ip_vs and
+// ipset can trigger module autoloading.
+func TestModuleNotLoadedSkipsCommand(t *testing.T) {
+	for _, tc := range []struct {
+		bin     string
+		collect func(*Accessor) error
+	}{
+		{bin: "ipvsadm", collect: ipvs},
+		{bin: "ipset", collect: ipset},
+	} {
+		t.Run(tc.bin, func(t *testing.T) {
+			bin := t.TempDir()
+			marker := filepath.Join(t.TempDir(), "ran")
+			require.NoError(t, os.WriteFile(filepath.Join(bin, tc.bin), []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o755))
+			t.Setenv("PATH", bin)
+			stubModuleLoaded(t, false)
+
+			acc, err := NewAccessor(context.Background(), Config{Root: "/", Destination: t.TempDir()})
+			require.NoError(t, err)
+
+			require.NoError(t, tc.collect(acc))
+			_, err = os.Stat(marker)
+			assert.True(t, os.IsNotExist(err), "%s must not run when its module isn't loaded", tc.bin)
+		})
+	}
+}
+
+func TestModuleLoaded(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "sys/module/ip_vs"), 0o755))
+
+	acc, err := NewAccessor(context.Background(), Config{Root: root, Destination: t.TempDir()})
+	require.NoError(t, err)
+
+	assert.True(t, moduleLoaded(acc, "ip_vs"))
+	assert.False(t, moduleLoaded(acc, "ip_set"))
 }
