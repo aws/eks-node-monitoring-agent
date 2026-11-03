@@ -109,7 +109,7 @@ func gatherThrottledCgroups(acc *Accessor) ([]throttledCgroup, error) {
 			}
 			cgroups = append(cgroups, throttledCgroup{
 				// report the host path, not the agent's Root-prefixed view
-				path: strings.TrimPrefix(filepath.Dir(path), acc.cfg.Root),
+				path: hostPath(acc.cfg.Root, filepath.Dir(path)),
 				stat: string(statBytes),
 				pids: pids,
 			})
@@ -120,6 +120,13 @@ func gatherThrottledCgroups(acc *Accessor) ([]throttledCgroup, error) {
 		merr = errors.Join(merr, err)
 	}
 	return cgroups, merr
+}
+
+// hostPath turns a Root-prefixed path back into the path as seen on the host.
+// Root is "/" when the agent runs directly on the host, so trimming the prefix
+// alone would also strip the leading slash.
+func hostPath(root, p string) string {
+	return filepath.Join("/", strings.TrimPrefix(p, root))
 }
 
 // renderThrottles writes one section per throttled cgroup: its path, its full

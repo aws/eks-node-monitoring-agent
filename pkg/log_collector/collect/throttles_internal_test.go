@@ -95,3 +95,12 @@ func TestCPUThrottlesNoneFound(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "No CPU Throttling Found", string(got))
 }
+
+func TestHostPath(t *testing.T) {
+	for _, tc := range []struct{ root, path, want string }{
+		{root: "/host", path: "/host/sys/fs/cgroup/kubepods/podA", want: "/sys/fs/cgroup/kubepods/podA"},
+		{root: "/", path: "/sys/fs/cgroup/kubepods/podA", want: "/sys/fs/cgroup/kubepods/podA"},
+	} {
+		assert.Equal(t, tc.want, hostPath(tc.root, tc.path), "root %q", tc.root)
+	}
+}
