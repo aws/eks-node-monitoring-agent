@@ -123,10 +123,6 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	if enableConsoleDiagnostics {
-		startConsoleDiagnostics(ctx)
-	}
-
 	runtimeContext := config.GetRuntimeContext()
 	logger.V(2).Info("fetched runtime context", "value", runtimeContext)
 
@@ -182,6 +178,14 @@ func run() error {
 				monitorCfg = restCfg
 			}
 		}
+	}
+
+	if enableConsoleDiagnostics {
+		apiServerEndpoint := ""
+		if slices.Contains(runtimeContext.Tags(), config.EKSAuto) {
+			apiServerEndpoint = monitorCfg.Host
+		}
+		startConsoleDiagnostics(ctx, apiServerEndpoint)
 	}
 
 	monitoringEventRecorder := mgr.GetEventRecorderFor("eks-node-monitoring-agent")
@@ -486,7 +490,7 @@ func openDevConsole() (*os.File, error) {
 	return os.OpenFile("/dev/console", os.O_APPEND|os.O_WRONLY, 0o600)
 }
 
-func startConsoleDiagnostics(ctx context.Context) {
+func startConsoleDiagnostics(ctx context.Context, apiServerEndpoint string) {
 	logger := log.FromContext(ctx)
 
 	go func() {
@@ -496,7 +500,7 @@ func startConsoleDiagnostics(ctx context.Context) {
 			return
 		}
 		defer f.Close()
-		settings := diagnostic.Settings{LogInterval: 5 * time.Minute}
+		settings := diagnostic.Settings{LogInterval: 5 * time.Minute, ApiServerEndpoint: apiServerEndpoint}
 		logger.Info("initializing console diagnostic logger", "settings", settings)
 		if err := diagnostic.NewDiagnosticLogger(f, settings).Start(ctx); err != nil {
 			logger.Error(err, "failed to start diagnostic logger")
