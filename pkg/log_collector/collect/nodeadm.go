@@ -36,7 +36,11 @@ func udevNetManagerJournals(acc *Accessor) error {
 }
 
 // cachedUdevInterfaces lists the interface names cached under every
-// <instance-id> directory in udevNetManagerCacheDir, deduplicated.
+// <instance-id> directory in udevNetManagerCacheDir, deduplicated. All
+// directories are read rather than only the current instance's, so the
+// collector doesn't depend on IMDS. Journals are per unit, not per instance,
+// so a name cached by another instance (such as the one an AMI was built from)
+// at most adds an empty journal file.
 func cachedUdevInterfaces(acc *Accessor) ([]string, error) {
 	interfaceFiles, err := filepath.Glob(filepath.Join(acc.cfg.Root, udevNetManagerCacheDir, "*", "*"))
 	if err != nil {
