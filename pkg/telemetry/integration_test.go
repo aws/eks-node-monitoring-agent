@@ -104,13 +104,9 @@ targets:
     identity: { requireMetric: awscni_build_info }
     metrics:
       - { name: awscni_aws_api_error_count, type: counter, unit: "1", labels: [api] }
-  - component: node-monitoring-agent
-    metrics:
-      - { name: eks_problem }
 `, host, port)), cfg))
-	fatal := fatals{{ConditionType: "StorageReady", Reason: "IOError"}}
-	collectors, wait := BuildCollectors(cfg, fatal, map[string]string{"instanceId": "i-0123456789abcdef0"}, logr.Discard())
-	require.Len(t, collectors, 2)
+	collectors, wait := BuildCollectors(cfg, logr.Discard())
+	require.Len(t, collectors, 1)
 
 	m := NewManager(ManagerConfig{
 		Node:       nodetelemetry.NodeAttrs{NodeName: "n"},
@@ -158,9 +154,5 @@ targets:
 		} else {
 			assert.NotContains(t, got, nodetelemetry.MetricEksNotReporting, "step %d", i)
 		}
-
-		problems := scopeMetrics(md, NMAScope)[nodetelemetry.MetricEksProblem].Gauge().DataPoints()
-		require.Equal(t, 1, problems.Len(), "step %d", i)
-		assert.Equal(t, map[string]any{"problem.type": "StorageReady", "problem.reason": "IOError", "resource.instanceId": "i-0123456789abcdef0"}, problems.At(0).Attributes().AsRaw())
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"context"
 	"hash/fnv"
 	"net/http"
-	"slices"
 	"sync"
 	"time"
 
@@ -220,16 +219,14 @@ wait:
 }
 
 // BuildCollectors returns a collector for each target, and how long to wait for them each interval.
-// A target without an endpoint is considered inprocess, and only gets a collector if it allowlists eks_problem;
-// resources are attached to its problems.
-func BuildCollectors(cfg *config.Config, source FatalSource, resources map[string]string, logger logr.Logger) ([]scrape.Collector, time.Duration) {
+// A target without an endpoint is NMA itself, which has no collector yet.
+func BuildCollectors(cfg *config.Config, logger logr.Logger) ([]scrape.Collector, time.Duration) {
 	var out []scrape.Collector
 	var wait time.Duration
 	for _, target := range cfg.Targets {
 		if target.Endpoint == nil {
-			if slices.ContainsFunc(target.Metrics, func(spec config.MetricSpec) bool { return spec.Name == nodetelemetry.MetricEksProblem }) {
-				out = append(out, NewInProcessCollector(source, resources))
-			}
+			// TODO: collect NMA's own metrics from its Prometheus registry, including a new metric for
+			// fatal conditions.
 			continue
 		}
 		settings := cfg.Resolve(target)

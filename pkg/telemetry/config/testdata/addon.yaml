@@ -14,7 +14,3 @@ telemetry:
       metrics:
         - { name: awscni_assigned_ip_addresses, type: gauge, unit: "1" }
         - { name: eks_problem }
-
-    - component: node-monitoring-agent
-      metrics:
-        - { name: eks_problem }

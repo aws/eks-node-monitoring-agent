@@ -132,9 +132,6 @@ nodeAgent:
         metrics:
           - { name: awscni_assigned_ip_addresses, type: gauge, unit: "1" }
           - { name: eks_problem }
-      - component: node-monitoring-agent
-        metrics:
-          - { name: eks_problem }
   # -- Pod annotations applied to the eks-node-monitoring-agent
   podAnnotations: {}
 

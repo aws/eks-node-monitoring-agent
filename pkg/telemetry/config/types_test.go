@@ -33,14 +33,13 @@ func TestAutoModeExample(t *testing.T) {
 	assert.True(t, c.IsEnabled())
 	assert.Equal(t, 5*time.Minute, c.ReportInterval())
 	assert.Equal(t, 2, c.NotReportingThreshold())
-	require.Len(t, c.Targets, 3)
+	require.Len(t, c.Targets, 2)
 
 	ipamd := c.Targets[0]
 	assert.Equal(t, "ipamd", ipamd.Component)
 	assert.Equal(t, config.TargetEndpoint{Address: "127.0.0.1", Port: 61678}, *ipamd.Endpoint)
 	assert.Equal(t, "awscni_build_info", ipamd.Identity.RequireMetric)
 	assert.Equal(t, config.MetricSpec{Name: "awscni_aws_api_error_count", Type: config.MetricTypeCounter, Unit: "1", Labels: []string{"api"}}, ipamd.Metrics[1])
-	assert.Nil(t, c.Targets[2].Endpoint, "node-monitoring-agent is read in process")
 }
 
 func TestAddonExample(t *testing.T) {

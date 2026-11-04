@@ -13,19 +13,13 @@ import (
 	telemetryconfig "github.com/aws/eks-node-monitoring-agent/pkg/telemetry/config"
 )
 
-const resourceInstanceID = "instanceId"
-
-func runTelemetry(ctx context.Context, logger logr.Logger, cfg *telemetryconfig.Config, httpClient *http.Client, host string, kubeClient client.Client, source telemetry.FatalSource) {
+func runTelemetry(ctx context.Context, logger logr.Logger, cfg *telemetryconfig.Config, httpClient *http.Client, host string, kubeClient client.Client) {
 	sender := nodetelemetry.NewClient(httpClient, host)
 	attrs, err := telemetry.WaitForNodeAttrs(ctx, logger, kubeClient, hostname)
 	if err != nil {
 		return
 	}
-	var resources map[string]string
-	if attrs.HostID != "" {
-		resources = map[string]string{resourceInstanceID: attrs.HostID}
-	}
-	collectors, scrapeWait := telemetry.BuildCollectors(cfg, source, resources, logger)
+	collectors, scrapeWait := telemetry.BuildCollectors(cfg, logger)
 
 	logger.Info("starting node telemetry", "interval", cfg.ReportInterval(), "collectors", len(collectors), "attributes", attrs)
 	_ = telemetry.NewManager(telemetry.ManagerConfig{

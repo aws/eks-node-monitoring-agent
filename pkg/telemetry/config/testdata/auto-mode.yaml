@@ -34,10 +34,3 @@ telemetry:
       metrics:
         - { name: policy_program_failures, type: counter, unit: "1" }
         - { name: eks_not_reporting }
-
-    - component: node-monitoring-agent
-      metrics:
-        - { name: eks_problem }
-        - { name: eks_pid_utilization, type: gauge, unit: "%" }
-        - { name: eks_net_linklocal_allowance_exceeded, type: counter, unit: "1" }
-        - { name: process_resident_memory_bytes, type: gauge, unit: By }
