@@ -46,9 +46,11 @@ func (m IPAMD) Collect(acc *Accessor) error {
 }
 
 // ipamdDatastores copies every regular file in the IPAMD state directory, not
-// just ipam.json: newer VPC CNI versions keep additional datastore files there
-// (e.g. per-ENI and prefix state). Sockets and subdirectories are skipped. A
-// missing directory means the VPC CNI is not installed and is not an error.
+// just ipam.json: IPAMD keeps one datastore per network card (ipam.json for
+// card 0, ipam-nic-<N>.json for the others), so on multi-card instances
+// ipam.json alone misses most of the IP state. Sockets, symlinks and
+// subdirectories are skipped. A missing directory means the VPC CNI is not
+// installed and is not an error.
 func ipamdDatastores(acc *Accessor) error {
 	var ipamdStateDir = "/var/run/aws-node"
 	if acc.cfg.hasAnyTag(TagBottlerocket) {
