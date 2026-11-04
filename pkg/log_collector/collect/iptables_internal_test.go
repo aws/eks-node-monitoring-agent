@@ -19,7 +19,7 @@ func TestIPVSCollection(t *testing.T) {
 		script := `#!/bin/sh
 case "$*" in
   --version) echo "ipvsadm v1.31 2019/12/24" ;;
-  --save) echo "-A -t 10.100.0.1:443 -s rr" ;;
+  "--save --numeric") echo "-A -t 10.100.0.1:443 -s rr" ;;
   "--list --numeric --rate") echo "rate table" ;;
   "--list --numeric --stats --exact") echo "stats table" ;;
   *) exit 1 ;;
@@ -37,7 +37,7 @@ esac
 
 		got, err := os.ReadFile(filepath.Join(dst, "networking/ipvsadm.txt"))
 		require.NoError(t, err)
-		want := `*** Output of ipvsadm --save ***
+		want := `*** Output of ipvsadm --save --numeric ***
 -A -t 10.100.0.1:443 -s rr
 *** Output of ipvsadm --list --numeric --rate ***
 rate table

@@ -56,8 +56,11 @@ func ipvs(acc *Accessor) error {
 		return nil
 	}
 	return errors.Join(
-		acc.appendOutput("networking/ipvsadm.txt", []byte("*** Output of ipvsadm --save ***\n")),
-		acc.CommandOutput([]string{"ipvsadm", "--save"}, "networking/ipvsadm.txt", CommandOptionsAppend|CommandOptionsNoStderr|CommandOptionsIgnoreFailure),
+		// --numeric: without it, --save reverse-resolves every service and
+		// backend address, which can exceed the command timeout and lose the
+		// whole table, especially when DNS is what's broken.
+		acc.appendOutput("networking/ipvsadm.txt", []byte("*** Output of ipvsadm --save --numeric ***\n")),
+		acc.CommandOutput([]string{"ipvsadm", "--save", "--numeric"}, "networking/ipvsadm.txt", CommandOptionsAppend|CommandOptionsNoStderr|CommandOptionsIgnoreFailure),
 		acc.appendOutput("networking/ipvsadm.txt", []byte("*** Output of ipvsadm --list --numeric --rate ***\n")),
 		acc.CommandOutput([]string{"ipvsadm", "--list", "--numeric", "--rate"}, "networking/ipvsadm.txt", CommandOptionsAppend|CommandOptionsNoStderr|CommandOptionsIgnoreFailure),
 		acc.appendOutput("networking/ipvsadm.txt", []byte("*** Output of ipvsadm --list --numeric --stats --exact ***\n")),
