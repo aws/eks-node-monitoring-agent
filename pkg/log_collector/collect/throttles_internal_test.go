@@ -70,6 +70,7 @@ nr_periods 100
 nr_throttled 3
 throttled_time 5000
      42 ?        Ss     0:01 /usr/bin/throttled-app
+99999 (no ps entry)
 
 /sys/fs/cgroup/kubepods/podB
 nr_periods 50
@@ -80,6 +81,25 @@ throttled_time 200
 `
 	assert.Equal(t, want, got)
 	assert.NotContains(t, got, "innocent-bystander")
+}
+
+// A ps failure must not lose the cgroup paths and cpu.stat contents, which
+// don't depend on ps. ps can't run under the fake root (the command is
+// chrooted into it), so this exercises the failure path.
+func TestCPUThrottlesWritesReportWhenPsFails(t *testing.T) {
+	root := t.TempDir()
+	writeCgroup(t, root, "kubepods/podA", "3", "123\n")
+
+	dst := t.TempDir()
+	acc, err := NewAccessor(context.Background(), Config{Root: root, Destination: dst})
+	require.NoError(t, err)
+
+	assert.Error(t, cpuThrottles(acc), "the ps failure is still reported")
+	got, err := os.ReadFile(filepath.Join(dst, "system/cpu_throttling.txt"))
+	require.NoError(t, err)
+	assert.Contains(t, string(got), "/sys/fs/cgroup/kubepods/podA\n")
+	assert.Contains(t, string(got), "nr_throttled 3\n")
+	assert.Contains(t, string(got), "123 (no ps entry)\n")
 }
 
 func TestCPUThrottlesNoneFound(t *testing.T) {

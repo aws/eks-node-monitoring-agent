@@ -36,11 +36,15 @@ func cpuThrottles(acc *Accessor) error {
 		return errors.Join(merr, acc.WriteOutput("system/cpu_throttling.txt", []byte("No CPU Throttling Found")))
 	}
 
-	psOut, err := acc.CombinedOutput("ps", "ax")
-	if err != nil {
-		return errors.Join(merr, err)
+	// the cgroup paths and cpu.stat contents don't depend on ps, so a ps
+	// failure is reported but the report is still written without ps lines.
+	var psOutput string
+	if psOut, err := acc.CombinedOutput("ps", "ax"); err != nil {
+		merr = errors.Join(merr, err)
+	} else {
+		psOutput = string(psOut)
 	}
-	return errors.Join(merr, acc.WriteOutput("system/cpu_throttling.txt", renderThrottles(cgroups, string(psOut))))
+	return errors.Join(merr, acc.WriteOutput("system/cpu_throttling.txt", renderThrottles(cgroups, psOutput)))
 }
 
 // gatherThrottledCgroups walks the cgroup hierarchy and returns every cgroup
@@ -147,11 +151,13 @@ func renderThrottles(cgroups []throttledCgroup, psOutput string) []byte {
 		buf.WriteString(cgroup.path + "\n")
 		buf.WriteString(strings.TrimRight(cgroup.stat, "\n") + "\n")
 		for _, pid := range cgroup.pids {
+			// a PID with no ps line exited between the cgroup read and ps, or
+			// ps failed; it is still listed so the cgroup's members are recorded
 			if line, ok := psByPID[pid]; ok {
 				buf.WriteString(line + "\n")
+			} else {
+				buf.WriteString(pid + " (no ps entry)\n")
 			}
-			// a PID with no ps line exited between the cgroup read and ps;
-			// the cgroup section above still records that throttling happened
 		}
 		buf.WriteString("\n")
 	}
