@@ -20,6 +20,11 @@ type MonitorSettings struct {
 	AllowedIPTablesChains        []string `yaml:"allowedIPTablesChains,omitempty" json:"allowedIPTablesChains,omitempty"`
 	DCGMPowerThresholdWatts      *uint32  `yaml:"dcgmPowerThresholdWatts,omitempty" json:"dcgmPowerThresholdWatts,omitempty"`
 	ExcludedInterfaceNameRegexps []string `yaml:"excludedInterfaceNameRegexps,omitempty" json:"excludedInterfaceNameRegexps,omitempty"`
+	// DisabledReasons lists reason names (e.g. "IPAMDNotReady") whose
+	// conditions should be suppressed. Only conditions emitted by this
+	// monitor are affected. Parameterized reasons are specified in
+	// their rendered form (e.g. "NvidiaXID79Error").
+	DisabledReasons []string `yaml:"disabledReasons,omitempty" json:"disabledReasons,omitempty"`
 }
 
 // IsEnabled returns true if the monitor is enabled.
@@ -114,6 +119,21 @@ func (mc *MonitorConfig) GetExcludedInterfaceNameRegexps() []string {
 	return settings.ExcludedInterfaceNameRegexps
 }
 
+// GetDisabledReasons returns the disabled reasons keyed by monitor name.
+// An entry only suppresses conditions emitted by that monitor.
+func (mc *MonitorConfig) GetDisabledReasons() map[string][]string {
+	if mc == nil || mc.Monitors == nil {
+		return nil
+	}
+	disabled := make(map[string][]string)
+	for name, settings := range mc.Monitors {
+		if len(settings.DisabledReasons) > 0 {
+			disabled[name] = settings.DisabledReasons
+		}
+	}
+	return disabled
+}
+
 // Validate checks that all keys in Monitors are known plugin names.
 func (mc *MonitorConfig) Validate(knownPluginNames []string) error {
 	if mc == nil || mc.Monitors == nil {
@@ -163,6 +183,11 @@ func (mc *MonitorConfig) Validate(knownPluginNames []string) error {
 				if _, err := regexp.Compile(expr); err != nil {
 					return fmt.Errorf("excludedInterfaceNameRegexps entry %q is not a valid regular expression: %w", expr, err)
 				}
+			}
+		}
+		for _, reason := range settings.DisabledReasons {
+			if reason == "" || strings.TrimSpace(reason) != reason {
+				return fmt.Errorf("disabledReasons entry must not be empty or have leading/trailing whitespace")
 			}
 		}
 	}
