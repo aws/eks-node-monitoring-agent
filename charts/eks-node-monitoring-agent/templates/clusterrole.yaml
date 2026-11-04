@@ -22,3 +22,9 @@ rules:
 - apiGroups: ["eks.amazonaws.com"]
   resources: ["nodediagnostics/status"]
   verbs: ["patch"]
+{{- if .Values.nodeAgent.telemetry.enabled }}
+  # node telemetry permissions
+- apiGroups: ["telemetry.eks.amazonaws.com"]
+  resources: ["metrics"]
+  verbs: ["create"]
+{{- end }}

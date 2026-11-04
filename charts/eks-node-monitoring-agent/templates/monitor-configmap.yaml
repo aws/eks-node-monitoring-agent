@@ -1,4 +1,4 @@
-{{- if .Values.nodeAgent.monitors }}
+{{- if include "eks-node-monitoring-agent.hasAgentConfig" . }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -8,6 +8,26 @@ metadata:
     {{- include "eks-node-monitoring-agent.labels" . | nindent 4 }}
 data:
   config.yaml: |
+    {{- with .Values.nodeAgent.monitors }}
     monitors:
-      {{- toYaml .Values.nodeAgent.monitors | nindent 6 }}
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with .Values.nodeAgent.telemetry }}
+    {{- if .enabled }}
+    telemetry:
+      enabled: true
+      {{- with .report }}
+      report:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .targetDefaults }}
+      targetDefaults:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .targets }}
+      targets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- end }}
+    {{- end }}
 {{- end }}
