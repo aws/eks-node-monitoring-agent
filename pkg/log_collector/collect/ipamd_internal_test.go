@@ -46,7 +46,7 @@ func TestIPAMDDatastores(t *testing.T) {
 		require.NoError(t, err, file)
 		assert.Equal(t, want, string(got), file)
 	}
-	for _, absent := range []string{"ipamd/ipamd.sock", "ipamd/subdir", "ipamd/link.json"} {
+	for _, absent := range []string{"ipamd/ipamd.sock", "ipamd/subdir", "ipamd/link.json", ipamdDatastoreNote} {
 		_, err := os.Stat(filepath.Join(dst, absent))
 		assert.True(t, os.IsNotExist(err), "%s must not be collected", absent)
 	}
@@ -57,11 +57,30 @@ func TestIPAMDDatastoresMissingDirectory(t *testing.T) {
 	acc, err := NewAccessor(context.Background(), Config{Root: t.TempDir(), Destination: dst})
 	require.NoError(t, err)
 
-	// no VPC CNI on the node: not an error, nothing collected
+	// no VPC CNI on the node: not an error, but the bundle says why there are
+	// no datastore files
 	require.NoError(t, ipamdDatastores(acc))
-	entries, err := os.ReadDir(dst)
+	got, err := os.ReadFile(filepath.Join(dst, ipamdDatastoreNote))
 	require.NoError(t, err)
-	assert.Empty(t, entries)
+	assert.Contains(t, string(got), "/var/run/aws-node is not present")
+}
+
+// The VPC CNI is installed but IPAMD hasn't written its checkpoint yet (for
+// example, it is crashing or still starting): the note must say so.
+func TestIPAMDDatastoresNoCheckpoint(t *testing.T) {
+	root := t.TempDir()
+	stateDir := filepath.Join(root, "var/run/aws-node")
+	require.NoError(t, os.MkdirAll(stateDir, 0o755))
+	require.NoError(t, syscall.Mkfifo(filepath.Join(stateDir, "ipamd.sock"), 0o644))
+
+	dst := t.TempDir()
+	acc, err := NewAccessor(context.Background(), Config{Root: root, Destination: dst})
+	require.NoError(t, err)
+
+	require.NoError(t, ipamdDatastores(acc))
+	got, err := os.ReadFile(filepath.Join(dst, ipamdDatastoreNote))
+	require.NoError(t, err)
+	assert.Contains(t, string(got), "ipam.json is not present in /var/run/aws-node")
 }
 
 func TestIPAMDDatastoresBottlerocket(t *testing.T) {
