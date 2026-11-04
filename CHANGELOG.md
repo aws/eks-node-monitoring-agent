@@ -5,6 +5,10 @@ All notable changes to the EKS Node Monitoring Agent will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.7.6] - 2026-10-27
+
+This release rebuilds the agent against the latest distro minimal base image. There are no code changes since v1.7.5.
+
 ## [v1.7.5] - 2026-10-24
 
 This release rebuilds the agent against the latest distro minimal image, and picks up the changes below.
@@ -312,6 +316,7 @@ This release rebuilds the agent against the latest distro minimal image, and pic
 ### What's Changed
 - Update base DCGM image to 4.5.2-4.8.1-ubuntu22.04 to resolve CVEs ([1a2cda4](https://github.com/aws/eks-node-monitoring-agent/commit/1a2cda4))
 
+[v1.7.6]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.7.5...v1.7.6
 [v1.7.5]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.7.4...v1.7.5
 [v1.7.4]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.7.3...v1.7.4
 [v1.7.3]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.7.2...v1.7.3
