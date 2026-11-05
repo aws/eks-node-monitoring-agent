@@ -54,6 +54,12 @@ const (
 	// on the handleIPAMD interval (currently 5m), so this should ideally be kept longer than that
 	// TODO: should preferably use a concept of a minimum rate for a condition in node exporter
 	ipamdNotRunningConsistencyDuration = 15 * time.Minute
+
+	// how long to wait before re-checking IP rules/routes that looked missing. ipamd records an
+	// address as assigned to a container before the CNI plugin finishes writing the pod's ip rule
+	// and route (typically ~100-200ms later), so a single observation during pod startup is not
+	// enough to report MissingIPRules/MissingIPRoutes/MissingDefaultRoutes.
+	defaultIPRulesRecheckDelay = 2 * time.Second
 )
 
 type criIPDetails struct {
@@ -93,6 +99,10 @@ type NetworkingMonitor struct {
 	// efaRailCountDegradedChecks counts consecutive checks that found fewer
 	// available EFA devices than attached ones.
 	efaRailCountDegradedChecks int
+
+	// ipRulesRecheckDelay and getIPState are overridable for tests.
+	ipRulesRecheckDelay time.Duration
+	getIPState          func() (*ipState, error)
 }
 
 func (m *NetworkingMonitor) Name() string {
@@ -170,7 +180,9 @@ func NewNetworkingMonitor(options ...Option) *NetworkingMonitor {
 		runtimeContext:       config.GetRuntimeContext(),
 		efaDriverNotified:    renotify.New[int](efaReNotifyInterval),
 		efaRailCountNotified: renotify.New[efaRailCount](efaReNotifyInterval),
+		ipRulesRecheckDelay:  defaultIPRulesRecheckDelay,
 	}
+	m.getIPState = m.readIPState
 
 	for _, option := range options {
 		option(m)
@@ -254,7 +266,7 @@ func (m *NetworkingMonitor) Register(ctx context.Context, mgr monitor.Manager) e
 
 	for _, handler := range []interface{ Start(context.Context) error }{
 		util.NewChannelHandler(ethtoolTickHandler(mgr, readEthtoolStats), util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
-		util.NewChannelHandler(func(time.Time) error { return m.handleIPRulesAndRoutes() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
+		util.NewChannelHandler(func(time.Time) error { return m.handleIPRulesAndRoutes(ctx) }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleIPTables() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleInterfaces() }, util.TimeTickWithJitterContext(ctx, interfaceMonitorPeriod)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleNetworkSysctl() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
@@ -774,7 +786,16 @@ type ipMetadata struct {
 	primary bool
 }
 
-func (m *NetworkingMonitor) handleIPRulesAndRoutes() (merr error) {
+// ipState is one observation of the IPs ipamd has assigned to containers and the node's
+// ip rules and routes.
+type ipState struct {
+	mode   int
+	meta   map[string]*ipMetadata
+	rules  []string
+	routes []string
+}
+
+func (m *NetworkingMonitor) handleIPRulesAndRoutes(ctx context.Context) error {
 	if slices.Contains(m.runtimeContext.Tags(), config.Hybrid) {
 		// Hybrid nodes do not have ipamd
 		return nil
@@ -789,17 +810,53 @@ func (m *NetworkingMonitor) handleIPRulesAndRoutes() (merr error) {
 		}
 	}
 
+	state, err := m.getIPState()
+	if err != nil || state == nil {
+		return err
+	}
+	issues, err := findIPRuleAndRouteIssues(state.mode, state.meta, state.rules, state.routes)
+	if err != nil || len(issues) == 0 {
+		return err
+	}
+
+	// Something looked missing. Pods that were starting during the first observation may simply
+	// not have had their rule/route written yet, so observe again and only report issues that are
+	// still present (for IPs that are still assigned).
+	select {
+	case <-ctx.Done():
+		return nil
+	case <-time.After(m.ipRulesRecheckDelay):
+	}
+	state, err = m.getIPState()
+	if err == nil && state != nil {
+		var again []ipRuleRouteIssue
+		again, err = findIPRuleAndRouteIssues(state.mode, state.meta, state.rules, state.routes)
+		if err == nil {
+			return m.notifyIPRuleAndRouteIssues(reportableIPRuleAndRouteIssues(intersectIPRuleAndRouteIssues(issues, again)))
+		}
+	}
+	if err != nil {
+		// The recheck could not be done; fall back to reporting the first observation.
+		return errors.Join(err, m.notifyIPRuleAndRouteIssues(reportableIPRuleAndRouteIssues(issues)))
+	}
+	// state == nil: no addresses are assigned any more, so nothing is missing.
+	return nil
+}
+
+// readIPState reads the current ipamd assignments and the node's ip rules and routes. It returns
+// a nil state when there are no assigned addresses to validate.
+func (m *NetworkingMonitor) readIPState() (*ipState, error) {
 	enis, err := ipamd.GetEndpoint(ipamd.EndpointEnis)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	rules, err := toolexec.GetRules()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	routes, err := toolexec.GetRoutes()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// holds metadata about the ip address
@@ -824,7 +881,7 @@ func (m *NetworkingMonitor) handleIPRulesAndRoutes() (merr error) {
 
 	if len(ipMeta) == 0 {
 		// exit early if there are no allocations to work with
-		return nil
+		return nil, nil
 	}
 
 	// derive the ip mode using the first ip from the list.
@@ -836,12 +893,73 @@ func (m *NetworkingMonitor) handleIPRulesAndRoutes() (merr error) {
 		break
 	}
 
-	return errors.Join(merr,
-		m.checkIPRulesAndRoutes(ipMode, ipMeta, rules, routes),
-	)
+	return &ipState{mode: ipMode, meta: ipMeta, rules: rules, routes: routes}, nil
 }
 
-func (m *NetworkingMonitor) checkIPRulesAndRoutes(ipMode int, ipMeta map[string]*ipMetadata, rules []string, routes []string) (merr error) {
+// ipRuleRouteIssue is one MissingIPRules/MissingIPRoutes/MissingDefaultRoutes finding. key
+// identifies the same finding across observations; ip is set for rule and route findings.
+type ipRuleRouteIssue struct {
+	key       string
+	ip        string
+	condition monitor.Condition
+}
+
+// checkIPRulesAndRoutes reports the issues of a single observation, without a recheck. It is
+// the single-observation path used by the unit tests.
+func (m *NetworkingMonitor) checkIPRulesAndRoutes(ipMode int, ipMeta map[string]*ipMetadata, rules []string, routes []string) error {
+	issues, err := findIPRuleAndRouteIssues(ipMode, ipMeta, rules, routes)
+	if err != nil {
+		return err
+	}
+	return m.notifyIPRuleAndRouteIssues(reportableIPRuleAndRouteIssues(issues))
+}
+
+// reportableIPRuleAndRouteIssues reports at most one issue per pod IP: a missing rule takes
+// precedence over a missing route for the same IP.
+func reportableIPRuleAndRouteIssues(issues []ipRuleRouteIssue) []ipRuleRouteIssue {
+	missingRule := map[string]bool{}
+	for _, issue := range issues {
+		if issue.key == "rule/"+issue.ip {
+			missingRule[issue.ip] = true
+		}
+	}
+	var out []ipRuleRouteIssue
+	for _, issue := range issues {
+		if issue.key == "route/"+issue.ip && missingRule[issue.ip] {
+			continue
+		}
+		out = append(out, issue)
+	}
+	return out
+}
+
+func (m *NetworkingMonitor) notifyIPRuleAndRouteIssues(issues []ipRuleRouteIssue) (merr error) {
+	for _, issue := range issues {
+		merr = errors.Join(merr, m.manager.Notify(context.TODO(), issue.condition))
+	}
+	return merr
+}
+
+// intersectIPRuleAndRouteIssues keeps the issues of the second observation that were also present
+// in the first.
+func intersectIPRuleAndRouteIssues(first, second []ipRuleRouteIssue) []ipRuleRouteIssue {
+	seen := make(map[string]struct{}, len(first))
+	for _, issue := range first {
+		seen[issue.key] = struct{}{}
+	}
+	var out []ipRuleRouteIssue
+	for _, issue := range second {
+		if _, ok := seen[issue.key]; ok {
+			out = append(out, issue)
+		}
+	}
+	return out
+}
+
+// findIPRuleAndRouteIssues returns every finding of a single observation, with a missing rule and
+// a missing route for the same IP as separate findings, so that each can be matched across
+// observations. Use reportableIPRuleAndRouteIssues before notifying.
+func findIPRuleAndRouteIssues(ipMode int, ipMeta map[string]*ipMetadata, rules []string, routes []string) (issues []ipRuleRouteIssue, err error) {
 	type ipData struct {
 		ipRuleExistsErr  error
 		ipRouteExistsErr error
@@ -870,7 +988,7 @@ func (m *NetworkingMonitor) checkIPRulesAndRoutes(ipMode int, ipMeta map[string]
 				ipRouteExistsErr: fmt.Errorf("Expected entry like `%s dev <dev> metric 1024 pref medium`", ip),
 			}
 		default:
-			return fmt.Errorf("invalid ip mode")
+			return nil, fmt.Errorf("invalid ip mode")
 		}
 	}
 
@@ -935,33 +1053,36 @@ func (m *NetworkingMonitor) checkIPRulesAndRoutes(ipMode int, ipMeta map[string]
 				}
 			}
 		default:
-			return fmt.Errorf("invalid ip mode")
+			return nil, fmt.Errorf("invalid ip mode")
 		}
 	}
 
 	// ~ evaluate the results of the ips ~
 
 	for ip, data := range ips {
-		var item string
+		var prefix string
 		if meta, ok := ipMeta[ip]; ok && meta.primary {
-			item = "secondary "
+			prefix = "secondary "
 		}
 		if data.ipRuleExistsErr != nil {
-			item += "rules"
-			merr = errors.Join(merr, m.manager.Notify(context.TODO(),
-				reasons.MissingIPRules.
+			issues = append(issues, ipRuleRouteIssue{
+				key: "rule/" + ip,
+				ip:  ip,
+				condition: reasons.MissingIPRules.
 					Builder().
-					Message(fmt.Sprintf("Pod IP %s is missing %s: %s", ip, item, data.ipRuleExistsErr)).
+					Message(fmt.Sprintf("Pod IP %s is missing %srules: %s", ip, prefix, data.ipRuleExistsErr)).
 					Build(),
-			))
-		} else if data.ipRouteExistsErr != nil {
-			item += "routes"
-			merr = errors.Join(merr, m.manager.Notify(context.TODO(),
-				reasons.MissingIPRoutes.
+			})
+		}
+		if data.ipRouteExistsErr != nil {
+			issues = append(issues, ipRuleRouteIssue{
+				key: "route/" + ip,
+				ip:  ip,
+				condition: reasons.MissingIPRoutes.
 					Builder().
-					Message(fmt.Sprintf("Pod IP %s is missing %s: %s", ip, item, data.ipRouteExistsErr)).
+					Message(fmt.Sprintf("Pod IP %s is missing %sroutes: %s", ip, prefix, data.ipRouteExistsErr)).
 					Build(),
-			))
+			})
 		}
 	}
 
@@ -969,16 +1090,17 @@ func (m *NetworkingMonitor) checkIPRulesAndRoutes(ipMode int, ipMeta map[string]
 
 	for tableName, table := range tables {
 		if table.defaultRouteExistsErr != nil {
-			merr = errors.Join(merr, m.manager.Notify(context.TODO(),
-				reasons.MissingDefaultRoutes.
+			issues = append(issues, ipRuleRouteIssue{
+				key: "table/" + tableName,
+				condition: reasons.MissingDefaultRoutes.
 					Builder().
 					Message(fmt.Sprintf("Missing default route rules for table %s: %s", tableName, table.defaultRouteExistsErr)).
 					Build(),
-			))
+			})
 		}
 	}
 
-	return merr
+	return issues, nil
 }
 
 // ~~~~ ip tables ~~~~
