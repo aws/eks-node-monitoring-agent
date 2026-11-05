@@ -160,7 +160,7 @@ func NvidiaHealthyVerdictWrapper(t *testing.T, testenv env.Environment) {
 	if nvidiaHealthyVerdictObserve <= 0 {
 		t.Skip("--nvidia-healthy-verdict is not set")
 	}
-	testenv.Test(t, monitors.NvidiaHealthyVerdict(nvidiaHealthyVerdictObserve))
+	testenv.Test(t, monitors.NvidiaHealthyVerdict(awsCfg, nvidiaHealthyVerdictObserve))
 }
 
 // gets passed into the soak test as a health check.

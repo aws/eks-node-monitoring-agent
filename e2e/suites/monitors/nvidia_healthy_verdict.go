@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	nodeconditions "github.com/aws/eks-node-monitoring-agent/pkg/conditions"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/e2e-framework/klient/wait"
@@ -34,7 +37,8 @@ const (
 	// node before the test gives up without a verdict.
 	maxConsecutiveReadErrors = 4
 
-	neuronReasonPrefix = "Neuron"
+	// nvidiaManufacturer is the GPU manufacturer EC2 reports for NVIDIA GPUs.
+	nvidiaManufacturer = "NVIDIA"
 )
 
 // NvidiaHealthyVerdict checks NMA's verdict on NVIDIA hardware that is expected
@@ -52,16 +56,29 @@ const (
 // a verdict. When it cannot get one (no NVIDIA node, a node goes away or stops
 // being Ready, the API cannot be read) it fails without printing the line, so
 // the workflow records no result instead of a wrong verdict.
-func NvidiaHealthyVerdict(observeFor time.Duration) types.Feature {
+func NvidiaHealthyVerdict(awsCfg aws.Config, observeFor time.Duration) types.Feature {
+	ec2Client := ec2.NewFromConfig(awsCfg)
 	var nodeNames []string
 
 	return features.New("NvidiaHealthyVerdict").
 		Setup(func(ctx context.Context, t *testing.T, cfg *envconf.Config) context.Context {
+			// go test's default --test.timeout (10m) is shorter than the node wait
+			// plus the window, so fail now instead of being stopped with no verdict.
+			// The extra minute covers the last poll and API calls.
+			if deadline, ok := t.Deadline(); ok {
+				need := nvidiaNodeWaitTimeout + observeFor + time.Minute
+				if left := time.Until(deadline); left < need {
+					t.Fatalf("--test.timeout leaves %s but the test can take %s, so there is no verdict; raise --test.timeout",
+						left.Round(time.Second), need)
+				}
+			}
+
+			isNvidia := map[string]bool{}
 			err := wait.For(
 				func(ctx context.Context) (bool, error) {
-					names, err := nvidiaNodeNames(ctx, cfg)
+					names, err := nvidiaNodeNames(ctx, cfg, ec2Client, isNvidia)
 					if err != nil {
-						t.Logf("listing nodes: %v", err)
+						t.Logf("finding NVIDIA nodes: %v", err)
 						return false, nil
 					}
 					nodeNames = names
@@ -155,23 +172,66 @@ func checkNvidiaNodes(ctx context.Context, t *testing.T, cfg *envconf.Config, no
 	return unhealthy, nil
 }
 
-// nvidiaNodeNames returns the nodes on which NMA reports
-// AcceleratedHardwareReady for NVIDIA hardware. NMA adds the condition only on
-// accelerated nodes, and every Neuron reason starts with "Neuron", so any other
-// reason (healthy or not) means an NVIDIA node.
-func nvidiaNodeNames(ctx context.Context, cfg *envconf.Config) ([]string, error) {
+// nvidiaNodeNames returns the nodes with NVIDIA GPUs on which NMA reports
+// AcceleratedHardwareReady. Whether a node has NVIDIA GPUs comes from EC2's
+// info for its instance type, not from the condition: the condition's message
+// names the vendor only while it is True, and the test must also find nodes NMA
+// already reports unhealthy. isNvidia caches the answer per instance type.
+func nvidiaNodeNames(ctx context.Context, cfg *envconf.Config, ec2Client *ec2.Client, isNvidia map[string]bool) ([]string, error) {
 	var nodeList corev1.NodeList
 	if err := cfg.Client().Resources().List(ctx, &nodeList); err != nil {
 		return nil, err
 	}
-	var names []string
+
+	var accelerated []corev1.Node
+	unknown := map[string]bool{}
 	for _, node := range nodeList.Items {
-		condition := GetNodeStatusCondition(&node, isConditionType(nodeconditions.AcceleratedHardwareReady))
-		if condition != nil && !strings.HasPrefix(condition.Reason, neuronReasonPrefix) {
+		if GetNodeStatusCondition(&node, isConditionType(nodeconditions.AcceleratedHardwareReady)) == nil {
+			continue
+		}
+		accelerated = append(accelerated, node)
+		instanceType := node.Labels[corev1.LabelInstanceTypeStable]
+		if _, known := isNvidia[instanceType]; instanceType != "" && !known {
+			unknown[instanceType] = true
+		}
+	}
+
+	if len(unknown) > 0 {
+		var instanceTypes []ec2types.InstanceType
+		for instanceType := range unknown {
+			instanceTypes = append(instanceTypes, ec2types.InstanceType(instanceType))
+		}
+		pages := ec2.NewDescribeInstanceTypesPaginator(ec2Client, &ec2.DescribeInstanceTypesInput{InstanceTypes: instanceTypes})
+		for pages.HasMorePages() {
+			page, err := pages.NextPage(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("describing instance types %v: %w", instanceTypes, err)
+			}
+			for _, info := range page.InstanceTypes {
+				isNvidia[string(info.InstanceType)] = hasNvidiaGPU(info)
+			}
+		}
+	}
+
+	var names []string
+	for _, node := range accelerated {
+		if isNvidia[node.Labels[corev1.LabelInstanceTypeStable]] {
 			names = append(names, node.Name)
 		}
 	}
 	return names, nil
+}
+
+func hasNvidiaGPU(info ec2types.InstanceTypeInfo) bool {
+	if info.GpuInfo == nil {
+		return false
+	}
+	for _, gpu := range info.GpuInfo.Gpus {
+		if strings.EqualFold(aws.ToString(gpu.Manufacturer), nvidiaManufacturer) {
+			return true
+		}
+	}
+	return false
 }
 
 func isConditionType(conditionType corev1.NodeConditionType) func(corev1.NodeCondition) bool {
