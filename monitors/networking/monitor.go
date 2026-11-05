@@ -1088,9 +1088,12 @@ const efaRailCountMismatchChecks = 3
 // efaDriverNotLoadedWindow is how long no attached EFA device may be bound to
 // the efa driver before EFADriverNotLoaded is reported. A node in this state
 // has no working EFA but stays schedulable, so on Auto Mode it is reported as
-// a Fatal condition so node repair can replace the node. Other nodes may run
-// an AMI without the efa driver, where repair would not help, so they get a
-// Warning instead.
+// a Fatal condition so node repair can act on it. The EFA device is present
+// but the driver did not bind, which a reboot usually clears, so the intended
+// repair is a reboot. Until node repair has a Reboot rule for this reason,
+// NetworkingReady's default replaces the node.
+// Other nodes may run an AMI without the efa driver, where repair would not
+// help, so they get a Warning instead.
 const efaDriverNotLoadedWindow = 15 * time.Minute
 
 func (m *NetworkingMonitor) handleEFADevices(ctx context.Context, now time.Time) error {
