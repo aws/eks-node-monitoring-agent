@@ -37,7 +37,7 @@ func NeuronMonitor(awsCfg aws.Config) types.Feature {
 						"-c",
 						"echo 'kernel: NEURON_HW_ERR=SRAM_UNCORRECTABLE_ERROR affecting neuron devices' | tee -a /host/dev/kmsg",
 					},
-					Image:           "public.ecr.aws/amazonlinux/amazonlinux:2023-minimal",
+					Image:           TestImage,
 					SecurityContext: &privilegedContext,
 					VolumeMounts:    []corev1.VolumeMount{hostRootMount},
 				},

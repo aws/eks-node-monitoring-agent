@@ -29,7 +29,7 @@ func StressFileObserver() types.Feature {
 						"-c",
 						"while true; do echo 'log' | tee -a /host/dev/kmsg; sleep 0.001; done",
 					},
-					Image:           "public.ecr.aws/amazonlinux/amazonlinux:2023-minimal",
+					Image:           TestImage,
 					SecurityContext: &privilegedContext,
 					VolumeMounts:    []corev1.VolumeMount{hostRootMount},
 				},
