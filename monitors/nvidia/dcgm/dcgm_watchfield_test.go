@@ -5,6 +5,7 @@ package dcgm_test
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
+	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/classify"
 	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/dcgm"
 	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/dcgm/fake"
 )
@@ -155,8 +157,12 @@ func TestFields(t *testing.T) {
 		fieldValue.Status = dcgmapi.DCGM_ST_OK
 		// route_unhealthy=True (value 1 at shift 4) is a genuine fault.
 		binary.LittleEndian.PutUint64(fieldValue.Value[:], 0x10)
-		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}}
+		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}, DeviceCount: 1}
 		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
+		// nvidia-smi cannot be read, so the fault stays Fatal.
+		dcgm.SetFabricCrossCheck(dcgmSystem, func(context.Context) (*classify.FabricCrossCheck, error) {
+			return nil, errors.New("nvidia-smi not found")
+		})
 		conditions, err := dcgmSystem.WatchFields(context.TODO())
 		assert.NoError(t, err)
 		assert.ElementsMatch(t, []monitor.Condition{{
@@ -179,9 +185,46 @@ func TestFields(t *testing.T) {
 		binary.LittleEndian.PutUint64(fieldValue.Value[:], 0x80) // access_timeout_recovery=False
 		mockDcgm := &fake.FakeDcgm{FieldValues: []dcgmapi.FieldValue_v2{fieldValue}}
 		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
+		dcgm.SetFabricCrossCheck(dcgmSystem, failIfCrossChecked(t))
 		conditions, err := dcgmSystem.WatchFields(context.TODO())
 		assert.NoError(t, err)
 		assert.Empty(t, conditions)
+	})
+
+	// nvidia-smi reports every GPU Healthy: one Warning, nvidia-smi read once
+	// per call, and the repeat is rate-limited.
+	t.Run("FabricHealthMaskFaultNotConfirmedByNvidiaSMI", func(t *testing.T) {
+		mockDcgm := &fake.FakeDcgm{FieldValues: healthMasks(0x40, 0x40), DeviceCount: 2}
+		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
+		now := time.Unix(0, 0)
+		dcgm.SetClock(dcgmSystem, func() time.Time { return now })
+		reads := 0
+		dcgm.SetFabricCrossCheck(dcgmSystem, func(context.Context) (*classify.FabricCrossCheck, error) {
+			reads++
+			return &classify.FabricCrossCheck{
+				GPUs: []classify.GPUFabricHealth{
+					{BusID: "00000000:51:00.0", HealthSummary: "Healthy"},
+					{BusID: "00000000:52:00.0", HealthSummary: "Healthy"},
+				},
+				ProcessesRunning: true,
+			}, nil
+		})
+		warning := monitor.Condition{
+			Reason:   "NvidiaFabricWarning",
+			Message:  "GPU fabric health mask 0x40: access_timeout_recovery=1; nvidia-smi reports fabric health summary Healthy on all 2 GPUs; GPU processes running: yes",
+			Severity: monitor.SeverityWarning,
+		}
+
+		conditions, err := dcgmSystem.WatchFields(context.TODO())
+		assert.NoError(t, err)
+		assert.Equal(t, []monitor.Condition{warning}, conditions)
+		assert.Equal(t, 1, reads)
+
+		now = now.Add(5 * time.Minute)
+		conditions, err = dcgmSystem.WatchFields(context.TODO())
+		assert.NoError(t, err)
+		assert.Empty(t, conditions)
+		assert.Equal(t, 2, reads)
 	})
 
 	// DCGM stores a blank value (DCGM_FT_INT64_BLANK, with status OK) when it
@@ -197,6 +240,7 @@ func TestFields(t *testing.T) {
 		}
 		mockDcgm := &fake.FakeDcgm{FieldValues: fieldValues}
 		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
+		dcgm.SetFabricCrossCheck(dcgmSystem, failIfCrossChecked(t))
 		conditions, err := dcgmSystem.WatchFields(context.TODO())
 		assert.NoError(t, err)
 		assert.Empty(t, conditions)
@@ -257,6 +301,25 @@ func TestFields(t *testing.T) {
 			})
 		}
 	})
+}
+
+// healthMasks returns one mask field value per GPU, starting at GPU 0.
+func healthMasks(masks ...uint64) []dcgmapi.FieldValue_v2 {
+	var fieldValues []dcgmapi.FieldValue_v2
+	for gpu, mask := range masks {
+		fieldValue := dcgmapi.FieldValue_v2{FieldID: dcgmapi.DCGM_FI_DEV_FABRIC_HEALTH_MASK, EntityID: uint(gpu), Status: dcgmapi.DCGM_ST_OK}
+		binary.LittleEndian.PutUint64(fieldValue.Value[:], mask)
+		fieldValues = append(fieldValues, fieldValue)
+	}
+	return fieldValues
+}
+
+// failIfCrossChecked fails the test if nvidia-smi is read.
+func failIfCrossChecked(t *testing.T) func(context.Context) (*classify.FabricCrossCheck, error) {
+	return func(context.Context) (*classify.FabricCrossCheck, error) {
+		t.Error("nvidia-smi was read, but no fabric health mask needed a cross-check")
+		return nil, errors.New("unexpected nvidia-smi read")
+	}
 }
 
 // TestFieldsClockThrottleReasons pins the message for the clock-throttle field
