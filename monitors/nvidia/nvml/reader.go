@@ -95,9 +95,11 @@ type Reader struct {
 	probeStuckSince time.Time
 	held            string
 
-	// lib and path are only touched by Reconcile.
-	lib  gonvml.Interface
-	path string
+	// lib and path are only touched by Reconcile. initFailed is true while
+	// a DCGMError for a failed Init is reported and not yet resolved.
+	lib        gonvml.Interface
+	path       string
+	initFailed bool
 
 	// ready is set once by Reconcile when Init succeeds, and read by checks
 	// through Library. It is nil until then.
@@ -164,7 +166,9 @@ func (r *Reader) gpuIdentities() []gpuIdentity {
 //     Warning, never a condition. A missing library is an agent packaging
 //     problem that replacing the node does not fix.
 //   - Init returns an error past the grace period: Fatal DCGMError, the
-//     reason package dcgm reports when it cannot reach the hostengine.
+//     reason package dcgm reports when it cannot reach the hostengine. A
+//     later Init that succeeds resolves it, so a node that lost a boot race
+//     with the driver recovers without an agent restart.
 //   - Init, or every check that reads the GPUs, with a call in the driver
 //     for stallDuration: a rate-limited NvidiaDriverNotResponding Warning.
 //     A call that has not returned is not by itself evidence of a GPU
@@ -236,14 +240,28 @@ func (r *Reader) recordInit(ctx context.Context, res initResult) []monitor.Condi
 	if ret == gonvml.SUCCESS {
 		r.ready.Store(&readyLibrary{lib: r.lib, symbols: lookupNewerSymbols(r.lib.Extensions()), gpus: res.gpus})
 		log.FromContext(ctx).Info("initialized NVML", "path", r.path)
-		return nil
+		if !r.initFailed {
+			return nil
+		}
+		r.initFailed = false
+		return []monitor.Condition{resolved(reasons.DCGMError.Builder().
+			Message("NVML initialized").
+			Build())}
 	}
 	if r.inGracePeriod() {
 		return nil
 	}
+	r.initFailed = true
 	return []monitor.Condition{reasons.DCGMError.Builder().
 		Message(fmt.Sprintf("failed to initialize NVML: %v", ret)).
 		Build()}
+}
+
+// resolved marks a Fatal condition as recovered, which clears its reason
+// from the node condition.
+func resolved(c monitor.Condition) monitor.Condition {
+	c.Resolved = true
+	return c
 }
 
 // initStuck reports an Init that has been in the driver for stallDuration.

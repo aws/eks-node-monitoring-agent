@@ -42,6 +42,7 @@ func NewNvidiaMonitor() *nvidiaMonitor {
 		}),
 		tickFunc:                 util.TimeTickWithJitterContext,
 		instanceTypeInfoProvider: instanceinfo.NewInstanceTypeInfoProvider(),
+		newNVMLChecks:            newNVMLChecks,
 	}
 }
 
@@ -51,6 +52,7 @@ func NewNvidiaMonitorWithDeps(dcgmClient dcgm.DCGM, tickFunc TickFunc, provider 
 		dcgmClient:               dcgmClient,
 		tickFunc:                 tickFunc,
 		instanceTypeInfoProvider: provider,
+		newNVMLChecks:            newNVMLChecks,
 	}
 }
 
@@ -63,6 +65,12 @@ type nvidiaMonitor struct {
 	dcgmClient               dcgm.DCGM
 	tickFunc                 TickFunc
 	instanceTypeInfoProvider instanceinfo.InstanceTypeInfoProvider
+
+	// newNVMLChecks creates the NVML checks when the monitor reads through
+	// NVML. powerThresholdWatts is the configured power threshold, zero when
+	// none is configured. Both are set before Register.
+	newNVMLChecks       func(nvmlConfig) nvmlChecks
+	powerThresholdWatts uint32
 }
 
 func (m *nvidiaMonitor) Name() string {
@@ -75,9 +83,20 @@ func (m *nvidiaMonitor) Conditions() []monitor.Condition {
 
 func (m *nvidiaMonitor) SetDCGMPowerThresholdWatts(watts uint32) {
 	m.dcgmClient.SetPowerPolicyThresholdWatts(watts)
+	m.powerThresholdWatts = watts
 }
 
 func (m *nvidiaMonitor) Register(ctx context.Context, mgr monitor.Manager) error {
+	if m.backend(ctx) == backendNVML {
+		m.registerNVML(ctx, mgr)
+	} else {
+		m.registerDCGM(ctx, mgr)
+	}
+	return m.registerNCCL(ctx, mgr)
+}
+
+// registerDCGM reads GPU health from the DCGM hostengine.
+func (m *nvidiaMonitor) registerDCGM(ctx context.Context, mgr monitor.Manager) {
 	logger := log.FromContext(ctx)
 
 	dcgmSystem := dcgm.NewDCGMSystemWithInstanceTypeInfoProvider(m.dcgmClient, dcgm.GetDiagType(), m.instanceTypeInfoProvider)
@@ -182,6 +201,12 @@ func (m *nvidiaMonitor) Register(ctx context.Context, mgr monitor.Manager) error
 			}
 		}
 	}()
+
+}
+
+// registerNCCL reports NCCL errors from the kernel log, on either backend.
+func (m *nvidiaMonitor) registerNCCL(ctx context.Context, mgr monitor.Manager) error {
+	logger := log.FromContext(ctx)
 
 	// NCCL error monitoring from dmesg
 	kmsg, err := mgr.Subscribe(resource.ResourceTypeDmesg, []resource.Part{})
