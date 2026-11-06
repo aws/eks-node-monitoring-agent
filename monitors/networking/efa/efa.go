@@ -24,6 +24,10 @@ const (
 
 	// https://www.kernel.org/doc/Documentation/ABI/stable/sysfs-class-infiniband
 	infinibandSysfsPath = "/sys/class/infiniband"
+
+	// https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-bus-pci
+	pciDevicesSysfsPath = "/sys/bus/pci/devices"
+	efaDriverName       = "efa"
 )
 
 func NewEFASystem() *efaSystem {
@@ -190,6 +194,100 @@ func (efa *efaSystem) HardwareCounters(ctx context.Context) ([]monitor.Condition
 	return conditions, nil
 }
 
+// CountActiveEFADevices returns the number of EFA devices under
+// /sys/class/infiniband with a port that is ACTIVE and LinkUp. Being registered
+// there only means the driver set the device up, not that its link works.
+func CountActiveEFADevices() (int, error) {
+	entries, err := os.ReadDir(config.ToHostPath(infinibandSysfsPath))
+	if err != nil {
+		// nodes without any rdma devices do not have the infiniband class.
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	count := 0
+	for _, entry := range entries {
+		// NOTE: entries are symlinks into the pci device tree, so we don't
+		// filter on entry.IsDir().
+		vendorId, deviceId, err := readInfinibandDeviceInfo(entry.Name())
+		if err != nil {
+			continue
+		}
+		if vendorId == EFA_VENDOR_ID && strings.HasPrefix(deviceId, EFA_DEVICE_ID_PREFIX) && hasActivePort(entry.Name()) {
+			count++
+		}
+	}
+	return count, nil
+}
+
+// hasActivePort reports whether any port of the infiniband device has a
+// logical state of ACTIVE and a physical state of LinkUp.
+func hasActivePort(deviceName string) bool {
+	portDirs, err := filepath.Glob(config.ToHostPath(filepath.Join(infinibandSysfsPath, deviceName, "ports", "*")))
+	if err != nil {
+		return false
+	}
+	for _, portDir := range portDirs {
+		if readPortState(filepath.Join(portDir, "state")) == "ACTIVE" && readPortState(filepath.Join(portDir, "phys_state")) == "LinkUp" {
+			return true
+		}
+	}
+	return false
+}
+
+// readPortState returns the name from a port state file, which contains a
+// value like "4: ACTIVE" or "5: LinkUp", or an empty string if it can't be read.
+func readPortState(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	_, name, _ := strings.Cut(string(data), ":")
+	return strings.TrimSpace(name)
+}
+
+// EFAPCIDevices summarizes the EFA PCI devices on the node.
+type EFAPCIDevices struct {
+	// Attached is the number of EFA PCI devices. The instance exposes one for
+	// each EFA interface attached at launch, whether or not the efa driver
+	// loads, so zero means EFA was not requested.
+	Attached int
+	// Bound is the number of those devices bound to the efa driver.
+	Bound int
+}
+
+// CountEFAPCIDevices returns the EFA PCI devices on the node and how many of
+// them are bound to the efa driver.
+func CountEFAPCIDevices() (EFAPCIDevices, error) {
+	var devices EFAPCIDevices
+	entries, err := os.ReadDir(config.ToHostPath(pciDevicesSysfsPath))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return devices, nil
+		}
+		return devices, err
+	}
+	for _, entry := range entries {
+		// NOTE: entries are symlinks into the pci device tree, so we don't
+		// filter on entry.IsDir().
+		deviceDir := config.ToHostPath(filepath.Join(pciDevicesSysfsPath, entry.Name()))
+		vendorId, deviceId, err := readDeviceInfo(deviceDir)
+		if err != nil {
+			continue
+		}
+		if vendorId != EFA_VENDOR_ID || !strings.HasPrefix(deviceId, EFA_DEVICE_ID_PREFIX) {
+			continue
+		}
+		devices.Attached++
+		// the driver link only exists while a driver is bound to the device.
+		if driver, err := os.Readlink(filepath.Join(deviceDir, "driver")); err == nil && filepath.Base(driver) == efaDriverName {
+			devices.Bound++
+		}
+	}
+	return devices, nil
+}
+
 type deviceCounterTracker struct {
 	counterValue int
 	rateLimiter  *rate.Limiter
@@ -232,7 +330,11 @@ func globIndex(pathPattern string, index int) int {
 }
 
 func readInfinibandDeviceInfo(deviceName string) (string, string, error) {
-	deviceDir := config.ToHostPath(filepath.Join(infinibandSysfsPath, deviceName, "/device"))
+	return readDeviceInfo(config.ToHostPath(filepath.Join(infinibandSysfsPath, deviceName, "/device")))
+}
+
+// readDeviceInfo reads the vendor and device ids of the pci device at deviceDir.
+func readDeviceInfo(deviceDir string) (string, string, error) {
 	vendor, err := os.ReadFile(filepath.Join(deviceDir, "vendor"))
 	if err != nil {
 		return "", "", err
