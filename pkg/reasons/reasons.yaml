@@ -317,6 +317,23 @@ NetworkingReady:
       instance, for three consecutive checks. A device is available when it is
       bound to the efa driver and its port is ACTIVE and LinkUp. Missing rails
       may reduce the network bandwidth available across rails.
+  CoreDNSCorefileAgentUnavailable:
+    Template: 'CoreDNSCorefileAgentUnavailable'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      The agent that applies a custom CoreDNS Corefile on this Auto Mode node
+      has not reported an outcome for 20 minutes: it is not running, not
+      answering, or still initializing. A custom Corefile set on the NodeClass
+      may not be applied. Auto Mode only.
+  CoreDNSCorefileApplied:
+    Template: 'CoreDNSCorefileApplied'
+    DefaultSeverity: 'Info'
+    Description: >-
+      CoreDNS on this Auto Mode node is serving the customer's Corefile from
+      the ConfigMap referenced by the NodeClass. Reported when the node
+      settles on that Corefile after a different outcome or after
+      CoreDNSCorefileAgentUnavailable, and again when the node monitoring agent
+      restarts. Informational; no action is needed. Auto Mode only.
   CoreDNSCorefileValidationFailed:
     Template: 'CoreDNSCorefileValidationFailed'
     DefaultSeverity: 'Warning'
