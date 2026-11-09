@@ -113,6 +113,10 @@ var (
 
 	// reasons for the ContainerRuntimeReady condition.
 
+	CRIProxyUnhealthy = ReasonMeta{
+		template:        "CRIProxyUnhealthy",
+		defaultSeverity: "Fatal",
+	}
 	ContainerRuntimeFailed = ReasonMeta{
 		template:        "ContainerRuntimeFailed",
 		defaultSeverity: "Warning",
@@ -124,6 +128,10 @@ var (
 	KubeletFailed = ReasonMeta{
 		template:        "KubeletFailed",
 		defaultSeverity: "Warning",
+	}
+	LeakedSandboxResources = ReasonMeta{
+		template:        "LeakedSandboxResources",
+		defaultSeverity: "Fatal",
 	}
 	LivenessProbeFailures = ReasonMeta{
 		template:        "LivenessProbeFailures",
@@ -398,9 +406,11 @@ var byName = map[string]ReasonMeta{
 	"NvidiaThermalError":                   NvidiaThermalError,
 	"NvidiaXIDError":                       NvidiaXIDError,
 	"NvidiaXIDWarning":                     NvidiaXIDWarning,
+	"CRIProxyUnhealthy":                    CRIProxyUnhealthy,
 	"ContainerRuntimeFailed":               ContainerRuntimeFailed,
 	"DeprecatedContainerdConfiguration":    DeprecatedContainerdConfiguration,
 	"KubeletFailed":                        KubeletFailed,
+	"LeakedSandboxResources":               LeakedSandboxResources,
 	"LivenessProbeFailures":                LivenessProbeFailures,
 	"PodStuckTerminating":                  PodStuckTerminating,
 	"ReadinessProbeFailures":               ReadinessProbeFailures,

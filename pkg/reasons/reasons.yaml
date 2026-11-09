@@ -131,6 +131,18 @@ ContainerRuntimeReady:
     Description: >-
       A container image using deprecated image manifest version 2, schema 1 was
       recently pulled onto the node through `containerd`.
+  CRIProxyUnhealthy:
+    Template: 'CRIProxyUnhealthy'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      The CRI proxy that serves the container runtime endpoint on nodes running
+      isolated pods is not serving requests, so the node cannot start pods.
+  LeakedSandboxResources:
+    Template: 'LeakedSandboxResources'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      Sandboxes that no longer belong to any pod are holding every isolated pod
+      slot on the node, so no new isolated pod can start on it.
 NetworkingReady:
   MACAddressPolicyMisconfigured:
     Template: 'MACAddressPolicyMisconfigured'

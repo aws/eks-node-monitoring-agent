@@ -43,6 +43,7 @@ import (
 	_ "github.com/aws/eks-node-monitoring-agent/monitors/kernel"
 	_ "github.com/aws/eks-node-monitoring-agent/monitors/networking"
 	_ "github.com/aws/eks-node-monitoring-agent/monitors/neuron"
+	_ "github.com/aws/eks-node-monitoring-agent/monitors/nitrosandbox"
 	_ "github.com/aws/eks-node-monitoring-agent/monitors/nvidia"
 	_ "github.com/aws/eks-node-monitoring-agent/monitors/storage"
 
@@ -374,6 +375,12 @@ func run() error {
 				conditionType = conditions.ContainerRuntimeReady
 			case "networking":
 				conditionType = conditions.NetworkingReady
+			case "nitro-sandbox":
+				// The sandbox runtime's faults are claims about whether this
+				// node can run pods, which is what ContainerRuntimeReady
+				// already covers. The monitor stays silent on nodes without the
+				// runtime, so no condition config of its own is needed.
+				conditionType = conditions.ContainerRuntimeReady
 			case "nvidia":
 				if runtimeContext.AcceleratedHardware() != config.AcceleratedHardwareNvidia {
 					logger.Info("skipping monitor registration: no nvidia hardware detected", "monitor", mon.Name())
