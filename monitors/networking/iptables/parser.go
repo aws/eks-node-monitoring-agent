@@ -110,6 +110,11 @@ func (rule IPTablesRule) IsExpectedRejectRule(allowedChains []string) bool {
 	} else if rule.table == "FORWARD" && strings.Contains(rule.comment, "Block Node Local Pod access") {
 		// VPC CNI rule to block node-local pod access via link-local addresses
 		return true
+	} else if rule.IptablesTable == "mangle" && rule.table == "PREROUTING" &&
+		strings.Contains(rule.comment, "nitro-sandbox:") {
+		// per-sandbox conntrack rule managed by the sandbox runtime, which tags it
+		// with an owner comment of the form "nitro-sandbox:<sandbox-id>"
+		return true
 	}
 	for _, entry := range allowedChains {
 		// entries must use "table/chain" format (e.g. "filter/MY-CUSTOM-CHAIN")

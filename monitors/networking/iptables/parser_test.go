@@ -74,6 +74,38 @@ func TestIPTablesRuleParser(t *testing.T) {
 		}
 	})
 
+	t.Run("ExpectedRejectRuleNitroSandbox", func(t *testing.T) {
+		// the connlimit cap is configurable, so the owner tag identifies the rule
+		for _, ruleRaw := range []string{
+			`-A PREROUTING -i eni0e04c65da1b -m conntrack --ctstate NEW -m connlimit --connlimit-above 4096 --connlimit-mask 0 --connlimit-saddr -m comment --comment "nitro-sandbox:8f3c1d92a7b64e05" -j DROP`,
+			`-A PREROUTING -i eni0e04c65da1b -m conntrack --ctstate NEW -m connlimit --connlimit-above 512 --connlimit-mask 0 --connlimit-saddr -m comment --comment "nitro-sandbox:8f3c1d92a7b64e05" -j DROP`,
+		} {
+			rule, err := iptables.ParseIPTablesRule(ruleRaw)
+			assert.NoError(t, err)
+			rule.IptablesTable = "mangle"
+			assert.Truef(t, rule.IsExpectedRejectRule(nil), ruleRaw)
+		}
+	})
+
+	t.Run("NotExpectedRejectRuleNitroSandbox", func(t *testing.T) {
+		// the tag is only accepted in the table and chain the rule is installed in,
+		// and only with its colon
+		for _, tc := range []struct {
+			iptablesTable string
+			ruleRaw       string
+		}{
+			{"filter", `-A PREROUTING -i eni0e04c65da1b -m comment --comment "nitro-sandbox:8f3c1d92a7b64e05" -j DROP`},
+			{"mangle", `-A OUTPUT -m comment --comment "nitro-sandbox:8f3c1d92a7b64e05" -j DROP`},
+			{"mangle", `-A PREROUTING -i eni0e04c65da1b -m comment --comment "nitro-sandbox" -j DROP`},
+			{"mangle", `-A PREROUTING -i eni0e04c65da1b -m comment --comment "drop for nitro-sandbox guests" -j DROP`},
+		} {
+			rule, err := iptables.ParseIPTablesRule(tc.ruleRaw)
+			assert.NoError(t, err)
+			rule.IptablesTable = tc.iptablesTable
+			assert.Falsef(t, rule.IsExpectedRejectRule(nil), tc.ruleRaw)
+		}
+	})
+
 	t.Run("ExpectedRejectRuleCustomChain", func(t *testing.T) {
 		chains := []string{"filter/MY-CUSTOM-CHAIN", "filter/CUSTOM-CHAIN"}
 		for _, ruleRaw := range []string{

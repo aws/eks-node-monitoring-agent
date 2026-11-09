@@ -139,6 +139,10 @@ The monitoring condition is `ContainerRuntimeReady` for issues in the following 
 |Severity
 |Description
 
+|CRIProxyUnhealthy
+|Condition
+|The CRI proxy that serves the container runtime endpoint on nodes running isolated pods is not serving requests, so the node cannot start pods.
+
 |ContainerRuntimeFailed
 |Event
 |The container runtime has failed to create a container, likely related to any reported issues if occurring repeatedly.
@@ -150,6 +154,10 @@ The monitoring condition is `ContainerRuntimeReady` for issues in the following 
 |KubeletFailed
 |Event
 |The kubelet entered a failed state.
+
+|LeakedSandboxResources
+|Condition
+|Sandboxes that no longer belong to any pod are holding every isolated pod slot on the node, so no new isolated pod can start on it.
 
 |LivenessProbeFailures
 |Event
