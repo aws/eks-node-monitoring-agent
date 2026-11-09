@@ -3,6 +3,7 @@ package nitrosandbox
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/sys/unix"
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 )
@@ -213,8 +215,22 @@ func TestVMProcessAlive(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, vmPidFile)
 
-	// This process, with the inode the kernel reports for it.
-	require.NoError(t, os.WriteFile(path, []byte(`{"pid":1,"inode_id":1}`), 0o644))
+	// This process, with the inode the kernel reports for it. The inode is read
+	// rather than assumed, since its value depends on the kernel (pidfs assigns
+	// small per-process ids, so a fixed guess can collide).
+	fd, err := unix.PidfdOpen(os.Getpid(), 0)
+	require.NoError(t, err)
+	var stat unix.Stat_t
+	require.NoError(t, unix.Fstat(fd, &stat))
+	require.NoError(t, unix.Close(fd))
+
+	write := func(ino uint64) {
+		require.NoError(t, os.WriteFile(path,
+			[]byte(fmt.Sprintf(`{"pid":%d,"inode_id":%d}`, os.Getpid(), ino)), 0o644))
+	}
+	write(stat.Ino)
+	assert.True(t, vmProcessAlive(path), "a live pid with its own inode is alive")
+	write(stat.Ino + 1)
 	assert.False(t, vmProcessAlive(path), "an inode that does not match means the pid was reused")
 
 	require.NoError(t, os.WriteFile(path, []byte("not json"), 0o644))
