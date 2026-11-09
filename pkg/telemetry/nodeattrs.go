@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"runtime"
 	"slices"
 	"strings"
@@ -28,6 +29,8 @@ const (
 	imdsPollInterval = time.Second
 	// remote API server call
 	nodePollInterval = 30 * time.Second
+	// IMDS retries back off to at most this many times imdsPollInterval
+	imdsMaxBackoff = 30
 )
 
 type imdsClient interface {
@@ -57,10 +60,11 @@ func waitForNodeAttrs(ctx context.Context, logger logr.Logger, newIMDS func(cont
 		// try to load the default config in case env vars like AWS_EC2_METADATA_SERVICE_ENDPOINT are set
 		// TODO: determine additional attributes for hybrid nodes
 		imdsClient := newIMDS(ctx, logger)
-		if err := wait.PollUntilContextCancel(ctx, imdsInterval, true, func(ctx context.Context) (bool, error) {
+		backoff := wait.Backoff{Duration: imdsInterval, Factor: 2, Cap: imdsMaxBackoff * imdsInterval, Steps: math.MaxInt32}
+		if err := backoff.DelayFunc().Until(ctx, true, true, func(ctx context.Context) (bool, error) {
 			err := addIMDSAttrs(ctx, imdsClient, &attrs)
 			if err != nil {
-				logger.V(4).Info("waiting for node attributes from IMDS", "error", err.Error())
+				logger.Info("waiting for node attributes from IMDS", "error", err.Error())
 			}
 			return err == nil, nil
 		}); err != nil {
@@ -73,7 +77,11 @@ func waitForNodeAttrs(ctx context.Context, logger logr.Logger, newIMDS func(cont
 		// unlike most k8s objects, nodes are allowed to retain status fields in the initial create:
 		// https://github.com/kubernetes/kubernetes/blob/f9408fbfca0576dafad7595c98c0abbe66423558/pkg/registry/core/node/strategy.go#L96-L124
 		// TODO: consider combining with the hybrid nodes bootstrapper as a generic runtime context bootstrapper
-		return addKubeletVersion(ctx, kubeClient, &attrs) == nil, nil
+		err := addKubeletVersion(ctx, kubeClient, &attrs)
+		if err != nil {
+			logger.Info("waiting for the kubelet version from the Node", "error", err.Error())
+		}
+		return err == nil, nil
 	}); err != nil {
 		return nodetelemetry.NodeAttrs{}, err
 	}

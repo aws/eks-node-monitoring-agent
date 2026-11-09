@@ -3,6 +3,7 @@ package scrape
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"net"
 	"net/http"
@@ -63,9 +64,9 @@ type HTTPCollector struct {
 	client   *http.Client
 	failures int
 	seen     bool
-	// lastErrorStatus is the HTTP status of the last failed fetch, so an
-	// error status is logged once rather than on every scrape.
-	lastErrorStatus int
+	// lastFailure is the reason and HTTP status of the last failed scrape, so a
+	// failure is logged when it changes rather than on every scrape.
+	lastFailure failure
 
 	mu        sync.Mutex
 	baselines *Baselines
@@ -98,14 +99,14 @@ func (collector *HTTPCollector) Scope() string { return collector.cfg.Scope }
 // Scrape scrapes the target once. Only one scrape should run at a time.
 func (collector *HTTPCollector) Scrape(ctx context.Context) Result {
 	now := collector.cfg.Clock()
-	parsed, reason := collector.fetch(ctx)
-	if reason == "" && collector.cfg.Identity != "" && !parsed.SawIdentity {
-		reason = ReasonIdentityMismatch
+	parsed, failed := collector.fetch(ctx)
+	if failed.reason == "" && collector.cfg.Identity != "" && !parsed.SawIdentity {
+		failed = failure{reason: ReasonIdentityMismatch, cause: fmt.Errorf("no %s metric", collector.cfg.Identity)}
 	}
-	if reason != "" {
-		return collector.failed(reason)
+	if failed.reason != "" {
+		return collector.failed(failed)
 	}
-	collector.failures, collector.seen = 0, true
+	collector.failures, collector.seen, collector.lastFailure = 0, true, failure{}
 
 	res := Result{Scope: nodetelemetry.Scope{Name: collector.cfg.Scope, Problems: parsed.Problems}}
 	counters := map[string][]Series{}
@@ -133,40 +134,61 @@ func (collector *HTTPCollector) Scrape(ctx context.Context) Result {
 	return res
 }
 
-func (collector *HTTPCollector) fetch(ctx context.Context) (Parsed, string) {
+// failure is why a scrape failed: its not-reporting reason, the HTTP status if
+// the target answered with an error status, and the underlying error.
+type failure struct {
+	reason string
+	status int
+	cause  error
+}
+
+func (collector *HTTPCollector) fetch(ctx context.Context) (Parsed, failure) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, collector.url, nil)
 	if err != nil {
-		return Parsed{}, ReasonParseError
+		return Parsed{}, failure{reason: ReasonParseError, cause: err}
 	}
 	req.Header.Set("Accept", acceptHeader)
 	resp, err := collector.client.Do(req)
 	if err != nil {
 		var netError net.Error
 		if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netError) && netError.Timeout()) {
-			return Parsed{}, ReasonTimeout
+			return Parsed{}, failure{reason: ReasonTimeout, cause: err}
 		}
-		return Parsed{}, ReasonConnectionRefused
+		return Parsed{}, failure{reason: ReasonConnectionRefused, cause: err}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= http.StatusMultipleChoices {
-		if resp.StatusCode != collector.lastErrorStatus {
-			collector.cfg.Logger.Info("scrape target returned a new error status", "component", collector.cfg.Scope, "url", collector.url, "status", resp.StatusCode)
-			collector.lastErrorStatus = resp.StatusCode
-		}
-		return Parsed{}, ReasonConnectionRefused
+		return Parsed{}, failure{reason: ReasonConnectionRefused, status: resp.StatusCode, cause: fmt.Errorf("status %d", resp.StatusCode)}
 	}
-	collector.lastErrorStatus = 0
-	parsed, err := Parse(resp.Header.Get("Content-Type"), resp.Body, collector.allow, collector.cfg.MaxBytes, collector.cfg.Identity)
+	parsed, err := collector.parse(resp)
 	switch {
 	case errors.Is(err, errTooLarge):
-		return Parsed{}, ReasonResponseTooLarge
+		return Parsed{}, failure{reason: ReasonResponseTooLarge, cause: err}
 	case err != nil:
-		return Parsed{}, ReasonParseError
+		return Parsed{}, failure{reason: ReasonParseError, cause: err}
 	}
-	return parsed, ""
+	return parsed, failure{}
 }
 
-func (collector *HTTPCollector) failed(reason string) Result {
+// parse parses a scrape response. A panic while decoding a malformed response
+// fails the scrape as a parse error.
+func (collector *HTTPCollector) parse(resp *http.Response) (parsed Parsed, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = fmt.Errorf("decoding panicked: %v", recovered)
+		}
+	}()
+	return Parse(resp.Header.Get("Content-Type"), resp.Body, collector.allow, collector.cfg.MaxBytes, collector.cfg.Identity)
+}
+
+func (collector *HTTPCollector) failed(failed failure) Result {
+	reason := failed.reason
+	// logged whether or not the target has been seen, so a target that's never
+	// reachable, such as one configured with the wrong port, still shows up
+	if failed.reason != collector.lastFailure.reason || failed.status != collector.lastFailure.status {
+		collector.cfg.Logger.Info("telemetry scrape failed", "status", failed.status, "component", collector.cfg.Scope, "url", collector.url, "reason", reason, "error", failed.cause.Error())
+		collector.lastFailure = failed
+	}
 	collector.mu.Lock()
 	collector.baselines.ScrapeFailed()
 	collector.mu.Unlock()

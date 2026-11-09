@@ -11,6 +11,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/feature/ec2/imds"
 	"github.com/go-logr/logr"
+	"github.com/go-logr/logr/funcr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -106,4 +107,21 @@ func TestWaitForNodeAttrs_WaitsForKubeletVersion(t *testing.T) {
 	defer cancel()
 	_, err := waitForNodeAttrs(ctx, logr.Discard(), newFakeIMDS(instanceMetadata()), kubeClient, "node-a", nil, time.Millisecond, time.Millisecond)
 	assert.Error(t, err, "a Node without a kubelet version isn't used")
+}
+
+func TestWaitForNodeAttrs_LogsFailuresWithBackoff(t *testing.T) {
+	var lines []string
+	logger := funcr.New(func(_, args string) { lines = append(lines, args) }, funcr.Options{Verbosity: 0})
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node-a"}}
+	kubeClient := fake.NewClientBuilder().WithObjects(node).Build()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, err := waitForNodeAttrs(ctx, logger, newFakeIMDS(fakeIMDS{}), kubeClient, "node-a", nil, time.Millisecond, time.Millisecond)
+	require.Error(t, err)
+	// retries after 1, 2, 4, 8, 16 and 30ms fit in 50ms: about 6 attempts, not 50
+	assert.GreaterOrEqual(t, len(lines), 2, "every failure is logged at Info: %v", lines)
+	assert.LessOrEqual(t, len(lines), 8, "retries back off: %v", lines)
+	for _, line := range lines {
+		assert.Contains(t, line, "waiting for node attributes from IMDS")
+	}
 }

@@ -3,6 +3,7 @@ package telemetry
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"hash/fnv"
 	"net/http"
 	"sync"
@@ -181,7 +182,7 @@ func (manager *Manager) collect(ctx context.Context) []scrape.Result {
 		}
 		launched[index] = true
 		go func() {
-			result := collector.Scrape(ctx)
+			result := manager.scrape(ctx, collector)
 			manager.mu.Lock()
 			delete(manager.inFlight, index)
 			manager.mu.Unlock()
@@ -216,6 +217,18 @@ wait:
 		}
 	}
 	return out
+}
+
+// scrape runs one collector's Scrape with panic handling. A panic, such as from decoding
+// a malformed response, fails only that scrape as a parse error.
+func (manager *Manager) scrape(ctx context.Context, collector scrape.Collector) (result scrape.Result) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			manager.cfg.Logger.Error(fmt.Errorf("%v", recovered), "telemetry scrape panicked", "component", collector.Scope())
+			result = scrape.Result{Scope: nodetelemetry.Scope{Name: collector.Scope()}, Failure: scrape.ReasonParseError}
+		}
+	}()
+	return collector.Scrape(ctx)
 }
 
 // BuildCollectors returns a collector for each target, and how long to wait for them each interval.

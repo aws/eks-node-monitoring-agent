@@ -22,7 +22,7 @@ rules:
 - apiGroups: ["eks.amazonaws.com"]
   resources: ["nodediagnostics/status"]
   verbs: ["patch"]
-{{- if .Values.nodeAgent.telemetry.enabled }}
+{{- if include "eks-node-monitoring-agent.telemetryEnabled" . }}
   # node telemetry permissions
 - apiGroups: ["telemetry.eks.amazonaws.com"]
   resources: ["metrics"]

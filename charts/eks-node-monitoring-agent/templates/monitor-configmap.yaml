@@ -20,6 +20,10 @@ data:
       report:
         {{- toYaml . | nindent 8 }}
       {{- end }}
+      {{- with .notReporting }}
+      notReporting:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       {{- with .targetDefaults }}
       targetDefaults:
         {{- toYaml . | nindent 8 }}

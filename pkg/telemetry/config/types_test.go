@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	monitorconfig "github.com/aws/eks-node-monitoring-agent/pkg/config"
 	"github.com/aws/eks-node-monitoring-agent/pkg/telemetry/config"
@@ -71,6 +72,15 @@ telemetry:
 		MaxSeries: 7,
 	}, c.Resolve(c.Targets[0]), "target, then targetDefaults, then package defaults")
 	assert.Equal(t, config.DefaultReportInterval, c.ReportInterval())
+}
+
+func TestValidate_ReportInterval(t *testing.T) {
+	assert.ErrorContains(t, (&config.Config{Enabled: true, Report: config.ReportSettings{Interval: metav1.Duration{Duration: -5 * time.Minute}}}).Validate(),
+		"report.interval must not be negative")
+
+	zero := &config.Config{Enabled: true, Report: config.ReportSettings{Interval: metav1.Duration{}}}
+	require.NoError(t, zero.Validate())
+	assert.Equal(t, config.DefaultReportInterval, zero.ReportInterval(), "0 is unset, so the default applies")
 }
 
 func TestValidate_DisabledBlockMustBeEmpty(t *testing.T) {

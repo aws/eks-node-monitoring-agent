@@ -100,8 +100,15 @@ Get the current NMA image for a region.
 {{- end -}}
 
 {{/*
+Whether telemetry is enabled. nodeAgent.telemetry may be null.
+*/}}
+{{- define "eks-node-monitoring-agent.telemetryEnabled" -}}
+{{- if (.Values.nodeAgent.telemetry | default dict).enabled -}}true{{- end -}}
+{{- end -}}
+
+{{/*
 Whether the agent config file (monitor config and telemetry) is rendered.
 */}}
 {{- define "eks-node-monitoring-agent.hasAgentConfig" -}}
-{{- if or .Values.nodeAgent.monitors .Values.nodeAgent.telemetry.enabled -}}true{{- end -}}
+{{- if or .Values.nodeAgent.monitors (include "eks-node-monitoring-agent.telemetryEnabled" .) -}}true{{- end -}}
 {{- end -}}

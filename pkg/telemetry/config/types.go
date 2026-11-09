@@ -3,6 +3,7 @@ package config
 import (
 	"cmp"
 	"errors"
+	"fmt"
 	"reflect"
 	"time"
 
@@ -174,6 +175,10 @@ func (cfg *Config) Validate() error {
 	}
 	if !cfg.Enabled && !reflect.DeepEqual(cfg, &Config{}) {
 		return errors.New("telemetry: other fields can only be set when enabled is true")
+	}
+	// a negative interval would make the reporting loop's ticker panic
+	if cfg.Report.Interval.Duration < 0 {
+		return fmt.Errorf("telemetry: report.interval must not be negative, got %s", cfg.Report.Interval.Duration)
 	}
 	// TODO: validate units, metric types, component names and explicit
 	// zero values.

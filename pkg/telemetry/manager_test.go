@@ -93,6 +93,24 @@ func TestManager_HungCollector(t *testing.T) {
 	assert.Len(t, h.calls, 1)
 }
 
+type panicking struct{}
+
+func (panicking) Scope() string { return "agent" }
+
+func (panicking) Scrape(context.Context) scrape.Result { panic("malformed response") }
+
+func TestManager_PanickingCollector(t *testing.T) {
+	sender := &countingSender{}
+	m := NewManager(ManagerConfig{Collectors: []scrape.Collector{panicking{}}, ScrapeWait: time.Second, Sender: sender, Logger: logr.Discard()})
+	results := m.collect(context.Background())
+	require.Len(t, results, 1)
+	assert.Equal(t, scrape.ReasonParseError, results[0].Failure, "a panic fails the scrape")
+	assert.Equal(t, "agent", results[0].Scope.Name)
+
+	m.runInterval(context.Background(), time.Unix(0, 0), time.Unix(60, 0))
+	assert.Equal(t, 1, sender.count(), "the report still goes out")
+}
+
 type scriptedSender struct{ results []nodetelemetry.Result }
 
 func (s *scriptedSender) Send(context.Context, *nodetelemetry.Report) (nodetelemetry.Result, error) {

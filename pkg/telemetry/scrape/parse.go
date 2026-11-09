@@ -1,6 +1,7 @@
 package scrape
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -9,6 +10,7 @@ import (
 
 	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/common/expfmt"
+	"google.golang.org/protobuf/encoding/protodelim"
 
 	"github.com/aws/eks-node-monitoring-agent/pkg/nodetelemetry"
 	"github.com/aws/eks-node-monitoring-agent/pkg/telemetry/config"
@@ -46,7 +48,13 @@ func Parse(contentType string, body io.Reader, allow map[string]config.MetricSpe
 	if format.FormatType() == expfmt.TypeUnknown {
 		format = expfmt.NewFormat(expfmt.TypeTextPlain)
 	}
-	dec := expfmt.NewDecoder(&limitReader{reader: body, left: maxBytes}, format)
+	limited := &limitReader{reader: body, left: maxBytes}
+	var dec metricFamilyDecoder
+	if format.FormatType() == expfmt.TypeProtoDelim {
+		dec = &protoDecoder{reader: bufio.NewReader(limited), maxBytes: maxBytes}
+	} else {
+		dec = expfmt.NewDecoder(limited, format)
+	}
 	res := Parsed{Series: map[string][]Series{}}
 	for {
 		var metricFamily dto.MetricFamily
@@ -143,6 +151,30 @@ func camelCase(snakeCase string) string {
 		}
 	}
 	return strings.Join(parts, "")
+}
+
+// metricFamilyDecoder is the part of expfmt.Decoder Parse uses.
+type metricFamilyDecoder interface {
+	Decode(*dto.MetricFamily) error
+}
+
+// protoDecoder decodes length-delimited protobuf like expfmt's decoder, but
+// refuses a message that claims to be longer than the response's byte limit
+// before allocating for it. expfmt allocates whatever length the target claims,
+// so a few bytes claiming a huge message could exhaust NMA's memory.
+type protoDecoder struct {
+	reader   *bufio.Reader
+	maxBytes int64
+}
+
+// Decode reads the next metric family, limiting the size to the configured MaxBytes.
+func (decoder *protoDecoder) Decode(metricFamily *dto.MetricFamily) error {
+	err := protodelim.UnmarshalOptions{MaxSize: decoder.maxBytes}.UnmarshalFrom(decoder.reader, metricFamily)
+	var sizeError *protodelim.SizeTooLargeError
+	if errors.As(err, &sizeError) {
+		return errTooLarge
+	}
+	return err
 }
 
 type limitReader struct {

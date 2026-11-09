@@ -9,6 +9,7 @@ import (
 	"github.com/prometheus/common/expfmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/encoding/protowire"
 
 	"github.com/aws/eks-node-monitoring-agent/pkg/nodetelemetry"
 	"github.com/aws/eks-node-monitoring-agent/pkg/telemetry/config"
@@ -69,6 +70,42 @@ func TestParse_MaxSeriesCountsSentSeries(t *testing.T) {
 	res, err = Parse(textCT, strings.NewReader(body), byCode, 1<<20, "")
 	require.NoError(t, err)
 	assert.NotContains(t, res.Series, "foo_total", "4 distinct api/code pairs would be sent, which exceeds MaxSeries")
+}
+
+func TestParse_ProtobufClaimedLengthOverLimit(t *testing.T) {
+	// a length prefix claiming a 1 TiB message, and nothing else
+	body := protowire.AppendVarint(nil, 1<<40)
+	_, err := Parse(string(expfmt.NewFormat(expfmt.TypeProtoDelim)), bytes.NewReader(body), testAllow, 1<<20, "")
+	// reading the claimed message would hit the end of the body instead
+	assert.ErrorIs(t, err, errTooLarge, "a message longer than the byte limit is refused before it's read")
+}
+
+func TestParse_ProtobufMessagesOverLimitTogether(t *testing.T) {
+	var buf bytes.Buffer
+	enc := expfmt.NewEncoder(&buf, expfmt.NewFormat(expfmt.TypeProtoDelim))
+	name, v := "foo_total", 5.0
+	family := &dto.MetricFamily{Name: &name, Type: dto.MetricType_COUNTER.Enum(), Metric: []*dto.Metric{{Counter: &dto.Counter{Value: &v}}}}
+	require.NoError(t, enc.Encode(family))
+	one := buf.Len()
+	require.NoError(t, enc.Encode(family))
+	_, err := Parse(string(expfmt.NewFormat(expfmt.TypeProtoDelim)), &buf, testAllow, int64(one+one/2), "")
+	assert.ErrorIs(t, err, errTooLarge, "each message fits, but not both")
+}
+
+func TestParse_ProtobufAtLimit(t *testing.T) {
+	var buf bytes.Buffer
+	enc := expfmt.NewEncoder(&buf, expfmt.NewFormat(expfmt.TypeProtoDelim))
+	name, v := "foo_total", 5.0
+	// enough families that the body is larger than the buffered reader's 4 KiB
+	for range 500 {
+		require.NoError(t, enc.Encode(&dto.MetricFamily{Name: &name, Type: dto.MetricType_COUNTER.Enum(), Metric: []*dto.Metric{{Counter: &dto.Counter{Value: &v}}}}))
+	}
+	body := buf.Bytes()
+	protoFormat := string(expfmt.NewFormat(expfmt.TypeProtoDelim))
+	_, err := Parse(protoFormat, bytes.NewReader(body), testAllow, int64(len(body)), "")
+	assert.NoError(t, err, "exactly maxBytes should parse")
+	_, err = Parse(protoFormat, bytes.NewReader(append(body, 0)), testAllow, int64(len(body)), "")
+	assert.ErrorIs(t, err, errTooLarge, "one byte over maxBytes should error")
 }
 
 func TestParse_TooLarge(t *testing.T) {

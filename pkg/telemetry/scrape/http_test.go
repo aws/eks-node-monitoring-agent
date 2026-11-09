@@ -156,3 +156,17 @@ func TestHTTPCollector_LogsErrorStatusOnce(t *testing.T) {
 	scrape()
 	assert.Len(t, logs, 2, "logged again after a successful scrape")
 }
+
+func TestHTTPCollector_LogsFailureBeforeSeen(t *testing.T) {
+	var logs []string
+	c := NewHTTPCollector(HTTPConfig{
+		Scope: "s", Endpoint: config.TargetEndpoint{Address: "127.0.0.1", Port: 1}, Timeout: time.Second, MaxBytes: 1 << 20,
+		OnceSeen: true, NotReportingAfter: 1,
+		Logger: funcr.New(func(_, args string) { logs = append(logs, args) }, funcr.Options{}),
+	})
+	for range 3 {
+		assert.Equal(t, ReasonConnectionRefused, c.Scrape(context.Background()).Failure)
+	}
+	require.Len(t, logs, 1, "a target that's never been seen still logs its first failure, once")
+	assert.Contains(t, logs[0], `"reason"="ConnectionRefused"`)
+}
