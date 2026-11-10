@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"golang.org/x/sys/unix"
 
 	"github.com/aws/eks-node-monitoring-agent/pkg/config"
@@ -27,7 +28,6 @@ const (
 	// shimConfigPath is the runtime shim config; its data_base_dir key, when
 	// set, moves the per-sandbox directories off defaultDataBaseDir.
 	shimConfigPath = "/etc/containerd/nitro-sandbox.toml"
-	dataBaseDirKey = "data_base_dir"
 	// jailDirName is the jailer base under the data base dir; its children are
 	// the per-sandbox jails, also named with the short id.
 	jailDirName = "firecracker"
@@ -73,6 +73,13 @@ type diskSandbox struct {
 // checkLeakedSandboxes reports LeakedSandboxResources when sandboxes that no
 // longer belong to any pod hold every slot the node has, so no new isolated pod
 // can start on it.
+//
+// A sandbox is leaked when it has state on disk, the container runtime no
+// longer lists it, and it is outside the grace period. Whether its microVM is
+// still running does not matter: the runtime removes a sandbox's directories
+// on every successful teardown, so any that remain mean cleanup failed, and a
+// failed delete can remove the vm.pid record while the jail stays behind.
+// VM liveness only feeds the message.
 func (m *nitroSandboxMonitor) checkLeakedSandboxes(ctx context.Context) error {
 	if !m.sandboxSupported() {
 		return nil
@@ -134,9 +141,9 @@ func (m *nitroSandboxMonitor) checkLeakedSandboxes(ctx context.Context) error {
 		Build())
 }
 
-// leakMessage names the counts and a few ids, and separates sandboxes whose VM
-// is still running from ones that left only files behind, because the first
-// still holds a slot and the second holds disk.
+// leakMessage names the counts and a few ids, and says how many leaked
+// sandboxes still have a running microVM, which tells whoever investigates
+// whether the VMM itself was left behind or only its state.
 func leakMessage(leaked []diskSandbox, budget int) string {
 	live := 0
 	ids := make([]string, 0, leakExamplesInMessage)
@@ -223,22 +230,19 @@ func hostDiskSandboxes() ([]diskSandbox, error) {
 // resolveDataBaseDir returns the sandbox base directory, honouring a
 // data_base_dir override in the shim config so the walk follows the same
 // directory the runtime writes to. Falls back to the default when the config
-// is absent or does not set the key.
+// is absent, does not set the key, or does not parse: the runtime discards a
+// config it cannot parse and runs on its defaults, so the walk must too.
 func resolveDataBaseDir() string {
-	content, err := os.ReadFile(config.ToHostPath(shimConfigPath))
-	if err != nil {
+	var shimConfig struct {
+		DataBaseDir string `toml:"data_base_dir"`
+	}
+	if _, err := toml.DecodeFile(config.ToHostPath(shimConfigPath), &shimConfig); err != nil {
 		return defaultDataBaseDir
 	}
-	for line := range strings.Lines(string(content)) {
-		key, value, found := strings.Cut(strings.TrimSpace(line), "=")
-		if !found || strings.TrimSpace(key) != dataBaseDirKey {
-			continue
-		}
-		if dir := strings.Trim(strings.TrimSpace(value), `"'`); dir != "" {
-			return dir
-		}
+	if shimConfig.DataBaseDir == "" {
+		return defaultDataBaseDir
 	}
-	return defaultDataBaseDir
+	return shimConfig.DataBaseDir
 }
 
 // readDirEntries returns a directory's entries, treating an unreadable

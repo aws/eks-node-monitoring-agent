@@ -3,6 +3,7 @@ module github.com/aws/eks-node-monitoring-agent
 go 1.27.3
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/NVIDIA/go-dcgm v1.4601.1
 	github.com/NVIDIA/go-nvml v0.13.4-1
 	github.com/aws/amazon-vpc-cni-k8s v1.23.0
