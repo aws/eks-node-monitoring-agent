@@ -198,6 +198,27 @@ func TestResolveDataBaseDir(t *testing.T) {
 
 	require.NoError(t, os.WriteFile(cfg, []byte(`data_base_dir = "/mnt/data/nitro-sandbox"`+"\n"), 0o644))
 	assert.Equal(t, "/mnt/data/nitro-sandbox", resolveDataBaseDir())
+
+	// The runtime reads this file with a TOML parser, so the walk must agree
+	// with it on every valid spelling, and fall back to the default wherever
+	// the runtime would.
+	for _, tc := range []struct {
+		name, content, want string
+	}{
+		{"trailing comment", `data_base_dir = "/mnt/x" # moved for the data volume`, "/mnt/x"},
+		{"literal string", `data_base_dir = '/mnt/x'`, "/mnt/x"},
+		{"commented out", `# data_base_dir = "/mnt/x"`, defaultDataBaseDir},
+		{"key inside a table", "[dmb]\ndata_base_dir = \"/mnt/x\"", defaultDataBaseDir},
+		{"unparseable file", "data_base_dir = \"/mnt/x\"\nnot toml", defaultDataBaseDir},
+		{"duplicate key", "data_base_dir = \"/mnt/x\"\ndata_base_dir = \"/mnt/y\"", defaultDataBaseDir},
+		{"wrong type", `data_base_dir = 5`, defaultDataBaseDir},
+		{"empty value", `data_base_dir = ""`, defaultDataBaseDir},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.NoError(t, os.WriteFile(cfg, []byte(tc.content+"\n"), 0o644))
+			assert.Equal(t, tc.want, resolveDataBaseDir())
+		})
+	}
 }
 
 func TestHostSlotBudget(t *testing.T) {
