@@ -562,10 +562,20 @@ const (
 	PPSExceeded          = "pps_allowance_exceeded"
 )
 
-// ethtoolWarningReNotifyInterval is how often the allowance-exceeded Warnings
-// may be reported for an interface. Every NMA Warning on a node shares one
-// client-go spam-filter bucket, so reporting every tick (interfaceMonitorPeriod)
-// would crowd out other Warning events.
+// enaResetStats are the ENA driver counters that increase when the driver
+// resets an interface (tx_timeout, wd_expired) or fails to (reset_fail).
+// interface_down is left out because it also counts administrative link downs.
+var enaResetStats = []string{"tx_timeout", "wd_expired", "reset_fail"}
+
+// enaDriverName is the name of the ENA kernel driver, as it appears in the
+// sysfs driver link of an ENA interface.
+const enaDriverName = "ena"
+
+// ethtoolWarningReNotifyInterval is how often the allowance-exceeded Warnings,
+// and separately the ENADriverReset Warning, may be reported for an interface.
+// Every NMA Warning on a node shares one client-go spam-filter bucket, so
+// reporting every tick (interfaceMonitorPeriod) would crowd out other Warning
+// events.
 const ethtoolWarningReNotifyInterval = 30 * time.Minute
 
 type ethtoolMonitor struct {
@@ -573,8 +583,18 @@ type ethtoolMonitor struct {
 	// notified rate-limits the allowance-exceeded Warnings per interface. It
 	// only holds interfaces that have sent a Warning.
 	notified map[string]*renotify.Tracker[struct{}]
-	manager  monitor.Manager
-	now      func() time.Time
+	// enaResetReported is the value of each ENA reset counter as of the last
+	// ENADriverReset report, or the first reading, keyed by interface and stat.
+	enaResetReported map[compoundStatKey]int
+	// enaResetNotified rate-limits the ENADriverReset Warning per interface,
+	// separately from the allowance-exceeded Warnings so a frequent allowance
+	// spike cannot hold back a reset.
+	enaResetNotified map[string]*renotify.Tracker[struct{}]
+	// interfaceDriver returns the kernel driver bound to an interface, or ""
+	// when it has none.
+	interfaceDriver func(interfaceName string) string
+	manager         monitor.Manager
+	now             func() time.Time
 }
 
 type statTracker struct {
@@ -610,8 +630,22 @@ func makeEthtoolMonitor(manager monitor.Manager) *ethtoolMonitor {
 		manager:           manager,
 		statExceededCache: make(map[compoundStatKey]*statTracker),
 		notified:          make(map[string]*renotify.Tracker[struct{}]),
+		enaResetReported:  make(map[compoundStatKey]int),
+		enaResetNotified:  make(map[string]*renotify.Tracker[struct{}]),
+		interfaceDriver:   sysfsInterfaceDriver,
 		now:               time.Now,
 	}
+}
+
+// sysfsInterfaceDriver returns the kernel driver bound to the device behind
+// interfaceName, or "" for interfaces without a device, such as lo or veths.
+// https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-class-net
+func sysfsInterfaceDriver(interfaceName string) string {
+	driver, err := os.Readlink(config.ToHostPath(filepath.Join("/sys/class/net", interfaceName, "device", "driver")))
+	if err != nil {
+		return ""
+	}
+	return filepath.Base(driver)
 }
 
 // ethtoolStatsReader returns ethtool stats keyed by interface name. A non-nil
@@ -630,7 +664,7 @@ func ethtoolTickHandler(mgr monitor.Manager, readStats ethtoolStatsReader) func(
 func (m *ethtoolMonitor) handleEthtool(readStats ethtoolStatsReader) error {
 	statsByInterface, merr := readStats()
 	for interfaceName, stats := range statsByInterface {
-		merr = errors.Join(merr, m.checkEthtool(interfaceName, stats))
+		merr = errors.Join(merr, m.checkEthtool(interfaceName, stats), m.checkENAResets(interfaceName, stats))
 	}
 	return merr
 }
@@ -717,6 +751,67 @@ func (m *ethtoolMonitor) checkEthtool(interfaceName string, stats map[string]int
 		tracker.Notified(struct{}{}, now)
 	}
 	return merr
+}
+
+// checkENAResets reports ENADriverReset when an ENA reset counter has
+// increased since it was last reported, meaning the driver reset the interface
+// or failed to. Any increase is reported, since a healthy interface never
+// resets. Only interfaces bound to the ena driver are checked.
+//
+// The first reading of a counter is only recorded, so resets from before the
+// agent started are not reported. A counter's recorded value only moves past
+// an increase once that increase is reported, so resets held back by the
+// re-notify interval, or by a failed Notify, are included in the next report
+// rather than dropped. A counter that goes down, as when the driver reloads,
+// is recorded as the new starting point.
+func (m *ethtoolMonitor) checkENAResets(interfaceName string, stats map[string]int) error {
+	if m.interfaceDriver(interfaceName) != enaDriverName {
+		return nil
+	}
+	type increase struct {
+		key   compoundStatKey
+		value int
+	}
+	var increases []increase
+	var details []string
+	for _, stat := range enaResetStats {
+		value, ok := stats[stat]
+		if !ok {
+			continue
+		}
+		key := makeCompoundStatKey(interfaceName, stat)
+		if prev, seen := m.enaResetReported[key]; seen && value > prev {
+			increases = append(increases, increase{key: key, value: value})
+			details = append(details, fmt.Sprintf("%s increased from %d to %d", stat, prev, value))
+			continue
+		}
+		m.enaResetReported[key] = value
+	}
+	if len(increases) == 0 {
+		return nil
+	}
+	now := m.now()
+	tracker, ok := m.enaResetNotified[interfaceName]
+	if !ok {
+		tracker = renotify.New[struct{}](ethtoolWarningReNotifyInterval)
+		m.enaResetNotified[interfaceName] = tracker
+	}
+	if !tracker.ShouldNotify(struct{}{}, now) {
+		return nil
+	}
+	if err := m.manager.Notify(context.TODO(),
+		reasons.ENADriverReset.
+			Builder().
+			Message(fmt.Sprintf("ENA driver reset on interface %q: %s", interfaceName, strings.Join(details, ", "))).
+			Build(),
+	); err != nil {
+		return err
+	}
+	tracker.Notified(struct{}{}, now)
+	for _, inc := range increases {
+		m.enaResetReported[inc.key] = inc.value
+	}
+	return nil
 }
 
 func parseEthtool(ethtoolOut []byte) (map[string]int, error) {

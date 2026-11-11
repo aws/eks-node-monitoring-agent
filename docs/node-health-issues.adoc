@@ -299,6 +299,10 @@ The monitoring condition is `NetworkingReady` for issues in the following table 
 |Event
 |Fewer EFA devices are available on the node than are attached to the instance, for three consecutive checks. A device is available when it is bound to the efa driver and its port is ACTIVE and LinkUp. Missing rails may reduce the network bandwidth available across rails.
 
+|ENADriverReset
+|Event
+|The ENA driver reset a network interface, or failed to reset it, after a transmit timeout or a missed device keep-alive. Traffic on the interface stalls during a reset.
+
 |IPAMDInconsistentState
 |Event
 |The state of the IPAMD checkpoint on disk does not reflect the IPs in the container runtime.

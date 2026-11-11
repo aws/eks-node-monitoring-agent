@@ -228,6 +228,13 @@ NetworkingReady:
     Description: >-
       Connection tracking exceeded the maximum for the instance and new
       connections could not be established, which can result in packet loss.
+  ENADriverReset:
+    Template: 'ENADriverReset'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      The ENA driver reset a network interface, or failed to reset it, after a
+      transmit timeout or a missed device keep-alive. Traffic on the interface
+      stalls during a reset.
   IPAMDInconsistentState:
     Template: 'IPAMDInconsistentState'
     DefaultSeverity: 'Warning'
