@@ -40,6 +40,8 @@ var (
 	nodeMonitoringAgentImage string
 
 	eksStage string
+
+	nvidiaHealthyVerdictObserve time.Duration
 )
 
 var awsCfg aws.Config
@@ -48,6 +50,9 @@ func Configure() (testenv env.Environment, setupFuncs []env.Func, finishFuncs []
 	flag.BoolVar(&installAgent, "install", true, "Whether to install the node monitoring agent manifests")
 	flag.StringVar(&nodeMonitoringAgentImage, "image", "", "The node monitoring image reference. required when '--install' is true")
 	flag.StringVar(&eksStage, "stage", awshelper.StageProd, "The EKS stage to use for running tests")
+	flag.DurationVar(&nvidiaHealthyVerdictObserve, "nvidia-healthy-verdict", 0,
+		"Run only the NvidiaHealthyVerdict test, watching AcceleratedHardwareReady for this long (use at least 15m). "+
+			"The rest of the suite is skipped while it is set. 0 (the default) skips NvidiaHealthyVerdict")
 
 	cfg, err := envconf.NewFromFlags()
 	if err != nil {
@@ -147,12 +152,29 @@ func Configure() (testenv env.Environment, setupFuncs []env.Func, finishFuncs []
 	return env.NewWithConfig(cfg.WithParallelTestEnabled()), setupFuncs, finishFuncs
 }
 
+// NvidiaHealthyVerdictWrapper runs the NvidiaHealthyVerdict check used by the
+// continuous GPU validation workflow. It is separate from TestWrapper because
+// it watches a node for many minutes and must not run alongside the tests that
+// inject faults. It is skipped unless --nvidia-healthy-verdict is set.
+func NvidiaHealthyVerdictWrapper(t *testing.T, testenv env.Environment) {
+	if nvidiaHealthyVerdictObserve <= 0 {
+		t.Skip("--nvidia-healthy-verdict is not set")
+	}
+	testenv.Test(t, monitors.NvidiaHealthyVerdict(awsCfg, nvidiaHealthyVerdictObserve))
+}
+
 // gets passed into the soak test as a health check.
 var checkDaemonSet func(context.Context) error
 
 // The format of this function is a little strange because normally tests are
 // run inside their own top-level test bodies.
 func TestWrapper(t *testing.T, Testenv env.Environment) {
+	// the healthy-verdict run must leave the node undisturbed, and this suite
+	// injects faults and replaces nodes.
+	if nvidiaHealthyVerdictObserve > 0 {
+		t.Skip("--nvidia-healthy-verdict is set; running only TestNvidiaHealthyVerdict")
+	}
+
 	// Basic deployment validation (fast-fail)
 	Testenv.Test(t,
 		basic.DaemonSetReady(),

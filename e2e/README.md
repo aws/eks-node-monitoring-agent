@@ -49,6 +49,7 @@ make build-e2e
 | `--image` | (required) | NMA container image to deploy |
 | `--stage` | `prod` | EKS stage for running tests |
 | `--eks-endpoint` | | EKS control-plane endpoint. defaults to the endpoint for the configured region. also read from `AWS_ENDPOINT_URL_EKS`, `EKS_ENDPOINT`, `AWS_ENDPOINT_URL`. must be in the region requests are signed for |
+| `--nvidia-healthy-verdict` | `0` | Run only `TestNvidiaHealthyVerdict`, watching `AcceleratedHardwareReady` on NVIDIA nodes for this long (use at least `15m`). It prints `NMA_VERDICT=HEALTHY` or `NMA_VERDICT=UNHEALTHY`, and nothing when it gets no verdict. The rest of the suite is skipped while it is set. Set `--test.timeout` to at least the window plus 6m (e.g. `40m` for `15m`); the test fails at the start if it's shorter. NVIDIA nodes are found from EC2's GPU info for their instance type, which needs `ec2:DescribeInstanceTypes` |
 | `--test.run` | | Filter tests by name pattern |
 | `--test.timeout` | `10m` | Test timeout |
 
