@@ -122,6 +122,10 @@ func collectSteps(ctx context.Context, runtimeContext *config.RuntimeContext, ca
 	queue := orderedCollectors(deps.collectors, categories)
 	for i, next := range queue {
 		if err := ctx.Err(); err != nil {
+			// Recorded so the caller can name what a cancel cut off, with its cause.
+			for _, rest := range queue[i:] {
+				summary.Skipped = append(summary.Skipped, Skipped{Name: rest.name, Reason: context.Cause(ctx).Error()})
+			}
 			return summary, err
 		}
 
