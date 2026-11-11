@@ -2,13 +2,18 @@ package autocapture
 
 import (
 	"context"
+	"time"
 
 	"github.com/go-logr/logr"
+	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/aws/eks-node-monitoring-agent/api/v1alpha1"
 	"github.com/aws/eks-node-monitoring-agent/pkg/manager"
 )
+
+// defaultCooldown keeps a flapping condition from uploading a bundle per flip.
+const defaultCooldown = 30 * time.Minute
 
 // Worker reacts to capture requests from the node exporter. For now it only
 // logs what it would capture; collection and upload arrive in a later change.
@@ -20,13 +25,23 @@ type Worker struct {
 	// Guard once-only informational logs so repeated requests don't spam.
 	loggedOff     bool
 	loggedIgnored bool
+
+	cooldown time.Duration
+	now      func() time.Time
+	// Kept in memory, not persisted: after a restart the worst case is one
+	// extra capture per still-failing condition, not worth persisting for.
+	// No lock needed: only handle touches the map, on Start's one goroutine.
+	lastCapture map[corev1.NodeConditionType]time.Time
 }
 
 func NewWorker(requests <-chan manager.CaptureRequest, reader client.Reader, log logr.Logger) *Worker {
 	return &Worker{
-		requests: requests,
-		client:   reader,
-		log:      log,
+		requests:    requests,
+		client:      reader,
+		log:         log,
+		cooldown:    defaultCooldown,
+		now:         time.Now,
+		lastCapture: make(map[corev1.NodeConditionType]time.Time),
 	}
 }
 
@@ -61,6 +76,18 @@ func (w *Worker) handle(ctx context.Context, req manager.CaptureRequest) {
 		}
 		return
 	}
+
+	// Checked only after a bucket is found, so an off worker never burns the
+	// cooldown window on a request it couldn't have acted on anyway.
+	now := w.now()
+	if last, ok := w.lastCapture[req.Condition]; ok {
+		if remaining := w.cooldown - now.Sub(last); remaining > 0 {
+			w.log.V(1).Info("capture skipped: cooldown active",
+				"condition", req.Condition, "remaining", remaining)
+			return
+		}
+	}
+	w.lastCapture[req.Condition] = now
 
 	w.log.Info("capture requested",
 		"condition", req.Condition, "reason", req.Reason,
