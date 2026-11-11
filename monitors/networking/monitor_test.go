@@ -447,6 +447,132 @@ func TestNetworkingPeriodic(t *testing.T) {
 		assert.Equal(t, []string{"BandwidthInExceeded"}, drain(), "spike after the re-notify interval should be reported")
 	})
 
+	// newENAResetMonitor returns an ethtoolMonitor whose interfaces are all
+	// bound to the ena driver, with stats read from the ens5 fixture.
+	newENAResetMonitor := func(t *testing.T, mgr monitor.Manager) (*ethtoolMonitor, map[string]int, *time.Time) {
+		ethtoolBytes, err := os.ReadFile("testdata/ethtool-ens5.txt")
+		require.NoError(t, err)
+		stats, err := parseEthtool(ethtoolBytes)
+		require.NoError(t, err)
+		m := makeEthtoolMonitor(mgr)
+		m.interfaceDriver = func(string) string { return enaDriverName }
+		now := time.Now()
+		m.now = func() time.Time { return now }
+		return m, stats, &now
+	}
+	drainConditions := func(mgr *mockManager) []monitor.Condition {
+		var got []monitor.Condition
+		for len(mgr.res) > 0 {
+			got = append(got, <-mgr.res)
+		}
+		return got
+	}
+
+	t.Run("ENAResetReportsCounterIncreases", func(t *testing.T) {
+		mgr := &mockManager{obs: observer.BaseObserver{}, res: make(chan monitor.Condition, 10)}
+		m, stats, _ := newENAResetMonitor(t, mgr)
+
+		// counters already non-zero when the agent starts are not reported.
+		stats["wd_expired"] = 5
+		require.NoError(t, m.checkENAResets("ens5", stats))
+		assert.Empty(t, drainConditions(mgr), "the first reading should only be recorded")
+
+		require.NoError(t, m.checkENAResets("ens5", stats))
+		assert.Empty(t, drainConditions(mgr), "unchanged counters should not be reported")
+
+		stats["wd_expired"] = 6
+		stats["tx_timeout"] = 1
+		require.NoError(t, m.checkENAResets("ens5", stats))
+		got := drainConditions(mgr)
+		require.Len(t, got, 1, "one event should cover every counter that increased")
+		assert.Equal(t, "ENADriverReset", got[0].Reason)
+		assert.Equal(t, monitor.SeverityWarning, got[0].Severity)
+		assert.Contains(t, got[0].Message, "tx_timeout increased from 0 to 1")
+		assert.Contains(t, got[0].Message, "wd_expired increased from 5 to 6")
+	})
+
+	t.Run("ENAResetDefersResetsHeldBackByReNotifyInterval", func(t *testing.T) {
+		mgr := &mockManager{obs: observer.BaseObserver{}, res: make(chan monitor.Condition, 10)}
+		m, stats, now := newENAResetMonitor(t, mgr)
+
+		require.NoError(t, m.checkENAResets("ens5", stats)) // baseline
+		stats["tx_timeout"] = 1
+		require.NoError(t, m.checkENAResets("ens5", stats))
+		require.Len(t, drainConditions(mgr), 1)
+
+		*now = now.Add(interfaceMonitorPeriod)
+		stats["reset_fail"] = 1
+		require.NoError(t, m.checkENAResets("ens5", stats))
+		assert.Empty(t, drainConditions(mgr), "a reset within the re-notify interval should be held back")
+
+		*now = now.Add(ethtoolWarningReNotifyInterval)
+		stats["reset_fail"] = 2
+		require.NoError(t, m.checkENAResets("ens5", stats))
+		got := drainConditions(mgr)
+		require.Len(t, got, 1, "a reset after the re-notify interval should be reported")
+		assert.Contains(t, got[0].Message, "reset_fail increased from 0 to 2", "held-back resets should be included, not dropped")
+		assert.NotContains(t, got[0].Message, "tx_timeout", "already reported increases should not be repeated")
+	})
+
+	t.Run("ENAResetRetriesAfterFailedNotify", func(t *testing.T) {
+		failing := &failingNotifyManager{}
+		m, stats, _ := newENAResetMonitor(t, failing)
+		require.NoError(t, m.checkENAResets("ens5", stats)) // baseline
+		stats["wd_expired"] = 1
+		require.Error(t, m.checkENAResets("ens5", stats))
+
+		mgr := &mockManager{obs: observer.BaseObserver{}, res: make(chan monitor.Condition, 1)}
+		m.manager = mgr
+		require.NoError(t, m.checkENAResets("ens5", stats))
+		got := drainConditions(mgr)
+		require.Len(t, got, 1, "a failed Notify should be retried on the next check")
+		assert.Contains(t, got[0].Message, "wd_expired increased from 0 to 1")
+	})
+
+	t.Run("ENAResetTreatsCounterDecreaseAsNewBaseline", func(t *testing.T) {
+		mgr := &mockManager{obs: observer.BaseObserver{}, res: make(chan monitor.Condition, 10)}
+		m, stats, _ := newENAResetMonitor(t, mgr)
+		stats["tx_timeout"] = 7
+		require.NoError(t, m.checkENAResets("ens5", stats)) // baseline
+		stats["tx_timeout"] = 0                             // driver reloaded
+		require.NoError(t, m.checkENAResets("ens5", stats))
+		assert.Empty(t, drainConditions(mgr), "a counter going down should not be reported")
+		stats["tx_timeout"] = 1
+		require.NoError(t, m.checkENAResets("ens5", stats))
+		got := drainConditions(mgr)
+		require.Len(t, got, 1)
+		assert.Contains(t, got[0].Message, "tx_timeout increased from 0 to 1")
+	})
+
+	t.Run("ENAResetIsNotHeldBackByAllowanceWarnings", func(t *testing.T) {
+		mgr := &mockManager{obs: observer.BaseObserver{}, res: make(chan monitor.Condition, 10)}
+		m, stats, _ := newENAResetMonitor(t, mgr)
+		require.NoError(t, m.handleEthtool(func() (map[string]map[string]int, error) {
+			return map[string]map[string]int{"ens5": stats}, nil
+		})) // baseline
+
+		stats[BandwidthInExceeded] += 100000
+		require.NoError(t, m.checkEthtool("ens5", stats))
+		require.Equal(t, "BandwidthInExceeded", (<-mgr.res).Reason)
+
+		stats["wd_expired"] = 1
+		require.NoError(t, m.checkENAResets("ens5", stats))
+		got := drainConditions(mgr)
+		require.Len(t, got, 1, "an allowance Warning should not hold back a reset")
+		assert.Equal(t, "ENADriverReset", got[0].Reason)
+	})
+
+	t.Run("ENAResetSkipsInterfacesNotBoundToENA", func(t *testing.T) {
+		mgr := &mockManager{obs: observer.BaseObserver{}, res: make(chan monitor.Condition, 1)}
+		m, stats, _ := newENAResetMonitor(t, mgr)
+		m.interfaceDriver = func(string) string { return "mlx5_core" }
+		require.NoError(t, m.checkENAResets("eth1", stats))
+		stats["tx_timeout"] = 1
+		require.NoError(t, m.checkENAResets("eth1", stats))
+		assert.Empty(t, mgr.res)
+		assert.Empty(t, m.enaResetReported)
+	})
+
 	t.Run("EthtoolCheckJoinsAllNotifyErrors", func(t *testing.T) {
 		ethtoolBytes, err := os.ReadFile("testdata/ethtool-ens5.txt")
 		require.NoError(t, err)
@@ -732,6 +858,30 @@ func TestNetworkingPeriodic(t *testing.T) {
 			assert.Equal(t, monitor.SeverityWarning, monitorResult.Severity)
 		}
 	})
+}
+
+func TestSysfsInterfaceDriver(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv(config.HOST_ROOT_ENV, root)
+
+	// lay out sysfs as the kernel does: the interface's device link points at
+	// the PCI device, whose driver link points at the bound driver.
+	pciDevice := filepath.Join(root, "sys/devices/pci0000:00/0000:00:05.0")
+	driverDir := filepath.Join(root, "sys/bus/pci/drivers/ena")
+	netDir := filepath.Join(root, "sys/class/net")
+	for _, dir := range []string{pciDevice, driverDir, netDir} {
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+	}
+	require.NoError(t, os.Symlink(driverDir, filepath.Join(pciDevice, "driver")))
+	ens5 := filepath.Join(netDir, "ens5")
+	require.NoError(t, os.MkdirAll(ens5, 0o755))
+	require.NoError(t, os.Symlink(pciDevice, filepath.Join(ens5, "device")))
+	// a virtual interface such as lo has no device link.
+	require.NoError(t, os.MkdirAll(filepath.Join(netDir, "lo"), 0o755))
+
+	assert.Equal(t, enaDriverName, sysfsInterfaceDriver("ens5"), "the driver should be read under the host root")
+	assert.Empty(t, sysfsInterfaceDriver("lo"), "an interface without a device has no driver")
+	assert.Empty(t, sysfsInterfaceDriver("missing0"), "a missing interface has no driver")
 }
 
 func TestHandleMACAddressPolicy(t *testing.T) {

@@ -251,6 +251,10 @@ var (
 		template:        "EFARailCountMismatch",
 		defaultSeverity: "Warning",
 	}
+	ENADriverReset = ReasonMeta{
+		template:        "ENADriverReset",
+		defaultSeverity: "Warning",
+	}
 	IPAMDInconsistentState = ReasonMeta{
 		template:        "IPAMDInconsistentState",
 		defaultSeverity: "Warning",
@@ -439,6 +443,7 @@ var byName = map[string]ReasonMeta{
 	"EFADriverNotLoaded":                   EFADriverNotLoaded,
 	"EFAErrorMetric":                       EFAErrorMetric,
 	"EFARailCountMismatch":                 EFARailCountMismatch,
+	"ENADriverReset":                       ENADriverReset,
 	"IPAMDInconsistentState":               IPAMDInconsistentState,
 	"IPAMDNoIPs":                           IPAMDNoIPs,
 	"IPAMDNotReady":                        IPAMDNotReady,
