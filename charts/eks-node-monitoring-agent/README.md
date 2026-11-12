@@ -110,7 +110,7 @@ The following table lists the configurable parameters for this chart and their d
 | dcgmAgent.resizePolicy | list | `[]` | Container resize policy for in-place pod vertical scaling (requires Kubernetes 1.33+) |
 | dcgmAgent.resources | object | `{}` | Container resources for the dcgm deployment |
 | dcgmAgent.tolerations | list | `[{"key":"nvidia.com/gpu","operator":"Exists"}]` | Deployment tolerations for the dcgm-server DaemonSet. Tolerates the NVIDIA GPU taint so dcgm-server still schedules on tainted GPU nodes. |
-| fullnameOverride | string | `"eks-node-monitoring-agent"` | A fullname override for the chart |
+| fullnameOverride | string | `"eks-node-monitoring-agent"` | A fullname override for the chart. When enabling telemetry, the name must be eks-node-monitoring-agent so that the service account is created in the same name. |
 | global | object | `{"podAnnotations":{},"podLabels":{}}` | Global values shared across components |
 | global.podAnnotations | object | `{}` | Annotations applied to eks-node-monitoring-agent and dcgm-exporter (can be overridden by component-specific annotations) |
 | global.podLabels | object | `{}` | Labels applied to eks-node-monitoring-agent and dcgm-exporter (can be overridden by component-specific labels) |
@@ -138,6 +138,11 @@ The following table lists the configurable parameters for this chart and their d
 | nodeAgent.resizePolicy | list | `[]` | Container resize policy for in-place pod vertical scaling (requires Kubernetes 1.33+) |
 | nodeAgent.resources | object | `{"limits":{"cpu":"250m","memory":"200Mi"},"requests":{"cpu":"10m","memory":"30Mi"}}` | Container resources for the eks-node-monitoring-agent |
 | nodeAgent.securityContext | object | `{"capabilities":{"add":["NET_ADMIN"]},"privileged":true}` | Container Security context for the eks-node-monitoring-agent |
+| nodeAgent.telemetry.enabled | bool | `false` | EXPERIMENTAL: Send node telemetry (agent metrics and problems) to the telemetry API. Requires the default fullnameOverride, eks-node-monitoring-agent. |
+| nodeAgent.telemetry.notReporting.afterFailedIntervals | int | `2` | How many failed scrapes in a row it takes for a target to be reported as not reporting. |
+| nodeAgent.telemetry.report.interval | string | `"5m"` | How often the agent sends a telemetry report. |
+| nodeAgent.telemetry.targetDefaults.expected | string | `"onceSeen"` | Defaults to apply across all configured targets where the corresponding field is omitted. onceSeen: a target is not included in the report until it has been observed at least once. |
+| nodeAgent.telemetry.targets | list | see [`values.yaml`](./values.yaml) | Node-local agents to scrape and the metrics to send from each. |
 | nodeAgent.tolerations | list | `[{"operator":"Exists"}]` | Deployment tolerations for the eks-node-monitoring-agent |
 | serviceAccount.annotations | object | `{}` | Annotations applied to the service account |
 | serviceAccount.create | bool | `true` | Specifies whether a service account should be created |

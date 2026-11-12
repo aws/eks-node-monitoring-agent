@@ -98,3 +98,17 @@ Get the current NMA image for a region.
 {{- printf "%s.dkr.%s.%s.%s/eks/eks-node-monitoring-agent:%s" .Values.nodeAgent.image.account .Values.nodeAgent.image.endpoint .Values.nodeAgent.image.region .Values.nodeAgent.image.domain .Values.nodeAgent.image.tag }}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Whether telemetry is enabled. nodeAgent.telemetry may be null.
+*/}}
+{{- define "eks-node-monitoring-agent.telemetryEnabled" -}}
+{{- if (.Values.nodeAgent.telemetry | default dict).enabled -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+Whether the agent config file (monitor config and telemetry) is rendered.
+*/}}
+{{- define "eks-node-monitoring-agent.hasAgentConfig" -}}
+{{- if or .Values.nodeAgent.monitors (include "eks-node-monitoring-agent.telemetryEnabled" .) -}}true{{- end -}}
+{{- end -}}

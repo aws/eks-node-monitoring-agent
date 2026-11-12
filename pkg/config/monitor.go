@@ -10,6 +10,8 @@ import (
 	"strings"
 
 	"sigs.k8s.io/yaml"
+
+	telemetryconfig "github.com/aws/eks-node-monitoring-agent/pkg/telemetry/config"
 )
 
 const DefaultConfigPath = "/etc/nma/config.yaml"
@@ -35,6 +37,14 @@ func (ms MonitorSettings) IsEnabled() bool {
 // MonitorConfig is the top-level configuration structure.
 type MonitorConfig struct {
 	Monitors map[string]MonitorSettings `yaml:"monitors,omitempty" json:"monitors,omitempty"`
+
+	// Telemetry configures sending node telemetry. Nil or empty means disabled.
+	Telemetry *telemetryconfig.Config `yaml:"telemetry,omitempty" json:"telemetry,omitempty"`
+}
+
+// TelemetryEnabled returns true if telemetry is enabled.
+func (mc *MonitorConfig) TelemetryEnabled() bool {
+	return mc != nil && mc.Telemetry.IsEnabled()
 }
 
 // IsMonitorEnabled checks if a given plugin is enabled.
@@ -114,9 +124,16 @@ func (mc *MonitorConfig) GetExcludedInterfaceNameRegexps() []string {
 	return settings.ExcludedInterfaceNameRegexps
 }
 
-// Validate checks that all keys in Monitors are known plugin names.
+// Validate checks that all keys in Monitors are known plugin names and
+// that the telemetry block is valid.
 func (mc *MonitorConfig) Validate(knownPluginNames []string) error {
-	if mc == nil || mc.Monitors == nil {
+	if mc == nil {
+		return nil
+	}
+	if err := mc.Telemetry.Validate(); err != nil {
+		return err
+	}
+	if mc.Monitors == nil {
 		return nil
 	}
 	var unknown []string

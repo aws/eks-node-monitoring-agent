@@ -14,7 +14,8 @@ global:
 imagePullSecrets: []
 # -- A name override for the chart
 nameOverride: "eks-node-monitoring-agent"
-# -- A fullname override for the chart
+# -- A fullname override for the chart. When enabling telemetry, the name must be eks-node-monitoring-agent so that
+# the service account is created in the same name.
 fullnameOverride: "eks-node-monitoring-agent"
 
 serviceAccount:
@@ -111,6 +112,30 @@ nodeAgent:
   priorityClassName: system-node-critical
   # -- Per-monitor configuration keyed by plugin name. See the main README for details.
   monitors: {}
+  telemetry:
+    # -- EXPERIMENTAL: Send node telemetry (agent metrics and problems) to the telemetry API. Requires the default fullnameOverride, eks-node-monitoring-agent.
+    enabled: false
+    report:
+      # -- How often the agent sends a telemetry report.
+      interval: 5m
+    notReporting:
+      # -- How many failed scrapes in a row it takes for a target to be reported as not reporting.
+      afterFailedIntervals: 2
+    targetDefaults:
+      # -- Defaults to apply across all configured targets where the corresponding field is omitted.
+      # onceSeen: a target is not included in the report until it has been observed at least once.
+      expected: onceSeen
+    # -- Node-local agents to scrape and the metrics to send from each.
+    targets:
+      - component: ipamd
+        endpoint:
+          address: 127.0.0.1
+          port: 61678
+        identity:
+          requireMetric: awscni_build_info
+        metrics:
+          - { name: awscni_assigned_ip_addresses, type: gauge, unit: "1" }
+          - { name: eks_problem }
   # -- Pod annotations applied to the eks-node-monitoring-agent
   podAnnotations: {}
 

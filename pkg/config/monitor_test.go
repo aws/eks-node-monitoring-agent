@@ -513,3 +513,20 @@ func TestLoadMonitorConfig_StrictUnmarshalRejectsUnknownFields(t *testing.T) {
 	assert.Nil(t, cfg)
 	assert.Contains(t, err.Error(), "parsing monitor config")
 }
+
+func TestLoadMonitorConfig_Telemetry(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("monitors: {networking: {enabled: false}}\ntelemetry: {enabled: true}\n"), 0644))
+	cfg, _, err := config.LoadMonitorConfig(cfgPath, testKnownPlugins)
+	require.NoError(t, err)
+	assert.True(t, cfg.TelemetryEnabled())
+	assert.False(t, cfg.IsMonitorEnabled("networking"))
+}
+
+func TestLoadMonitorConfig_BadTelemetryIsAnError(t *testing.T) {
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	require.NoError(t, os.WriteFile(cfgPath, []byte("monitors: {networking: {enabled: false}}\ntelemetry: {enabled: true, enabeld: true}\n"), 0644))
+	cfg, _, err := config.LoadMonitorConfig(cfgPath, testKnownPlugins)
+	assert.Nil(t, cfg)
+	assert.ErrorContains(t, err, "enabeld")
+}
