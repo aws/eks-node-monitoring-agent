@@ -34,6 +34,7 @@ func TestAgentInstalled(t *testing.T) {
 	}{
 		{name: "unit loaded", conn: &fakeUnitConn{loadState: "loaded"}, want: true},
 		{name: "unit not on the AMI", conn: &fakeUnitConn{loadState: "not-found"}, want: false},
+		{name: "unit masked", conn: &fakeUnitConn{loadState: "masked"}, want: false},
 		{name: "property read fails", conn: &fakeUnitConn{err: errors.New("timeout")}, want: true},
 		{name: "D-Bus unreachable", connErr: errors.New("no bus"), want: true},
 	} {

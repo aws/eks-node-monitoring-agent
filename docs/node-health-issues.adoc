@@ -271,6 +271,14 @@ The monitoring condition is `NetworkingReady` for issues in the following table 
 |Event
 |Connection tracking exceeded the maximum for the instance and new connections could not be established, which can result in packet loss.
 
+|CoreDNSCorefileAgentUnavailable
+|Event
+|The agent that applies a custom CoreDNS Corefile on this Auto Mode node has not reported an outcome for 20 minutes: it is not running, not answering, or still initializing. A custom Corefile set on the NodeClass may not be applied. Auto Mode only.
+
+|CoreDNSCorefileApplied
+|Event
+|CoreDNS on this Auto Mode node is serving the customer's Corefile from the ConfigMap referenced by the NodeClass. Reported when the node settles on that Corefile after a different outcome or after CoreDNSCorefileAgentUnavailable, and again when the node monitoring agent restarts. Informational; no action is needed. Auto Mode only.
+
 |CoreDNSCorefileReloadFailed
 |Event
 |CoreDNS refused to load the customer's Corefile on this Auto Mode node. CoreDNS keeps serving the previous good configuration from memory; the agent retries and may revert. Auto Mode only.

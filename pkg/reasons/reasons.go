@@ -223,6 +223,14 @@ var (
 		template:        "ConntrackExceeded",
 		defaultSeverity: "Warning",
 	}
+	CoreDNSCorefileAgentUnavailable = ReasonMeta{
+		template:        "CoreDNSCorefileAgentUnavailable",
+		defaultSeverity: "Warning",
+	}
+	CoreDNSCorefileApplied = ReasonMeta{
+		template:        "CoreDNSCorefileApplied",
+		defaultSeverity: "Info",
+	}
 	CoreDNSCorefileReloadFailed = ReasonMeta{
 		template:        "CoreDNSCorefileReloadFailed",
 		defaultSeverity: "Warning",
@@ -432,6 +440,8 @@ var byName = map[string]ReasonMeta{
 	"BandwidthInExceeded":                  BandwidthInExceeded,
 	"BandwidthOutExceeded":                 BandwidthOutExceeded,
 	"ConntrackExceeded":                    ConntrackExceeded,
+	"CoreDNSCorefileAgentUnavailable":      CoreDNSCorefileAgentUnavailable,
+	"CoreDNSCorefileApplied":               CoreDNSCorefileApplied,
 	"CoreDNSCorefileReloadFailed":          CoreDNSCorefileReloadFailed,
 	"CoreDNSCorefileRevertedToBaseline":    CoreDNSCorefileRevertedToBaseline,
 	"CoreDNSCorefileRevertedToLastApplied": CoreDNSCorefileRevertedToLastApplied,
