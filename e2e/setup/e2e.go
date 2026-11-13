@@ -53,6 +53,7 @@ func Configure() (testenv env.Environment, setupFuncs []env.Func, finishFuncs []
 	flag.DurationVar(&nvidiaHealthyVerdictObserve, "nvidia-healthy-verdict", 0,
 		"Run only the NvidiaHealthyVerdict test, watching AcceleratedHardwareReady for this long (use at least 15m). "+
 			"The rest of the suite is skipped while it is set. 0 (the default) skips NvidiaHealthyVerdict")
+	flag.StringVar(&monitors.TestImage, "test-image", monitors.TestImage, "The image used by helper pods that inject faults on nodes")
 
 	cfg, err := envconf.NewFromFlags()
 	if err != nil {
