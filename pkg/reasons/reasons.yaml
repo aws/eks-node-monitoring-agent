@@ -131,6 +131,18 @@ ContainerRuntimeReady:
     Description: >-
       A container image using deprecated image manifest version 2, schema 1 was
       recently pulled onto the node through `containerd`.
+  CRIProxyUnhealthy:
+    Template: 'CRIProxyUnhealthy'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      The CRI proxy that serves the container runtime endpoint on nodes running
+      isolated pods is not serving requests, so the node cannot start pods.
+  LeakedSandboxResources:
+    Template: 'LeakedSandboxResources'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      Sandboxes that no longer belong to any pod are holding every isolated pod
+      slot on the node, so no new isolated pod can start on it.
 NetworkingReady:
   MACAddressPolicyMisconfigured:
     Template: 'MACAddressPolicyMisconfigured'
@@ -288,6 +300,23 @@ NetworkingReady:
     DefaultSeverity: 'Warning'
     Description: >-
       EFA driver metrics shows there is an interface with performance degredation.
+  EFADriverNotLoaded:
+    Template: 'EFADriverNotLoaded'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      EFA devices are attached to the instance, but none of them have been
+      bound to the efa driver for 15 minutes. The efa kernel module may be
+      missing or may have failed to load. Auto Mode only; on other nodes this
+      is reported as a Warning event, since their AMI may not include the efa
+      driver.
+  EFARailCountMismatch:
+    Template: 'EFARailCountMismatch'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      Fewer EFA devices are available on the node than are attached to the
+      instance, for three consecutive checks. A device is available when it is
+      bound to the efa driver and its port is ACTIVE and LinkUp. Missing rails
+      may reduce the network bandwidth available across rails.
   CoreDNSCorefileValidationFailed:
     Template: 'CoreDNSCorefileValidationFailed'
     DefaultSeverity: 'Warning'
@@ -406,6 +435,38 @@ AcceleratedHardwareReady:
       The NVIDIA Fabric Manager service is not running on this NVSwitch-equipped
       instance. Fabric Manager is required for multi-GPU NVLink communication.
       Without it, multi-GPU workloads will fail or silently degrade.
+  FabricManagerNotStarted:
+    Template: 'FabricManagerNotStarted'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      NVIDIA Fabric Manager has not configured a GPU's NVLink fabric within 15
+      minutes on an instance type that runs Fabric Manager on the host, usually
+      because Fabric Manager never started. Until it does, the GPUs can't use
+      NVLink. Restarting the node restarts Fabric Manager.
+  NvidiaDriverNotResponding:
+    Template: 'NvidiaDriverNotResponding'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      Calls from the agent to the NVIDIA driver have not returned for at least
+      two minutes, so the agent cannot read GPU health. On its own, a
+      call that has not returned is not treated as a GPU fault, because a busy
+      or shared driver can also hold it. If a light probe of the driver also
+      stops answering, the agent reports NvidiaDriverUnresponsive.
+  NvidiaDriverUnresponsive:
+    Template: 'NvidiaDriverUnresponsive'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      The NVIDIA driver has stopped answering. The agent's GPU health checks
+      stopped answering first, and a light probe of the driver then stayed
+      stuck for 15 minutes while the host was not under memory pressure. The
+      node cannot run GPU work, and a reboot clears a hung driver.
+  NvidiaLibraryNotFound:
+    Template: 'NvidiaLibraryNotFound'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      The agent could not load the NVIDIA management library
+      (libnvidia-ml.so.1) from the host, so it cannot read GPU health. This is
+      an agent packaging or driver installation issue, not a GPU fault.
   FabricManagerNotRunningWarning:
     Template: 'FabricManagerNotRunning'
     DefaultSeverity: 'Warning'

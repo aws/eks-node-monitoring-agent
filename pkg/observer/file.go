@@ -88,6 +88,8 @@ func (o *fileObserver) watchLoop(ctx context.Context) error {
 		}
 		if err := workFunc(); err != nil {
 			logger.Error(err, "error in workloop")
+			// The loop period is 0, so a repeating error would spin.
+			time.Sleep(100 * time.Millisecond)
 		}
 	}, 0)
 
@@ -95,6 +97,11 @@ func (o *fileObserver) watchLoop(ctx context.Context) error {
 }
 
 func (o *fileObserver) readAll() error {
+	// The reader is unset while the path is not a readable file, for example
+	// after a reopen found a directory. Wait for the next create event.
+	if o.fileReader == nil {
+		return io.EOF
+	}
 	for {
 		line, err := o.fileReader.ReadString('\n')
 		if err != nil {
@@ -126,11 +133,25 @@ func (o *fileObserver) reconcileWatcher() error {
 func (o *fileObserver) openReader() error {
 	var err error
 	if o.fileHandle != nil {
-		o.fileHandle.Close()
+		// Close() alone leaves the reader on the closed file, so readAll spins.
+		o.closeHandle()
 	}
 	o.fileHandle, err = os.Open(o.path)
 	if err != nil {
 		return err
+	}
+	// os.Open succeeds on a directory, but every read then fails with EISDIR.
+	// Report a directory as not existing so the caller keeps waiting for a
+	// real file. Only directories are rejected: this observer also reads
+	// character devices such as /dev/kmsg.
+	info, err := o.fileHandle.Stat()
+	if err != nil {
+		o.closeHandle()
+		return err
+	}
+	if info.IsDir() {
+		o.closeHandle()
+		return fmt.Errorf("%s is a directory: %w", o.path, os.ErrNotExist)
 	}
 	// Seek to end of file to ignore old data
 	if _, err := o.fileHandle.Seek(0, io.SeekEnd); err != nil {
@@ -138,4 +159,10 @@ func (o *fileObserver) openReader() error {
 	}
 	o.fileReader = bufio.NewReader(o.fileHandle)
 	return nil
+}
+
+func (o *fileObserver) closeHandle() {
+	o.fileHandle.Close()
+	o.fileHandle = nil
+	o.fileReader = nil
 }

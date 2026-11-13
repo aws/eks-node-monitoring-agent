@@ -1,6 +1,4 @@
-//go:build !darwin
-
-package dcgm
+package classify
 
 import (
 	"testing"
@@ -18,10 +16,10 @@ func TestSuppressRepeatedWarnings(t *testing.T) {
 	otherWarning := monitor.Condition{Reason: "Other", Message: "m", Severity: monitor.SeverityWarning}
 	isSelected := func(c monitor.Condition) bool { return c.Reason == "Selected" }
 
-	notified := renotify.New[string](warningReNotifyInterval)
+	notified := renotify.New[string](WarningReNotifyInterval)
 	now := time.Unix(0, 0)
 	call := func(conds ...monitor.Condition) []monitor.Condition {
-		return suppressRepeatedWarnings(notified, now, conds, isSelected)
+		return SuppressRepeatedWarnings(notified, now, conds, isSelected)
 	}
 
 	// First report is kept once, even when repeated in the same call (one per
@@ -44,8 +42,8 @@ func TestSuppressRepeatedWarnings(t *testing.T) {
 	// calls) is unchanged: dropped.
 	assert.Empty(t, call(changed, selectedWarning))
 
-	// Unchanged again, then kept once warningReNotifyInterval has passed.
-	now = now.Add(warningReNotifyInterval - time.Minute)
+	// Unchanged again, then kept once WarningReNotifyInterval has passed.
+	now = now.Add(WarningReNotifyInterval - time.Minute)
 	assert.Empty(t, call(selectedWarning, changed))
 	now = now.Add(time.Minute)
 	assert.Equal(t, []monitor.Condition{selectedWarning, changed}, call(selectedWarning, changed))

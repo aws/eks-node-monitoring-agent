@@ -34,6 +34,10 @@ var (
 		template:        "FabricManagerNotRunning",
 		defaultSeverity: "Warning",
 	}
+	FabricManagerNotStarted = ReasonMeta{
+		template:        "FabricManagerNotStarted",
+		defaultSeverity: "Fatal",
+	}
 	NeuronDMAError = ReasonMeta{
 		template:        "NeuronDMAError",
 		defaultSeverity: "Fatal",
@@ -58,9 +62,21 @@ var (
 		template:        "NvidiaDoubleBitError",
 		defaultSeverity: "Fatal",
 	}
+	NvidiaDriverNotResponding = ReasonMeta{
+		template:        "NvidiaDriverNotResponding",
+		defaultSeverity: "Warning",
+	}
+	NvidiaDriverUnresponsive = ReasonMeta{
+		template:        "NvidiaDriverUnresponsive",
+		defaultSeverity: "Fatal",
+	}
 	NvidiaFabricError = ReasonMeta{
 		template:        "NvidiaFabricError",
 		defaultSeverity: "Fatal",
+	}
+	NvidiaLibraryNotFound = ReasonMeta{
+		template:        "NvidiaLibraryNotFound",
+		defaultSeverity: "Warning",
 	}
 	NvidiaNCCLError = ReasonMeta{
 		template:        "NvidiaNCCLError",
@@ -97,6 +113,10 @@ var (
 
 	// reasons for the ContainerRuntimeReady condition.
 
+	CRIProxyUnhealthy = ReasonMeta{
+		template:        "CRIProxyUnhealthy",
+		defaultSeverity: "Fatal",
+	}
 	ContainerRuntimeFailed = ReasonMeta{
 		template:        "ContainerRuntimeFailed",
 		defaultSeverity: "Warning",
@@ -108,6 +128,10 @@ var (
 	KubeletFailed = ReasonMeta{
 		template:        "KubeletFailed",
 		defaultSeverity: "Warning",
+	}
+	LeakedSandboxResources = ReasonMeta{
+		template:        "LeakedSandboxResources",
+		defaultSeverity: "Fatal",
 	}
 	LivenessProbeFailures = ReasonMeta{
 		template:        "LivenessProbeFailures",
@@ -215,8 +239,16 @@ var (
 		template:        "CoreDNSCorefileValidationFailed",
 		defaultSeverity: "Warning",
 	}
+	EFADriverNotLoaded = ReasonMeta{
+		template:        "EFADriverNotLoaded",
+		defaultSeverity: "Fatal",
+	}
 	EFAErrorMetric = ReasonMeta{
 		template:        "EFAErrorMetric",
+		defaultSeverity: "Warning",
+	}
+	EFARailCountMismatch = ReasonMeta{
+		template:        "EFARailCountMismatch",
 		defaultSeverity: "Warning",
 	}
 	IPAMDInconsistentState = ReasonMeta{
@@ -355,13 +387,17 @@ var byName = map[string]ReasonMeta{
 	"DCGMHealthCodeFatal":                  DCGMHealthCodeFatal,
 	"FabricManagerNotRunning":              FabricManagerNotRunning,
 	"FabricManagerNotRunningWarning":       FabricManagerNotRunningWarning,
+	"FabricManagerNotStarted":              FabricManagerNotStarted,
 	"NeuronDMAError":                       NeuronDMAError,
 	"NeuronHBMUncorrectableError":          NeuronHBMUncorrectableError,
 	"NeuronNCUncorrectableError":           NeuronNCUncorrectableError,
 	"NeuronSRAMUncorrectableError":         NeuronSRAMUncorrectableError,
 	"NvidiaDeviceCountMismatch":            NvidiaDeviceCountMismatch,
 	"NvidiaDoubleBitError":                 NvidiaDoubleBitError,
+	"NvidiaDriverNotResponding":            NvidiaDriverNotResponding,
+	"NvidiaDriverUnresponsive":             NvidiaDriverUnresponsive,
 	"NvidiaFabricError":                    NvidiaFabricError,
+	"NvidiaLibraryNotFound":                NvidiaLibraryNotFound,
 	"NvidiaNCCLError":                      NvidiaNCCLError,
 	"NvidiaNVLinkError":                    NvidiaNVLinkError,
 	"NvidiaPCIeError":                      NvidiaPCIeError,
@@ -370,9 +406,11 @@ var byName = map[string]ReasonMeta{
 	"NvidiaThermalError":                   NvidiaThermalError,
 	"NvidiaXIDError":                       NvidiaXIDError,
 	"NvidiaXIDWarning":                     NvidiaXIDWarning,
+	"CRIProxyUnhealthy":                    CRIProxyUnhealthy,
 	"ContainerRuntimeFailed":               ContainerRuntimeFailed,
 	"DeprecatedContainerdConfiguration":    DeprecatedContainerdConfiguration,
 	"KubeletFailed":                        KubeletFailed,
+	"LeakedSandboxResources":               LeakedSandboxResources,
 	"LivenessProbeFailures":                LivenessProbeFailures,
 	"PodStuckTerminating":                  PodStuckTerminating,
 	"ReadinessProbeFailures":               ReadinessProbeFailures,
@@ -398,7 +436,9 @@ var byName = map[string]ReasonMeta{
 	"CoreDNSCorefileRevertedToBaseline":    CoreDNSCorefileRevertedToBaseline,
 	"CoreDNSCorefileRevertedToLastApplied": CoreDNSCorefileRevertedToLastApplied,
 	"CoreDNSCorefileValidationFailed":      CoreDNSCorefileValidationFailed,
+	"EFADriverNotLoaded":                   EFADriverNotLoaded,
 	"EFAErrorMetric":                       EFAErrorMetric,
+	"EFARailCountMismatch":                 EFARailCountMismatch,
 	"IPAMDInconsistentState":               IPAMDInconsistentState,
 	"IPAMDNoIPs":                           IPAMDNoIPs,
 	"IPAMDNotReady":                        IPAMDNotReady,

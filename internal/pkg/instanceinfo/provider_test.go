@@ -11,14 +11,19 @@ func TestLoadEmbeddedInstanceInfo(t *testing.T) {
 	assert.NotEmpty(t, lookup, "embedded instance info should not be empty")
 
 	tests := []struct {
-		instanceType string
-		expectedGPUs uint
+		instanceType      string
+		expectedGPUs      uint
+		hostFabricManager bool
 	}{
-		{"g6e.12xlarge", 4},
-		{"g6e.48xlarge", 8},
-		{"g5.2xlarge", 1},
-		{"p5.48xlarge", 8},
-		{"g4dn.metal", 8},
+		{"g6e.12xlarge", 4, false},
+		{"g6e.48xlarge", 8, false},
+		{"g5.2xlarge", 1, false},
+		{"p5.48xlarge", 8, true},
+		{"p5.4xlarge", 1, false},
+		{"p4d.24xlarge", 8, false},
+		{"p6-b200.48xlarge", 8, true},
+		{"p6e-gb200.36xlarge", 4, false},
+		{"g4dn.metal", 8, false},
 	}
 
 	for _, tt := range tests {
@@ -26,6 +31,7 @@ func TestLoadEmbeddedInstanceInfo(t *testing.T) {
 			info, ok := lookup[tt.instanceType]
 			assert.True(t, ok, "instance type %s should be in embedded data", tt.instanceType)
 			assert.Equal(t, tt.expectedGPUs, info.NvidiaGPUCount)
+			assert.Equal(t, tt.hostFabricManager, info.HostFabricManager)
 			assert.Equal(t, tt.instanceType, info.InstanceType)
 		})
 	}

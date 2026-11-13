@@ -50,10 +50,10 @@
 {"instanceType":"p3dn.24xlarge","nvidiaGpuCount":8}
 {"instanceType":"p4d.24xlarge","nvidiaGpuCount":8}
 {"instanceType":"p4de.24xlarge","nvidiaGpuCount":8}
-{"instanceType":"p5.48xlarge","nvidiaGpuCount":8}
+{"instanceType":"p5.48xlarge","nvidiaGpuCount":8,"hostFabricManager":true}
 {"instanceType":"p5.4xlarge","nvidiaGpuCount":1}
-{"instanceType":"p5e.48xlarge","nvidiaGpuCount":8}
-{"instanceType":"p5en.48xlarge","nvidiaGpuCount":8}
-{"instanceType":"p6-b200.48xlarge","nvidiaGpuCount":8}
-{"instanceType":"p6-b300.48xlarge","nvidiaGpuCount":8}
+{"instanceType":"p5e.48xlarge","nvidiaGpuCount":8,"hostFabricManager":true}
+{"instanceType":"p5en.48xlarge","nvidiaGpuCount":8,"hostFabricManager":true}
+{"instanceType":"p6-b200.48xlarge","nvidiaGpuCount":8,"hostFabricManager":true}
+{"instanceType":"p6-b300.48xlarge","nvidiaGpuCount":8,"hostFabricManager":true}
 {"instanceType":"p6e-gb200.36xlarge","nvidiaGpuCount":4}

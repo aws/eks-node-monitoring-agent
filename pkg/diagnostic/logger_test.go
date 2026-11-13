@@ -455,3 +455,31 @@ func TestNewDiagnosticLoggerWrapsWriterInPacedWriter(t *testing.T) {
 	_, ok := l.writer.(*pacedWriter)
 	assert.True(t, ok, "NewDiagnosticLogger must wrap its writer for pacing")
 }
+
+// A pipe with no reader stops draining like an output-stopped tty; the write
+// must time out instead of blocking forever.
+func TestPacedWriterTimesOutWhenConsoleStopsDraining(t *testing.T) {
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	defer r.Close()
+	defer w.Close()
+
+	orig := consoleWriteTimeout
+	consoleWriteTimeout = 100 * time.Millisecond
+	defer func() { consoleWriteTimeout = orig }()
+
+	pw := newPacedWriter(w, 100*1024*1024, 2*1024)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := pw.Write(bytes.Repeat([]byte("x"), 1024*1024)) // larger than any pipe buffer
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		assert.ErrorIs(t, err, os.ErrDeadlineExceeded)
+	case <-time.After(5 * time.Second):
+		t.Fatal("write blocked instead of timing out")
+	}
+}

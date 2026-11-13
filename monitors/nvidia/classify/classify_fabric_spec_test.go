@@ -1,6 +1,4 @@
-//go:build !darwin
-
-package dcgm
+package classify
 
 import (
 	"testing"
@@ -84,7 +82,7 @@ func fabricConditionMessage(conds []monitor.Condition) string {
 // TestClassify_fabricManagerStatusSpec covers every dcgmFabricManagerStatus_t
 // value (dcgm_structs.h), the values DCGM stores outside that enum, and
 // out-of-range values. NotSupported, NotStarted, InProgress, and Success are
-// healthy (see handleFabricField for why NotStarted is suppressed), and DCGM's
+// healthy (see Classify for why NotStarted is suppressed), and DCGM's
 // blank values (the status could not be read) produce no condition.
 // Unrecognized, NvmlTooOld, and -1 (DCGM_ST_BADPARAM, which DCGM stores for a
 // fabric state it does not know) mean the driver/NVML and DCGM versions do not

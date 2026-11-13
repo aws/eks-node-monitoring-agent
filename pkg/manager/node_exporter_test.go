@@ -13,6 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -26,10 +27,15 @@ type fakeEventRecorder struct {
 }
 
 func (r *fakeEventRecorder) Event(object runtime.Object, eventtype, reason, message string) {
+	var involvedObject corev1.ObjectReference
+	if ref, ok := object.(*corev1.ObjectReference); ok {
+		involvedObject = *ref
+	}
 	r.events.Items = append(r.events.Items, corev1.Event{
-		Type:    eventtype,
-		Reason:  reason,
-		Message: message,
+		InvolvedObject: involvedObject,
+		Type:           eventtype,
+		Reason:         reason,
+		Message:        message,
 	})
 }
 
@@ -538,4 +544,29 @@ func TestNodeExporter_ReasonFollowsMostRecentReport(t *testing.T) {
 	// while messages keep their arrival order.
 	fatal("ErrorA", "MessageA2")
 	expectCondition("ErrorA", "MessageA2; MessageB")
+}
+
+func TestNodeExporter_EventsReferenceNodeUID(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		node *corev1.Node
+		want types.UID
+	}{
+		{"name only", &corev1.Node{ObjectMeta: v1.ObjectMeta{Name: "test-node"}}, "test-node"},
+		{"with uid", &corev1.Node{ObjectMeta: v1.ObjectMeta{Name: "test-node", UID: "a8eff46f"}}, "a8eff46f"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var recorder fakeEventRecorder
+			exporter := manager.NewNodeExporter(tc.node, fake.NewFakeClient(), &recorder, map[corev1.NodeConditionType]manager.NodeConditionConfig{})
+			if err := exporter.Warning(context.TODO(), monitor.Condition{Reason: "Test"}, corev1.NodeReady); err != nil {
+				t.Fatal(err)
+			}
+			if len(recorder.events.Items) != 1 {
+				t.Fatalf("got %d events, want 1", len(recorder.events.Items))
+			}
+			if got := recorder.events.Items[0].InvolvedObject.UID; got != tc.want {
+				t.Errorf("UID = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }

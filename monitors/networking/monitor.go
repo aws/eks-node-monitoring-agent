@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coreos/go-systemd/v22/dbus"
 	"github.com/go-logr/logr"
 	"github.com/shirou/gopsutil/v4/process"
 	"golang.org/x/time/rate"
@@ -35,8 +34,10 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/monitors/networking/npa"
 	"github.com/aws/eks-node-monitoring-agent/pkg/config"
 	"github.com/aws/eks-node-monitoring-agent/pkg/osext"
+	"github.com/aws/eks-node-monitoring-agent/pkg/probe"
 	"github.com/aws/eks-node-monitoring-agent/pkg/reasons"
 	"github.com/aws/eks-node-monitoring-agent/pkg/util"
+	"github.com/aws/eks-node-monitoring-agent/pkg/util/renotify"
 )
 
 var _ monitor.Monitor = (*NetworkingMonitor)(nil)
@@ -53,6 +54,12 @@ const (
 	// on the handleIPAMD interval (currently 5m), so this should ideally be kept longer than that
 	// TODO: should preferably use a concept of a minimum rate for a condition in node exporter
 	ipamdNotRunningConsistencyDuration = 15 * time.Minute
+
+	// how long to wait before re-checking IP rules/routes that looked missing. ipamd records an
+	// address as assigned to a container before the CNI plugin finishes writing the pod's ip rule
+	// and route (typically ~100-200ms later), so a single observation during pod startup is not
+	// enough to report MissingIPRules/MissingIPRoutes/MissingDefaultRoutes.
+	defaultIPRulesRecheckDelay = 2 * time.Second
 )
 
 type criIPDetails struct {
@@ -77,6 +84,25 @@ type NetworkingMonitor struct {
 	// name matches any of these are skipped during InterfaceNotUp /
 	// InterfaceNotRunning checks.
 	excludedInterfaceNameRegexps []*regexp.Regexp
+	// efaDriverNotLoadedSince is when no attached EFA device was first found
+	// bound to the efa driver, or zero while the driver is bound.
+	efaDriverNotLoadedSince time.Time
+	// efaDriverNotLoadedReported records that the Fatal EFADriverNotLoaded
+	// condition was set, so it can be resolved once the driver is bound.
+	efaDriverNotLoadedReported bool
+	// efaDriverNotified rate-limits the EFADriverNotLoaded Warning on nodes
+	// outside Auto Mode, keyed by the number of attached EFA devices.
+	efaDriverNotified *renotify.Tracker[int]
+	// efaRailCountNotified rate-limits the EFARailCountMismatch Warning,
+	// keyed by both counts in its message so a change in either is reported.
+	efaRailCountNotified *renotify.Tracker[efaRailCount]
+	// efaRailCountDegradedChecks counts consecutive checks that found fewer
+	// available EFA devices than attached ones.
+	efaRailCountDegradedChecks int
+
+	// ipRulesRecheckDelay and getIPState are overridable for tests.
+	ipRulesRecheckDelay time.Duration
+	getIPState          func() (*ipState, error)
 }
 
 func (m *NetworkingMonitor) Name() string {
@@ -150,9 +176,13 @@ func (m *NetworkingMonitor) isInterfaceExcluded(name string) bool {
 
 func NewNetworkingMonitor(options ...Option) *NetworkingMonitor {
 	m := &NetworkingMonitor{
-		exec:           osext.NewExec(config.HostRoot()),
-		runtimeContext: config.GetRuntimeContext(),
+		exec:                 osext.NewExec(config.HostRoot()),
+		runtimeContext:       config.GetRuntimeContext(),
+		efaDriverNotified:    renotify.New[int](efaReNotifyInterval),
+		efaRailCountNotified: renotify.New[efaRailCount](efaReNotifyInterval),
+		ipRulesRecheckDelay:  defaultIPRulesRecheckDelay,
 	}
+	m.getIPState = m.readIPState
 
 	for _, option := range options {
 		option(m)
@@ -235,8 +265,8 @@ func (m *NetworkingMonitor) Register(ctx context.Context, mgr monitor.Manager) e
 	}
 
 	for _, handler := range []interface{ Start(context.Context) error }{
-		util.NewChannelHandler(func(time.Time) error { return makeEthtoolMonitor(mgr).handleEthtool() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
-		util.NewChannelHandler(func(time.Time) error { return m.handleIPRulesAndRoutes() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
+		util.NewChannelHandler(ethtoolTickHandler(mgr, readEthtoolStats), util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
+		util.NewChannelHandler(func(time.Time) error { return m.handleIPRulesAndRoutes(ctx) }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleIPTables() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleInterfaces() }, util.TimeTickWithJitterContext(ctx, interfaceMonitorPeriod)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleNetworkSysctl() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
@@ -244,8 +274,20 @@ func (m *NetworkingMonitor) Register(ctx context.Context, mgr monitor.Manager) e
 		// one value, consider separating out the two
 		util.NewChannelHandler(func(time.Time) error { return m.handleIPAMD() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleMACAddressPolicy() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
+		util.NewChannelHandler(func(now time.Time) error { return m.handleEFADevices(ctx, now) }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 	} {
 		go handler.Start(ctx)
+	}
+
+	// Subagent health probes (Auto Mode: IPAMD liveness). Runners emit
+	// through this monitor's manager, so probe findings surface under the
+	// NetworkingReady condition like any handler-derived condition.
+	for _, spec := range m.probeSpecs() {
+		runner, err := probe.NewRunner(spec, mgr, m.log)
+		if err != nil {
+			return err
+		}
+		go runner.Start(ctx)
 	}
 
 	// NPA (Network Policy Agent) D-Bus state monitoring (crash-loop + not-running) — Auto Mode only.
@@ -256,10 +298,9 @@ func (m *NetworkingMonitor) Register(ctx context.Context, mgr monitor.Manager) e
 		).Start(ctx)
 	}
 
-	// CoreDNS Corefile agent /readyz polling, Auto Mode only. Short cadence
-	// because the agent's outcome changes on a ConfigMap edit, not on
-	// long-lived resource state.
-	if slices.Contains(m.runtimeContext.Tags(), config.EKSAuto) {
+	// Corefile agent /readyz polling on Auto Mode nodes that have the agent.
+	// Short cadence because the outcome changes on a ConfigMap edit.
+	if slices.Contains(m.runtimeContext.Tags(), config.EKSAuto) && corefile.AgentInstalled(ctx, m.log) {
 		corefileDetector := corefile.New(mgr, m.log)
 		go util.NewChannelHandler(
 			func(time.Time) error { return corefileDetector.HandleState() },
@@ -340,21 +381,9 @@ func (m *NetworkingMonitor) handleIPAMDLogs(line string) error {
 
 func (m *NetworkingMonitor) handleIPAMD() error {
 	if slices.Contains(m.runtimeContext.Tags(), config.EKSAuto) {
-		// on the system, indicating ipamd should be running if there are no errors.
-		dbus, err := dbus.NewWithContext(context.Background())
-		if err != nil {
-			return err
-		}
-		defer dbus.Close()
-		property, err := dbus.GetUnitPropertyContext(context.Background(), "ipamd.service", "ActiveState")
-		if err != nil {
-			return err
-		}
-		ipamdRunning := false
-		if property.Value.Value().(string) == "active" {
-			ipamdRunning = true
-		}
-		return m.checkIPAMD(ipamdRunning)
+		// Liveness of ipamd.service is owned by the IPAMD probe registered in
+		// probeSpecs; only the checkpoint/CRI cross-check runs here.
+		return m.checkIPAMD(true)
 	} else {
 		ipamdRunning := false
 		podName, isInstalled, err := m.isVPCCNIInstalled()
@@ -545,9 +574,19 @@ const (
 	PPSExceeded          = "pps_allowance_exceeded"
 )
 
+// ethtoolWarningReNotifyInterval is how often the allowance-exceeded Warnings
+// may be reported for an interface. Every NMA Warning on a node shares one
+// client-go spam-filter bucket, so reporting every tick (interfaceMonitorPeriod)
+// would crowd out other Warning events.
+const ethtoolWarningReNotifyInterval = 30 * time.Minute
+
 type ethtoolMonitor struct {
 	statExceededCache map[compoundStatKey]*statTracker
-	manager           monitor.Manager
+	// notified rate-limits the allowance-exceeded Warnings per interface. It
+	// only holds interfaces that have sent a Warning.
+	notified map[string]*renotify.Tracker[struct{}]
+	manager  monitor.Manager
+	now      func() time.Time
 }
 
 type statTracker struct {
@@ -582,14 +621,39 @@ func makeEthtoolMonitor(manager monitor.Manager) *ethtoolMonitor {
 	return &ethtoolMonitor{
 		manager:           manager,
 		statExceededCache: make(map[compoundStatKey]*statTracker),
+		notified:          make(map[string]*renotify.Tracker[struct{}]),
+		now:               time.Now,
 	}
 }
 
-func (m *ethtoolMonitor) handleEthtool() (merr error) {
+// ethtoolStatsReader returns ethtool stats keyed by interface name. A non-nil
+// error may accompany partial results for the interfaces that succeeded.
+type ethtoolStatsReader func() (map[string]map[string]int, error)
+
+// ethtoolTickHandler returns the periodic handler that runs the ethtool check
+// on each tick. The monitor is created once so its stat cache and rate
+// limiters persist across ticks; otherwise every reading looks like the first
+// and allowance-exceeded spikes are never detected.
+func ethtoolTickHandler(mgr monitor.Manager, readStats ethtoolStatsReader) func(time.Time) error {
+	m := makeEthtoolMonitor(mgr)
+	return func(time.Time) error { return m.handleEthtool(readStats) }
+}
+
+func (m *ethtoolMonitor) handleEthtool(readStats ethtoolStatsReader) error {
+	statsByInterface, merr := readStats()
+	for interfaceName, stats := range statsByInterface {
+		merr = errors.Join(merr, m.checkEthtool(interfaceName, stats))
+	}
+	return merr
+}
+
+// readEthtoolStats runs `ethtool -S` on every host interface.
+func readEthtoolStats() (_ map[string]map[string]int, merr error) {
 	netInterfaces, err := net.Interfaces()
 	if err != nil {
-		return err
+		return nil, err
 	}
+	statsByInterface := make(map[string]map[string]int, len(netInterfaces))
 	for _, netInterface := range netInterfaces {
 		ethtoolCmd := []string{"ethtool", "-S", netInterface.Name}
 		ethtoolOut, err := osext.NewExec(config.HostRoot()).Command(ethtoolCmd[0], ethtoolCmd[1:]...).CombinedOutput()
@@ -606,14 +670,21 @@ func (m *ethtoolMonitor) handleEthtool() (merr error) {
 			merr = errors.Join(merr, err)
 			continue
 		}
-		merr = errors.Join(merr, m.checkEthtool(netInterface.Name, stats))
+		statsByInterface[netInterface.Name] = stats
 	}
-	return merr
+	return statsByInterface, merr
 }
 
 // checkEthtool checks whether the allowance exceeded metrics from ethtool are
 // breached at an unhealthy rate.
+// Warnings are reported at most once per ethtoolWarningReNotifyInterval for
+// each interface; all stats exceeded on the reporting tick are included.
 func (m *ethtoolMonitor) checkEthtool(interfaceName string, stats map[string]int) (merr error) {
+	now := m.now()
+	// an interface without a tracker has never fired a Warning, so it may
+	// notify right away. trackers are only created once a Warning is sent.
+	tracker, tracked := m.notified[interfaceName]
+	shouldNotify, sent := !tracked || tracker.ShouldNotify(struct{}{}, now), false
 	for statKey, rateLimiterConstructor := range statLimiterConstructors {
 		if statValue, ok := stats[statKey]; ok {
 			cacheKey := makeCompoundStatKey(interfaceName, statKey)
@@ -622,14 +693,18 @@ func (m *ethtoolMonitor) checkEthtool(interfaceName string, stats map[string]int
 				// node. reporting when they increase or are non-zero gets pretty noisy and
 				// doesn't directly indicate any issues. instead, the approach here is to only
 				// emit the event when there is a noticeable spike in the exceeded stats.
-				if exceededCntDelta := statValue - statCache.recorded; !statCache.rateLimiter.AllowN(time.Now(), exceededCntDelta) {
-					merr = errors.Join(m.manager.Notify(context.TODO(),
+				if exceededCntDelta := statValue - statCache.recorded; !statCache.rateLimiter.AllowN(now, exceededCntDelta) && shouldNotify {
+					if err := m.manager.Notify(context.TODO(),
 						statReasons[statKey].
 							Builder().
 							Message(fmt.Sprintf("%s increased on interface %q from %d to %d", statKey, interfaceName, statCache.recorded, statValue)).
 							Severity(monitor.SeverityWarning).
 							Build(),
-					))
+					); err != nil {
+						merr = errors.Join(merr, err)
+					} else {
+						sent = true
+					}
 				}
 				statCache.recorded = statValue
 			} else {
@@ -644,6 +719,14 @@ func (m *ethtoolMonitor) checkEthtool(interfaceName string, stats map[string]int
 				m.statExceededCache[cacheKey] = &statCacheEntry
 			}
 		}
+	}
+	// only record a sent notification so a failed Notify is retried next tick.
+	if sent {
+		if !tracked {
+			tracker = renotify.New[struct{}](ethtoolWarningReNotifyInterval)
+			m.notified[interfaceName] = tracker
+		}
+		tracker.Notified(struct{}{}, now)
 	}
 	return merr
 }
@@ -703,7 +786,16 @@ type ipMetadata struct {
 	primary bool
 }
 
-func (m *NetworkingMonitor) handleIPRulesAndRoutes() (merr error) {
+// ipState is one observation of the IPs ipamd has assigned to containers and the node's
+// ip rules and routes.
+type ipState struct {
+	mode   int
+	meta   map[string]*ipMetadata
+	rules  []string
+	routes []string
+}
+
+func (m *NetworkingMonitor) handleIPRulesAndRoutes(ctx context.Context) error {
 	if slices.Contains(m.runtimeContext.Tags(), config.Hybrid) {
 		// Hybrid nodes do not have ipamd
 		return nil
@@ -718,17 +810,53 @@ func (m *NetworkingMonitor) handleIPRulesAndRoutes() (merr error) {
 		}
 	}
 
+	state, err := m.getIPState()
+	if err != nil || state == nil {
+		return err
+	}
+	issues, err := findIPRuleAndRouteIssues(state.mode, state.meta, state.rules, state.routes)
+	if err != nil || len(issues) == 0 {
+		return err
+	}
+
+	// Something looked missing. Pods that were starting during the first observation may simply
+	// not have had their rule/route written yet, so observe again and only report issues that are
+	// still present (for IPs that are still assigned).
+	select {
+	case <-ctx.Done():
+		return nil
+	case <-time.After(m.ipRulesRecheckDelay):
+	}
+	state, err = m.getIPState()
+	if err == nil && state != nil {
+		var again []ipRuleRouteIssue
+		again, err = findIPRuleAndRouteIssues(state.mode, state.meta, state.rules, state.routes)
+		if err == nil {
+			return m.notifyIPRuleAndRouteIssues(reportableIPRuleAndRouteIssues(intersectIPRuleAndRouteIssues(issues, again)))
+		}
+	}
+	if err != nil {
+		// The recheck could not be done; fall back to reporting the first observation.
+		return errors.Join(err, m.notifyIPRuleAndRouteIssues(reportableIPRuleAndRouteIssues(issues)))
+	}
+	// state == nil: no addresses are assigned any more, so nothing is missing.
+	return nil
+}
+
+// readIPState reads the current ipamd assignments and the node's ip rules and routes. It returns
+// a nil state when there are no assigned addresses to validate.
+func (m *NetworkingMonitor) readIPState() (*ipState, error) {
 	enis, err := ipamd.GetEndpoint(ipamd.EndpointEnis)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	rules, err := toolexec.GetRules()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	routes, err := toolexec.GetRoutes()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// holds metadata about the ip address
@@ -753,7 +881,7 @@ func (m *NetworkingMonitor) handleIPRulesAndRoutes() (merr error) {
 
 	if len(ipMeta) == 0 {
 		// exit early if there are no allocations to work with
-		return nil
+		return nil, nil
 	}
 
 	// derive the ip mode using the first ip from the list.
@@ -765,12 +893,73 @@ func (m *NetworkingMonitor) handleIPRulesAndRoutes() (merr error) {
 		break
 	}
 
-	return errors.Join(merr,
-		m.checkIPRulesAndRoutes(ipMode, ipMeta, rules, routes),
-	)
+	return &ipState{mode: ipMode, meta: ipMeta, rules: rules, routes: routes}, nil
 }
 
-func (m *NetworkingMonitor) checkIPRulesAndRoutes(ipMode int, ipMeta map[string]*ipMetadata, rules []string, routes []string) (merr error) {
+// ipRuleRouteIssue is one MissingIPRules/MissingIPRoutes/MissingDefaultRoutes finding. key
+// identifies the same finding across observations; ip is set for rule and route findings.
+type ipRuleRouteIssue struct {
+	key       string
+	ip        string
+	condition monitor.Condition
+}
+
+// checkIPRulesAndRoutes reports the issues of a single observation, without a recheck. It is
+// the single-observation path used by the unit tests.
+func (m *NetworkingMonitor) checkIPRulesAndRoutes(ipMode int, ipMeta map[string]*ipMetadata, rules []string, routes []string) error {
+	issues, err := findIPRuleAndRouteIssues(ipMode, ipMeta, rules, routes)
+	if err != nil {
+		return err
+	}
+	return m.notifyIPRuleAndRouteIssues(reportableIPRuleAndRouteIssues(issues))
+}
+
+// reportableIPRuleAndRouteIssues reports at most one issue per pod IP: a missing rule takes
+// precedence over a missing route for the same IP.
+func reportableIPRuleAndRouteIssues(issues []ipRuleRouteIssue) []ipRuleRouteIssue {
+	missingRule := map[string]bool{}
+	for _, issue := range issues {
+		if issue.key == "rule/"+issue.ip {
+			missingRule[issue.ip] = true
+		}
+	}
+	var out []ipRuleRouteIssue
+	for _, issue := range issues {
+		if issue.key == "route/"+issue.ip && missingRule[issue.ip] {
+			continue
+		}
+		out = append(out, issue)
+	}
+	return out
+}
+
+func (m *NetworkingMonitor) notifyIPRuleAndRouteIssues(issues []ipRuleRouteIssue) (merr error) {
+	for _, issue := range issues {
+		merr = errors.Join(merr, m.manager.Notify(context.TODO(), issue.condition))
+	}
+	return merr
+}
+
+// intersectIPRuleAndRouteIssues keeps the issues of the second observation that were also present
+// in the first.
+func intersectIPRuleAndRouteIssues(first, second []ipRuleRouteIssue) []ipRuleRouteIssue {
+	seen := make(map[string]struct{}, len(first))
+	for _, issue := range first {
+		seen[issue.key] = struct{}{}
+	}
+	var out []ipRuleRouteIssue
+	for _, issue := range second {
+		if _, ok := seen[issue.key]; ok {
+			out = append(out, issue)
+		}
+	}
+	return out
+}
+
+// findIPRuleAndRouteIssues returns every finding of a single observation, with a missing rule and
+// a missing route for the same IP as separate findings, so that each can be matched across
+// observations. Use reportableIPRuleAndRouteIssues before notifying.
+func findIPRuleAndRouteIssues(ipMode int, ipMeta map[string]*ipMetadata, rules []string, routes []string) (issues []ipRuleRouteIssue, err error) {
 	type ipData struct {
 		ipRuleExistsErr  error
 		ipRouteExistsErr error
@@ -799,7 +988,7 @@ func (m *NetworkingMonitor) checkIPRulesAndRoutes(ipMode int, ipMeta map[string]
 				ipRouteExistsErr: fmt.Errorf("Expected entry like `%s dev <dev> metric 1024 pref medium`", ip),
 			}
 		default:
-			return fmt.Errorf("invalid ip mode")
+			return nil, fmt.Errorf("invalid ip mode")
 		}
 	}
 
@@ -864,33 +1053,36 @@ func (m *NetworkingMonitor) checkIPRulesAndRoutes(ipMode int, ipMeta map[string]
 				}
 			}
 		default:
-			return fmt.Errorf("invalid ip mode")
+			return nil, fmt.Errorf("invalid ip mode")
 		}
 	}
 
 	// ~ evaluate the results of the ips ~
 
 	for ip, data := range ips {
-		var item string
+		var prefix string
 		if meta, ok := ipMeta[ip]; ok && meta.primary {
-			item = "secondary "
+			prefix = "secondary "
 		}
 		if data.ipRuleExistsErr != nil {
-			item += "rules"
-			merr = errors.Join(merr, m.manager.Notify(context.TODO(),
-				reasons.MissingIPRules.
+			issues = append(issues, ipRuleRouteIssue{
+				key: "rule/" + ip,
+				ip:  ip,
+				condition: reasons.MissingIPRules.
 					Builder().
-					Message(fmt.Sprintf("Pod IP %s is missing %s: %s", ip, item, data.ipRuleExistsErr)).
+					Message(fmt.Sprintf("Pod IP %s is missing %srules: %s", ip, prefix, data.ipRuleExistsErr)).
 					Build(),
-			))
-		} else if data.ipRouteExistsErr != nil {
-			item += "routes"
-			merr = errors.Join(merr, m.manager.Notify(context.TODO(),
-				reasons.MissingIPRoutes.
+			})
+		}
+		if data.ipRouteExistsErr != nil {
+			issues = append(issues, ipRuleRouteIssue{
+				key: "route/" + ip,
+				ip:  ip,
+				condition: reasons.MissingIPRoutes.
 					Builder().
-					Message(fmt.Sprintf("Pod IP %s is missing %s: %s", ip, item, data.ipRouteExistsErr)).
+					Message(fmt.Sprintf("Pod IP %s is missing %sroutes: %s", ip, prefix, data.ipRouteExistsErr)).
 					Build(),
-			))
+			})
 		}
 	}
 
@@ -898,16 +1090,17 @@ func (m *NetworkingMonitor) checkIPRulesAndRoutes(ipMode int, ipMeta map[string]
 
 	for tableName, table := range tables {
 		if table.defaultRouteExistsErr != nil {
-			merr = errors.Join(merr, m.manager.Notify(context.TODO(),
-				reasons.MissingDefaultRoutes.
+			issues = append(issues, ipRuleRouteIssue{
+				key: "table/" + tableName,
+				condition: reasons.MissingDefaultRoutes.
 					Builder().
 					Message(fmt.Sprintf("Missing default route rules for table %s: %s", tableName, table.defaultRouteExistsErr)).
 					Build(),
-			))
+			})
 		}
 	}
 
-	return merr
+	return issues, nil
 }
 
 // ~~~~ ip tables ~~~~
@@ -1000,6 +1193,146 @@ func (m *NetworkingMonitor) checkIPTables(rules []iptables.IPTablesRule) (merr e
 		}
 	}
 	return merr
+}
+
+// ~~~~ EFA devices (EFADriverNotLoaded, EFARailCountMismatch) ~~~~
+
+// efaReNotifyInterval is how often an unchanged EFA device Warning may be
+// reported. The device counts rarely change after boot, and every NMA Warning
+// on a node shares one client-go spam-filter bucket.
+const efaReNotifyInterval = 30 * time.Minute
+
+// efaRailCountMismatchChecks is how many consecutive checks must find fewer
+// available EFA devices than attached ones before EFARailCountMismatch is
+// reported, so a link that goes down briefly is not reported.
+const efaRailCountMismatchChecks = 3
+
+// efaDriverNotLoadedWindow is how long no attached EFA device may be bound to
+// the efa driver before EFADriverNotLoaded is reported. A node in this state
+// has no working EFA but stays schedulable, so on Auto Mode it is reported as
+// a Fatal condition so node repair can act on it. The EFA device is present
+// but the driver did not bind, which a reboot usually clears, so the intended
+// repair is a reboot. Until node repair has a Reboot rule for this reason,
+// NetworkingReady's default replaces the node.
+// Other nodes may run an AMI without the efa driver, where repair would not
+// help, so they get a Warning instead.
+const efaDriverNotLoadedWindow = 15 * time.Minute
+
+func (m *NetworkingMonitor) handleEFADevices(ctx context.Context, now time.Time) error {
+	if slices.Contains(m.runtimeContext.Tags(), config.Hybrid) {
+		// EFA is only available on EC2 instances.
+		return nil
+	}
+	pciDevices, err := efa.CountEFAPCIDevices()
+	if err != nil {
+		return fmt.Errorf("failed to count EFA PCI devices: %w", err)
+	}
+	activeCount, err := efa.CountActiveEFADevices()
+	if err != nil {
+		return fmt.Errorf("failed to count active EFA devices: %w", err)
+	}
+	return m.checkEFADevices(ctx, pciDevices, activeCount, now)
+}
+
+// checkEFADevices compares the EFA devices attached to the instance, which are
+// visible on the PCI bus whether or not the efa driver loads, against the ones
+// that are bound to the efa driver and have an active link.
+func (m *NetworkingMonitor) checkEFADevices(ctx context.Context, pciDevices efa.EFAPCIDevices, activeCount int, now time.Time) error {
+	// no EFA PCI devices means the instance was launched without EFA, which is
+	// a valid configuration even on EFA-capable instance types.
+	if pciDevices.Attached == 0 {
+		m.resetEFARailCount()
+		return m.resetEFADriverNotLoaded(ctx)
+	}
+	if pciDevices.Bound == 0 {
+		m.resetEFARailCount()
+		return m.checkEFADriverNotLoaded(ctx, pciDevices.Attached, now)
+	}
+	if err := m.resetEFADriverNotLoaded(ctx); err != nil {
+		return err
+	}
+	available := min(pciDevices.Bound, activeCount)
+	if available >= pciDevices.Attached {
+		m.resetEFARailCount()
+		return nil
+	}
+	m.efaRailCountDegradedChecks++
+	if m.efaRailCountDegradedChecks < efaRailCountMismatchChecks {
+		return nil
+	}
+	return notifyEFADevices(ctx, m.manager, m.efaRailCountNotified, efaRailCount{available: available, attached: pciDevices.Attached}, now,
+		reasons.EFARailCountMismatch.
+			Builder().
+			Message(fmt.Sprintf("Only %d of %d attached EFA devices are available", available, pciDevices.Attached)).
+			Build(),
+	)
+}
+
+// checkEFADriverNotLoaded reports EFADriverNotLoaded once no attached EFA
+// device has been bound to the efa driver for efaDriverNotLoadedWindow.
+func (m *NetworkingMonitor) checkEFADriverNotLoaded(ctx context.Context, attached int, now time.Time) error {
+	if m.efaDriverNotLoadedSince.IsZero() {
+		m.efaDriverNotLoadedSince = now
+	}
+	if now.Sub(m.efaDriverNotLoadedSince) < efaDriverNotLoadedWindow {
+		return nil
+	}
+	builder := reasons.EFADriverNotLoaded.
+		Builder().
+		Message(fmt.Sprintf("Found %d attached EFA devices, but none have been bound to the efa driver for %s", attached, efaDriverNotLoadedWindow))
+	if !slices.Contains(m.runtimeContext.Tags(), config.EKSAuto) {
+		return notifyEFADevices(ctx, m.manager, m.efaDriverNotified, attached, now, builder.Severity(monitor.SeverityWarning).Build())
+	}
+	if err := m.manager.Notify(ctx, builder.Build()); err != nil {
+		return err
+	}
+	m.efaDriverNotLoadedReported = true
+	return nil
+}
+
+// resetEFADriverNotLoaded clears the EFADriverNotLoaded state once an EFA
+// device is bound to the efa driver, resolving the condition if it was set.
+func (m *NetworkingMonitor) resetEFADriverNotLoaded(ctx context.Context) error {
+	m.efaDriverNotLoadedSince = time.Time{}
+	m.efaDriverNotified.Reset()
+	if !m.efaDriverNotLoadedReported {
+		return nil
+	}
+	if err := m.manager.Notify(ctx, monitor.Condition{
+		Reason:   reasons.EFADriverNotLoaded.Template(),
+		Message:  "An attached EFA device is bound to the efa driver again",
+		Severity: monitor.SeverityFatal,
+		Resolved: true,
+	}); err != nil {
+		return err
+	}
+	m.efaDriverNotLoadedReported = false
+	return nil
+}
+
+// resetEFARailCount clears the EFARailCountMismatch state once there is no
+// mismatch to report.
+func (m *NetworkingMonitor) resetEFARailCount() {
+	m.efaRailCountDegradedChecks = 0
+	m.efaRailCountNotified.Reset()
+}
+
+// efaRailCount is the state reported by EFARailCountMismatch.
+type efaRailCount struct {
+	available, attached int
+}
+
+// notifyEFADevices sends condition unless tracker has recently reported key.
+func notifyEFADevices[K comparable](ctx context.Context, manager monitor.Manager, tracker *renotify.Tracker[K], key K, now time.Time, condition monitor.Condition) error {
+	if !tracker.ShouldNotify(key, now) {
+		return nil
+	}
+	if err := manager.Notify(ctx, condition); err != nil {
+		return err
+	}
+	// only record a sent notification so a failed Notify is retried next tick.
+	tracker.Notified(key, now)
+	return nil
 }
 
 // ~~~~ MAC Address Policy ~~~~

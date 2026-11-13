@@ -4,10 +4,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor/resource"
 	"github.com/aws/eks-node-monitoring-agent/pkg/observer"
@@ -148,3 +151,67 @@ func TestFileObserver_RecreateFileTarget(t *testing.T) {
 		t.Fatal(ctx.Err())
 	}
 }
+
+func TestFileObserver_DirectoryPath(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.TODO(), 10*time.Second)
+	defer cancel()
+
+	// The observed path exists but is a directory, as with a hostPath mount
+	// of a file that is missing on the host.
+	dirPath := filepath.Join(t.TempDir(), "messages")
+	assert.NoError(t, os.Mkdir(dirPath, 0o755))
+
+	obs, err := observer.ObserverConstructorMap[resource.ResourceTypeFile]([]resource.Part{resource.Part(dirPath)})
+	assert.NoError(t, err)
+
+	obsChan := obs.Subscribe()
+	var errorLogs atomic.Int64
+	logger := logr.New(&errorCountingSink{count: &errorLogs})
+	initCtx := log.IntoContext(ctx, logger)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		obs.Init(initCtx)
+	}()
+
+	select {
+	case line := <-obsChan:
+		t.Fatalf("unexpected line from a directory path: %q", line)
+	case <-time.After(500 * time.Millisecond):
+	}
+	assert.Zero(t, errorLogs.Load(), "observer logged errors while the path was a directory")
+
+	// Replacing the directory with a regular file must be picked up.
+	assert.NoError(t, os.Remove(dirPath))
+	f, err := os.Create(dirPath)
+	assert.NoError(t, err)
+	defer f.Close()
+
+	const sampleData = "example"
+	time.Sleep(500 * time.Millisecond)
+	_, err = f.WriteString(sampleData + "\n")
+	assert.NoError(t, err)
+
+	select {
+	case line := <-obsChan:
+		assert.Equal(t, sampleData, line)
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+
+	cancel()
+	<-done
+}
+
+// errorCountingSink is a logr.LogSink that counts Error calls and drops
+// everything else.
+type errorCountingSink struct {
+	count *atomic.Int64
+}
+
+func (s *errorCountingSink) Init(logr.RuntimeInfo)          {}
+func (s *errorCountingSink) Enabled(int) bool               { return false }
+func (s *errorCountingSink) Info(int, string, ...any)       {}
+func (s *errorCountingSink) Error(error, string, ...any)    { s.count.Add(1) }
+func (s *errorCountingSink) WithValues(...any) logr.LogSink { return s }
+func (s *errorCountingSink) WithName(string) logr.LogSink   { return s }

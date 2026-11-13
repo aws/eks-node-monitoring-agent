@@ -29,6 +29,11 @@ var ErrUnknownInstanceType = errors.New("unknown instance type")
 type InstanceInfo struct {
 	InstanceType   string `json:"instanceType"`
 	NvidiaGPUCount uint   `json:"nvidiaGpuCount"`
+	// HostFabricManager is true when NVIDIA Fabric Manager runs on the
+	// instance to manage its NVSwitches and the GPUs report fabric state.
+	// Until Fabric Manager trains the fabric, each GPU's fabric state reads
+	// NotStarted or InProgress.
+	HostFabricManager bool `json:"hostFabricManager"`
 }
 
 // InstanceTypeInfoProvider returns hardware information about the current EC2 instance type.

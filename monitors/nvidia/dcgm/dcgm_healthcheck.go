@@ -12,6 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
+	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/classify"
 	"github.com/aws/eks-node-monitoring-agent/pkg/reasons"
 )
 
@@ -94,7 +95,7 @@ func (s *DCGMSystem) HealthCheck(ctx context.Context) ([]monitor.Condition, erro
 
 		// DCGM_FR_FABRIC_PROBE_STATE (123) is DCGM's verdict on the Fabric
 		// Manager status field (DCGM_FI_DEV_FABRIC_MANAGER_STATUS), which
-		// WatchFields already classifies through Classify. DCGM fails on
+		// WatchFields already classifies through classify.Classify. DCGM fails on
 		// statuses NMA deliberately does not treat as fatal (NotStarted, and the
 		// driver/DCGM version mismatches NvmlTooOld, Unrecognized, and unknown
 		// values), so report it as a Warning and leave the Fatal decision to the
@@ -120,7 +121,7 @@ func (s *DCGMSystem) HealthCheck(ctx context.Context) ([]monitor.Condition, erro
 	// as long as the Fabric Manager status is unchanged, so repeats of its
 	// Warning are rate-limited.
 	fabricProbeState := reasons.DCGMHealthCode.Builder(dcgmapi.DCGM_FR_FABRIC_PROBE_STATE).Build().Reason
-	return suppressRepeatedWarnings(s.healthWarnings, s.now(), conditions, func(c monitor.Condition) bool {
+	return classify.SuppressRepeatedWarnings(s.healthWarnings, s.now(), conditions, func(c monitor.Condition) bool {
 		return c.Reason == fabricProbeState
 	}), nil
 }

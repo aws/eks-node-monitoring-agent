@@ -28,3 +28,7 @@ func TestMain(m *testing.M) {
 func Test(t *testing.T) {
 	setup.TestWrapper(t, tenv)
 }
+
+func TestNvidiaHealthyVerdict(t *testing.T) {
+	setup.NvidiaHealthyVerdictWrapper(t, tenv)
+}
