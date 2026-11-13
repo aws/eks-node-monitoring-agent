@@ -2,6 +2,7 @@ package networking
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -1316,5 +1317,97 @@ func TestHandleEFADevices(t *testing.T) {
 
 		assert.NoError(t, mon.handleEFADevices(context.TODO(), time.Now()))
 		assert.Empty(t, mgr.res)
+	})
+}
+
+func TestHandleIPRulesAndRoutesRecheck(t *testing.T) {
+	const a, b = "10.0.24.82", "10.0.17.51"
+	route := func(ip string) string { return ip + " dev enia2d278c49cc scope link" }
+	rule := func(ip string) string { return "512:\tfrom all to " + ip + " lookup main" }
+	state := func(rules []string, routes []string, ips ...string) *ipState {
+		meta := map[string]*ipMetadata{}
+		for _, ip := range ips {
+			meta[ip] = &ipMetadata{primary: true}
+		}
+		return &ipState{mode: IPv4, meta: meta, rules: rules, routes: routes}
+	}
+	missingRuleA := state(nil, []string{route(a)}, a)
+	healthyA := state([]string{rule(a)}, []string{route(a)}, a)
+
+	type observation struct {
+		state *ipState
+		err   error
+	}
+	run := func(t *testing.T, observations ...observation) (int, []monitor.Condition, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		rtCtx := &config.RuntimeContext{}
+		rtCtx.AddTags(config.EKSAuto)
+		mon := NewNetworkingMonitor(WithRuntimeContext(rtCtx))
+		mon.ipRulesRecheckDelay = 0
+		calls := 0
+		mon.getIPState = func() (*ipState, error) {
+			require.Less(t, calls, len(observations), "unexpected getIPState call")
+			o := observations[calls]
+			calls++
+			return o.state, o.err
+		}
+		mockManager := &mockManager{res: make(chan monitor.Condition, 10)}
+		mon.Register(ctx, mockManager)
+		err := mon.handleIPRulesAndRoutes(ctx)
+		var conditions []monitor.Condition
+		for len(mockManager.res) > 0 {
+			conditions = append(conditions, <-mockManager.res)
+		}
+		return calls, conditions, err
+	}
+	reasonsOf := func(conditions []monitor.Condition) (out []string) {
+		for _, c := range conditions {
+			out = append(out, c.Reason)
+		}
+		return out
+	}
+
+	t.Run("RuleWrittenBeforeRecheck", func(t *testing.T) {
+		calls, conditions, err := run(t, observation{state: missingRuleA}, observation{state: healthyA})
+		assert.NoError(t, err)
+		assert.Equal(t, 2, calls)
+		assert.Empty(t, conditions)
+	})
+
+	t.Run("StillMissingOnRecheck", func(t *testing.T) {
+		_, conditions, err := run(t, observation{state: missingRuleA}, observation{state: missingRuleA})
+		assert.NoError(t, err)
+		assert.Equal(t, []string{"MissingIPRules"}, reasonsOf(conditions))
+	})
+
+	t.Run("NewIssueOnlyOnRecheck", func(t *testing.T) {
+		// a was fixed, b only went missing on the recheck: neither persisted across both.
+		second := state([]string{rule(a)}, []string{route(a), route(b)}, a, b)
+		_, conditions, err := run(t, observation{state: missingRuleA}, observation{state: second})
+		assert.NoError(t, err)
+		assert.Empty(t, conditions)
+	})
+
+	t.Run("RuleWrittenRouteStillMissing", func(t *testing.T) {
+		// both missing at first (reported as a rule issue); the rule appears but the route never does.
+		first := state(nil, nil, a)
+		second := state([]string{rule(a)}, nil, a)
+		_, conditions, err := run(t, observation{state: first}, observation{state: second})
+		assert.NoError(t, err)
+		assert.Equal(t, []string{"MissingIPRoutes"}, reasonsOf(conditions))
+	})
+
+	t.Run("RecheckFailsReportsFirstObservation", func(t *testing.T) {
+		_, conditions, err := run(t, observation{state: missingRuleA}, observation{err: errors.New("ipamd unavailable")})
+		assert.Error(t, err)
+		assert.Equal(t, []string{"MissingIPRules"}, reasonsOf(conditions))
+	})
+
+	t.Run("NothingMissingSkipsRecheck", func(t *testing.T) {
+		calls, conditions, err := run(t, observation{state: healthyA})
+		assert.NoError(t, err)
+		assert.Equal(t, 1, calls)
+		assert.Empty(t, conditions)
 	})
 }
