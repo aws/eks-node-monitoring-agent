@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"path/filepath"
 	"time"
 )
@@ -40,12 +41,59 @@ func (m IPAMD) Collect(acc *Accessor) error {
 	} else {
 		merr = errors.Join(merr, acc.WriteOutput("ipamd/metrics.json", resp))
 	}
-	// collect ipamd checkpoint
-	var ipamdCheckpointPath = "/var/run/aws-node/ipam.json"
+	merr = errors.Join(merr, ipamdDatastores(acc))
+	return merr
+}
+
+// ipamdDatastoreNote is written instead of the datastores when there is
+// nothing to copy, so the bundle says why rather than silently omitting them.
+const ipamdDatastoreNote = "ipamd/datastores.txt"
+
+// ipamdDatastores copies every regular file in the IPAMD state directory, not
+// just ipam.json: IPAMD keeps one datastore per network card (ipam.json for
+// card 0, ipam-nic-<N>.json for the others), so on multi-card instances
+// ipam.json alone misses most of the IP state. Sockets, symlinks and
+// subdirectories are skipped.
+//
+// A missing directory or a missing ipam.json is recorded in a note rather than
+// returned as an error: nodes that use another CNI have no state directory, so
+// an error would fire on every capture there, and an IPAMD that isn't running
+// is already reported by the failed introspection requests.
+func ipamdDatastores(acc *Accessor) error {
+	var ipamdStateDir = "/var/run/aws-node"
 	if acc.cfg.hasAnyTag(TagBottlerocket) {
-		ipamdCheckpointPath = "/run/aws-node/ipam.json"
+		ipamdStateDir = "/run/aws-node"
 	}
-	merr = errors.Join(merr, acc.CopyFile(filepath.Join(acc.cfg.Root, ipamdCheckpointPath), "ipamd/ipam.json"))
+	entries, err := os.ReadDir(filepath.Join(acc.cfg.Root, ipamdStateDir))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return acc.WriteOutput(ipamdDatastoreNote, []byte(ipamdStateDir+" is not present on this system (the VPC CNI is not installed, or IPAMD has not started).\n"))
+		}
+		return err
+	}
+	var merr error
+	foundCheckpoint := false
+	for _, entry := range entries {
+		info, err := entry.Info()
+		if err != nil {
+			merr = errors.Join(merr, err)
+			continue
+		}
+		if !info.Mode().IsRegular() {
+			// the directory also holds the ipamd unix sockets
+			continue
+		}
+		if entry.Name() == "ipam.json" {
+			foundCheckpoint = true
+		}
+		merr = errors.Join(merr, acc.CopyFile(
+			filepath.Join(acc.cfg.Root, ipamdStateDir, entry.Name()),
+			filepath.Join("ipamd/", entry.Name()),
+		))
+	}
+	if !foundCheckpoint {
+		merr = errors.Join(merr, acc.WriteOutput(ipamdDatastoreNote, []byte("ipam.json is not present in "+ipamdStateDir+" (IPAMD has not written its checkpoint yet).\n")))
+	}
 	return merr
 }
 
