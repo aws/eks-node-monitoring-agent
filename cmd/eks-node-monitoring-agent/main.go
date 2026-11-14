@@ -43,6 +43,7 @@ import (
 	_ "github.com/aws/eks-node-monitoring-agent/monitors/kernel"
 	_ "github.com/aws/eks-node-monitoring-agent/monitors/networking"
 	_ "github.com/aws/eks-node-monitoring-agent/monitors/neuron"
+	_ "github.com/aws/eks-node-monitoring-agent/monitors/nitrosandbox"
 	_ "github.com/aws/eks-node-monitoring-agent/monitors/nvidia"
 	_ "github.com/aws/eks-node-monitoring-agent/monitors/storage"
 
@@ -123,10 +124,6 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	if enableConsoleDiagnostics {
-		startConsoleDiagnostics(ctx)
-	}
-
 	runtimeContext := config.GetRuntimeContext()
 	logger.V(2).Info("fetched runtime context", "value", runtimeContext)
 
@@ -182,6 +179,14 @@ func run() error {
 				monitorCfg = restCfg
 			}
 		}
+	}
+
+	if enableConsoleDiagnostics {
+		apiServerEndpoint := ""
+		if slices.Contains(runtimeContext.Tags(), config.EKSAuto) {
+			apiServerEndpoint = monitorCfg.Host
+		}
+		startConsoleDiagnostics(ctx, apiServerEndpoint)
 	}
 
 	monitoringEventRecorder := mgr.GetEventRecorderFor("eks-node-monitoring-agent")
@@ -370,6 +375,12 @@ func run() error {
 				conditionType = conditions.ContainerRuntimeReady
 			case "networking":
 				conditionType = conditions.NetworkingReady
+			case "nitro-sandbox":
+				// The sandbox runtime's faults are claims about whether this
+				// node can run pods, which is what ContainerRuntimeReady
+				// already covers. The monitor stays silent on nodes without the
+				// runtime, so no condition config of its own is needed.
+				conditionType = conditions.ContainerRuntimeReady
 			case "nvidia":
 				if runtimeContext.AcceleratedHardware() != config.AcceleratedHardwareNvidia {
 					logger.Info("skipping monitor registration: no nvidia hardware detected", "monitor", mon.Name())
@@ -486,7 +497,7 @@ func openDevConsole() (*os.File, error) {
 	return os.OpenFile("/dev/console", os.O_APPEND|os.O_WRONLY, 0o600)
 }
 
-func startConsoleDiagnostics(ctx context.Context) {
+func startConsoleDiagnostics(ctx context.Context, apiServerEndpoint string) {
 	logger := log.FromContext(ctx)
 
 	go func() {
@@ -496,7 +507,7 @@ func startConsoleDiagnostics(ctx context.Context) {
 			return
 		}
 		defer f.Close()
-		settings := diagnostic.Settings{LogInterval: 5 * time.Minute}
+		settings := diagnostic.Settings{LogInterval: 5 * time.Minute, ApiServerEndpoint: apiServerEndpoint}
 		logger.Info("initializing console diagnostic logger", "settings", settings)
 		if err := diagnostic.NewDiagnosticLogger(f, settings).Start(ctx); err != nil {
 			logger.Error(err, "failed to start diagnostic logger")

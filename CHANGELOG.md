@@ -5,6 +5,26 @@ All notable changes to the EKS Node Monitoring Agent will be documented in this 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [v1.7.7] - 2026-11-06
+
+### What's Changed
+
+#### Features
+- Add EFADriverNotLoaded and EFARailCountMismatch networking checks ([122aca2](https://github.com/aws/eks-node-monitoring-agent/commit/122aca252b983f4179dadde42eb2b8859e0eba07))
+- Add a systemd unit restarts metric ([5e235b2](https://github.com/aws/eks-node-monitoring-agent/commit/5e235b2d4aba481e53b3128b286a079da5aa3b62))
+- Scrape eks-healthchecker metrics in nodediagnostic ([6a0492c](https://github.com/aws/eks-node-monitoring-agent/commit/6a0492cd7295c2dc4bf0457e75d4fe84399c679c))
+- Remove the CoreDNS Auto Mode log collector in favor of logdog ([7db7bf3](https://github.com/aws/eks-node-monitoring-agent/commit/7db7bf3e4617db9b543a83729065114fac269d97))
+
+#### Bug Fixes
+- Report throttled cgroups accurately in CPU throttling collection ([bd628d7](https://github.com/aws/eks-node-monitoring-agent/commit/bd628d7d66204b8d6e30af73e8426cee633b4dae))
+- Use the Auto Mode rest config host for the console apiserver check ([63d0e74](https://github.com/aws/eks-node-monitoring-agent/commit/63d0e7489334d5a7c5cac835c71d880134b7646f))
+- Treat a directory path as absent in the file observer ([e179bb2](https://github.com/aws/eks-node-monitoring-agent/commit/e179bb28910cd2b7bc1448cf2b18218bdcbbec08))
+- Set the node name as the event involvedObject UID so `kubectl describe node` shows NMA events ([911f898](https://github.com/aws/eks-node-monitoring-agent/commit/911f898a7702d4693d241175e391f45c42378162))
+- Stop expanding explicitly empty CommonLogs lists to defaults ([e06a253](https://github.com/aws/eks-node-monitoring-agent/commit/e06a25393c9038c289aa4f2dfc252ebf7e0905f9))
+
+#### Dependencies
+- Bump golang.org/x/net to v0.62.0 ([521e766](https://github.com/aws/eks-node-monitoring-agent/commit/521e7661b42c8aeca6edcdef098008f82920571c))
+
 ## [v1.7.6] - 2026-10-27
 
 This release rebuilds the agent against the latest distro minimal base image. There are no code changes since v1.7.5.
@@ -316,6 +336,7 @@ This release rebuilds the agent against the latest distro minimal image, and pic
 ### What's Changed
 - Update base DCGM image to 4.5.2-4.8.1-ubuntu22.04 to resolve CVEs ([1a2cda4](https://github.com/aws/eks-node-monitoring-agent/commit/1a2cda4))
 
+[v1.7.7]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.7.6...v1.7.7
 [v1.7.6]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.7.5...v1.7.6
 [v1.7.5]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.7.4...v1.7.5
 [v1.7.4]: https://github.com/aws/eks-node-monitoring-agent/compare/v1.7.3...v1.7.4
