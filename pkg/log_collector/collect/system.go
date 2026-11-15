@@ -31,15 +31,8 @@ func (s System) Collect(acc *Accessor) error {
 	)
 }
 
-// largeEnvironmentThreshold is the environment variable count above which a
-// process is reported. Kubernetes service-link injection in namespaces with
-// thousands of services produces environments this large, which cause exec
-// failures and kubelet slowness.
 const largeEnvironmentThreshold = 1000
 
-// largeEnvironments writes the PIDs whose environment holds more than
-// largeEnvironmentThreshold variables. Unreadable environ files (processes of
-// other users, or ones that exited mid-scan) are skipped.
 func largeEnvironments(acc *Accessor) error {
 	environPaths, err := filepath.Glob(filepath.Join(acc.cfg.Root, "/proc/[0-9]*/environ"))
 	if err != nil {

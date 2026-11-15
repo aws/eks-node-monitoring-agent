@@ -46,10 +46,12 @@ func TestSysctlPartialReadFailure(t *testing.T) {
 			require.NoError(t, err)
 
 			err = sysctl(acc)
+
 			if tc.wantErr {
 				assert.Error(t, err)
 				return
 			}
+
 			require.NoError(t, err)
 			got, err := os.ReadFile(filepath.Join(dst, "sysctls/sysctl_all.txt"))
 			require.NoError(t, err)
