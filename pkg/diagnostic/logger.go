@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -84,6 +85,10 @@ const (
 	consoleWriteChunk = 2 * 1024
 )
 
+// consoleWriteTimeout bounds each console write so a console that stops
+// draining cannot block the logger forever. A var so tests can shorten it.
+var consoleWriteTimeout = 10 * time.Second
+
 // pacedWriter wraps an io.Writer (the /dev/console handle) and feeds bytes
 // through at a fixed rate in small chunks, so a large diagnostic cycle is
 // spread over time rather than written as one blocking burst.
@@ -119,6 +124,9 @@ func (pw *pacedWriter) Write(p []byte) (int, error) {
 		// making abortable.
 		if err := pw.limiter.WaitN(context.Background(), end-written); err != nil {
 			return written, err
+		}
+		if f, ok := pw.w.(*os.File); ok {
+			_ = f.SetWriteDeadline(time.Now().Add(consoleWriteTimeout))
 		}
 		n, err := pw.w.Write(p[written:end])
 		written += n
@@ -210,6 +218,10 @@ func (l diagnosticLogger) RunOnce(ctx context.Context) {
 		header := strings.Join([]string{sectionMarker, timestamp, producer.name}, "|")
 		data := tailx(l.collect(ctx, producer), l.sectionBytes)
 		if _, err := fmt.Fprintf(l.writer, "%s\n%s\n", header, data); err != nil {
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				log.FromContext(ctx).Error(err, "console write timed out; skipping rest of diagnostic cycle", "section", producer.name)
+				return
+			}
 			log.FromContext(ctx).Error(err, "error logging to writer")
 		}
 	}

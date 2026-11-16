@@ -61,7 +61,7 @@ func NetworkingMonitor() types.Feature {
 			Containers: []corev1.Container{
 				{
 					Name:    "flood",
-					Image:   "public.ecr.aws/amazonlinux/amazonlinux:2023-minimal",
+					Image:   TestImage,
 					Command: []string{"/bin/bash", "-c", linkLocalFloodScript},
 					Resources: corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m")},

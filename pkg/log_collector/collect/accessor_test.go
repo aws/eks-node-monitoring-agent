@@ -26,7 +26,6 @@ func TestLogCollectorAccessor(t *testing.T) {
 	for _, c := range []collect.Collector{
 		&collect.Instance{},
 		&collect.Region{},
-		&collect.CommonLogs{},
 		&collect.Containerd{},
 		&collect.CNI{},
 		&collect.Kernel{},
@@ -48,6 +47,17 @@ func TestLogCollectorAccessor(t *testing.T) {
 		// them for unit test coverage because they are non-destructive.
 		c.Collect(accessor)
 	}
+
+	// CommonLogs with no lists set collects the default /var/log files and pod
+	// logs, so it runs against an empty root rather than the build host's.
+	commonLogsAccessor, err := collect.NewAccessor(context.Background(), collect.Config{
+		Root:        t.TempDir(),
+		Destination: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	(&collect.CommonLogs{}).Collect(commonLogsAccessor)
 }
 
 // Regression test for issue #219: a collector command that blocks must fail with

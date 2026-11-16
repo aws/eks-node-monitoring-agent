@@ -131,6 +131,18 @@ ContainerRuntimeReady:
     Description: >-
       A container image using deprecated image manifest version 2, schema 1 was
       recently pulled onto the node through `containerd`.
+  CRIProxyUnhealthy:
+    Template: 'CRIProxyUnhealthy'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      The CRI proxy that serves the container runtime endpoint on nodes running
+      isolated pods is not serving requests, so the node cannot start pods.
+  LeakedSandboxResources:
+    Template: 'LeakedSandboxResources'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      Sandboxes that no longer belong to any pod are holding every isolated pod
+      slot on the node, so no new isolated pod can start on it.
 NetworkingReady:
   MACAddressPolicyMisconfigured:
     Template: 'MACAddressPolicyMisconfigured'
@@ -288,6 +300,23 @@ NetworkingReady:
     DefaultSeverity: 'Warning'
     Description: >-
       EFA driver metrics shows there is an interface with performance degredation.
+  EFADriverNotLoaded:
+    Template: 'EFADriverNotLoaded'
+    DefaultSeverity: 'Fatal'
+    Description: >-
+      EFA devices are attached to the instance, but none of them have been
+      bound to the efa driver for 15 minutes. The efa kernel module may be
+      missing or may have failed to load. Auto Mode only; on other nodes this
+      is reported as a Warning event, since their AMI may not include the efa
+      driver.
+  EFARailCountMismatch:
+    Template: 'EFARailCountMismatch'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      Fewer EFA devices are available on the node than are attached to the
+      instance, for three consecutive checks. A device is available when it is
+      bound to the efa driver and its port is ACTIVE and LinkUp. Missing rails
+      may reduce the network bandwidth available across rails.
   CoreDNSCorefileValidationFailed:
     Template: 'CoreDNSCorefileValidationFailed'
     DefaultSeverity: 'Warning'

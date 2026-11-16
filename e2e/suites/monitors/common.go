@@ -39,6 +39,11 @@ var privilegedContext = corev1.SecurityContext{
 	Privileged: aws.Bool(true),
 }
 
+// TestImage runs the helper pods that inject faults on the node, so it needs
+// bash, tee and chroot. Override it with --test-image in regions that can't
+// reach public ECR.
+var TestImage = "public.ecr.aws/amazonlinux/amazonlinux:2023-minimal"
+
 // this detection jitter is added because it seems that sometimes the detections
 // occurs in either the same or slightly offset timestamp due to minor clock
 // skew between the test host and the node.
