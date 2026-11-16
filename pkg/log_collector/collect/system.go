@@ -123,7 +123,7 @@ func pkgs(acc *Accessor) error {
 	// the expectation is that at least one of these is expected to succeed
 	// depending on the underyling OS distro.
 	rpmErr := acc.CommandOutput([]string{"rpm", "-qa"}, "system/pkglist.txt", CommandOptionsNone)
-	debErr := acc.CommandOutput([]string{"deb", "--list"}, "system/pkglist.txt", CommandOptionsNone)
+	debErr := acc.CommandOutput([]string{"dpkg", "--list"}, "system/pkglist.txt", CommandOptionsNone)
 	if rpmErr == nil || debErr == nil {
 		return nil
 	}
