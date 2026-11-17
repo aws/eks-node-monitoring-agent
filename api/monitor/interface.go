@@ -27,6 +27,30 @@ type Manager interface {
 	// Notify is used to emit conditions directly to the manager. It will block
 	// until either the message is sent or the context deadline is exceeded.
 	Notify(context.Context, Condition) error
+	// ReplaceInsights makes the named resources the only ones with an active
+	// insight of the given kind. A monitor that re-checks every resource on a
+	// cadence should report only what it found this time, even if it finds no
+	// unhealthy resources, without tracking what it reported last time.
+	//
+	// An insight is scoped to the monitor that reports it, so monitors
+	// reporting the same kind do not clear each other's.
+	ReplaceInsights(insight Insight, resourceValues []string)
+}
+
+// Insight is one kind of bad state a monitor reports, published for as long
+// as it sees it. Where a Condition describes the health of the whole node, an
+// Insight names the kind of resource it is about, and ReplaceInsights supplies
+// the resources currently in that state.
+type Insight struct {
+	// Type is the PascalCase category of the insight, e.g.
+	// "NetworkAllowanceExceeded".
+	Type string
+	// Reason is a short, PascalCase description of what is wrong within the
+	// type, e.g. "LinkLocal".
+	Reason string
+	// ResourceName is the snake_case name of the kind of AWS resource the
+	// insight is about, e.g. "eni_id".
+	ResourceName string
 }
 
 // Condition is a state provided by a monitor which holds information regarding

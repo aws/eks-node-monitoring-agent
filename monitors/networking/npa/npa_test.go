@@ -16,6 +16,7 @@ import (
 // mockManager implements monitor.Manager for unit tests. It records emitted
 // conditions on the res channel and serves subscriptions from a BaseObserver.
 type mockManager struct {
+	monitor.Manager
 	err error
 	obs observer.BaseObserver
 	res chan monitor.Condition

@@ -2,6 +2,7 @@ package manager_test
 
 import (
 	"context"
+	"sort"
 	"testing"
 	"time"
 
@@ -279,4 +280,57 @@ func TestManager_CreateObserver(t *testing.T) {
 	_, err := mMgr.Subscribe(resource.ResourceTypeFile, []resource.Part{"/tmp/foobar"})
 	assert.NoError(t, err)
 	assert.NoError(t, mMgr.Start(ctx))
+}
+
+// eksInsightENIs returns the ENI IDs of the eks_insight series of the given
+// type and reason in the real registry.
+func eksInsightENIs(t *testing.T, insight monitor.Insight) []string {
+	t.Helper()
+	families, err := metrics.Registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var eniIDs []string
+	for _, family := range families {
+		if family.GetName() != "eks_insight" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			labels := map[string]string{}
+			for _, label := range metric.GetLabel() {
+				labels[label.GetName()] = label.GetValue()
+			}
+			if labels["type"] == insight.Type && labels["reason"] == insight.Reason {
+				eniIDs = append(eniIDs, labels["resource_eni_id"])
+			}
+		}
+	}
+	sort.Strings(eniIDs)
+	return eniIDs
+}
+
+// TestManager_ReplaceInsights covers the path a monitor actually takes: the
+// Manager it is handed, through to the series the metrics endpoint serves.
+func TestManager_ReplaceInsights(t *testing.T) {
+	testInsight := monitor.Insight{Type: "TestInsight", Reason: "TestReason", ResourceName: "eni_id"}
+	mockManager, _ := NewManagerWithExporterFuncs()
+	var fromMonitor monitor.Manager
+	mon := &mockMonitor{registerFunc: func(ctx context.Context, mgr monitor.Manager) error {
+		fromMonitor = mgr
+		return nil
+	}}
+	if err := mockManager.Register(context.Background(), mon, "TestCondition"); err != nil {
+		t.Fatal(err)
+	}
+
+	fromMonitor.ReplaceInsights(testInsight, []string{"eni-1", "eni-2"})
+	assert.Equal(t, []string{"eni-1", "eni-2"}, eksInsightENIs(t, testInsight),
+		"a monitor's insights reach the registry the endpoint serves")
+
+	fromMonitor.ReplaceInsights(testInsight, []string{"eni-2"})
+	assert.Equal(t, []string{"eni-2"}, eksInsightENIs(t, testInsight),
+		"and a resource left out of a later report is cleared")
+
+	fromMonitor.ReplaceInsights(testInsight, nil)
+	assert.Empty(t, eksInsightENIs(t, testInsight), "an empty report clears the group")
 }

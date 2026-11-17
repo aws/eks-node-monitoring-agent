@@ -35,6 +35,7 @@ type note struct {
 
 // fakeManager records each notification, tagged with the round in progress.
 type fakeManager struct {
+	monitor.Manager
 	round    int
 	notes    []note
 	messages []string

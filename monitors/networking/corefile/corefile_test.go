@@ -20,6 +20,7 @@ import (
 )
 
 type mockManager struct {
+	monitor.Manager
 	obs       observer.BaseObserver
 	res       chan monitor.Condition
 	notifyErr error

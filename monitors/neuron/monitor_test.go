@@ -11,6 +11,7 @@ import (
 
 // mockManager implements monitor.Manager for testing
 type mockManager struct {
+	monitor.Manager
 	err           error
 	notifications []monitor.Condition
 }

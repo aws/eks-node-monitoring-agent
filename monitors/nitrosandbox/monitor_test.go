@@ -14,6 +14,7 @@ import (
 )
 
 type mockManager struct {
+	monitor.Manager
 	res []monitor.Condition
 }
 
