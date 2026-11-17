@@ -468,6 +468,39 @@ func TestNetworkingPeriodic(t *testing.T) {
 		return got
 	}
 
+	// a reset for lost tx completions, as in amzn-drivers#134, increments
+	// total_resets and missing_tx_cmpl but not tx_timeout or wd_expired.
+	t.Run("ENAResetReportsLostTxCompletionReset", func(t *testing.T) {
+		mgr := &mockManager{obs: observer.BaseObserver{}, res: make(chan monitor.Condition, 10)}
+		m, stats, _ := newENAResetMonitor(t, mgr)
+		require.NoError(t, m.checkENAResets("ens5", stats)) // baseline
+
+		stats["total_resets"]++
+		stats["missing_tx_cmpl"]++
+		require.NoError(t, m.checkENAResets("ens5", stats))
+		got := drainConditions(mgr)
+		require.Len(t, got, 1, "a reset for any reason should be reported")
+		assert.Equal(t, "ENADriverReset", got[0].Reason)
+		assert.Contains(t, got[0].Message, "total_resets increased from 0 to 1")
+		assert.Contains(t, got[0].Message, "missing_tx_cmpl increased from 0 to 1", "the report should name the reset reason")
+		assert.NotContains(t, got[0].Message, "tx_timeout")
+		assert.NotContains(t, got[0].Message, "wd_expired")
+	})
+
+	// the upstream kernel ena driver has no total_resets or reason counters.
+	t.Run("ENAResetReportsResetsOnUpstreamDriver", func(t *testing.T) {
+		mgr := &mockManager{obs: observer.BaseObserver{}, res: make(chan monitor.Condition, 10)}
+		m, _, _ := newENAResetMonitor(t, mgr)
+		stats := map[string]int{"tx_timeout": 0, "wd_expired": 0, "reset_fail": 0, "interface_up": 1}
+		require.NoError(t, m.checkENAResets("eth0", stats)) // baseline
+
+		stats["wd_expired"]++
+		require.NoError(t, m.checkENAResets("eth0", stats))
+		got := drainConditions(mgr)
+		require.Len(t, got, 1)
+		assert.Contains(t, got[0].Message, "wd_expired increased from 0 to 1")
+	})
+
 	t.Run("ENAResetReportsCounterIncreases", func(t *testing.T) {
 		mgr := &mockManager{obs: observer.BaseObserver{}, res: make(chan monitor.Condition, 10)}
 		m, stats, _ := newENAResetMonitor(t, mgr)

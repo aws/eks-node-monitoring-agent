@@ -301,7 +301,7 @@ The monitoring condition is `NetworkingReady` for issues in the following table 
 
 |ENADriverReset
 |Event
-|The ENA driver reset a network interface, or failed to reset it, after a transmit timeout or a missed device keep-alive. Traffic on the interface stalls during a reset.
+|The ENA driver reset a network interface, or failed to reset it, for example after lost transmit completions, a transmit timeout or a missed device keep-alive. Traffic on the interface stalls during a reset.
 
 |IPAMDInconsistentState
 |Event

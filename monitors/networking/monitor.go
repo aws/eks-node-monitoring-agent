@@ -574,10 +574,39 @@ const (
 	PPSExceeded          = "pps_allowance_exceeded"
 )
 
-// enaResetStats are the ENA driver counters that increase when the driver
-// resets an interface (tx_timeout, wd_expired) or fails to (reset_fail).
+// enaResetStats are the ENA driver counters that only increase when the driver
+// resets an interface, or fails to (reset_fail). The amzn-drivers ena driver
+// increments total_resets on every reset, together with one counter for the
+// reason, such as missing_tx_cmpl when tx completions are lost or wd_expired
+// when the device misses its keep-alive. The reason counters are watched as
+// well so the report says why the interface was reset.
+//
+// The ena driver in the upstream kernel only has tx_timeout, wd_expired and
+// reset_fail, so on that driver resets for other reasons, such as lost tx
+// completions, are not visible here.
+//
 // interface_down is left out because it also counts administrative link downs.
-var enaResetStats = []string{"tx_timeout", "wd_expired", "reset_fail"}
+var enaResetStats = []string{
+	"total_resets",
+	"reset_fail",
+	"tx_timeout",
+	// reset reasons, from resets_to_stats_offset_map in the amzn-drivers ena driver.
+	"wd_expired",
+	"admin_to",
+	"missing_tx_cmpl",
+	"bad_rx_req_id",
+	"bad_tx_req_id",
+	"bad_rx_desc_num",
+	"invalid_state",
+	"os_netdev_wd",
+	"missing_intr",
+	"suspected_poll_starvation",
+	"rx_desc_malformed",
+	"tx_desc_malformed",
+	"missing_admin_interrupt",
+	"device_request_reset",
+	"missing_first_intr",
+}
 
 // enaDriverName is the name of the ENA kernel driver, as it appears in the
 // sysfs driver link of an ENA interface.
