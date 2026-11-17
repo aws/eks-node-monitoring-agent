@@ -800,7 +800,11 @@ func (m *ethtoolMonitor) checkEthtool(interfaceName string, stats map[string]int
 // resets. Only interfaces bound to the ena driver are checked.
 //
 // The first reading of a counter is only recorded, so resets from before the
-// agent started are not reported. A counter's recorded value only moves past
+// agent started are not reported. The recorded values are kept in memory only,
+// so after the agent restarts the first reading is a new baseline and resets
+// while the agent was down are not reported either. This is intended: it keeps
+// every agent deploy or restart from reporting resets that are long over.
+// A counter's recorded value only moves past
 // an increase once that increase is reported, so resets held back by the
 // re-notify interval, or by a failed Notify, are included in the next report
 // rather than dropped. A counter that goes down, as when the driver reloads,
