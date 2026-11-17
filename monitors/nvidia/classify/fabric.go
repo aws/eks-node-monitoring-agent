@@ -1,7 +1,5 @@
 package classify
 
-import "fmt"
-
 // Fabric Manager status values from dcgmFabricManagerStatus_t (dcgm_structs.h).
 // ref: https://github.com/NVIDIA/DCGM/blob/64df9f894541e426e416131a9820cae97aa4dd81/dcgmlib/dcgm_structs.h#L4310-L4316 (v4.6.1)
 const (
@@ -46,17 +44,22 @@ func FabricHealthMaskHasFault(mask uint64) bool {
 	return !isInt64Blank(int64(mask)) && len(fabricHealthMaskFaults(int64(mask))) > 0
 }
 
+// fabricFault is one faulting sub-field of a fabric health mask and its value.
+type fabricFault struct {
+	fabricHealthSubField
+	value int64
+}
+
 // fabricHealthMaskFaults decodes the faulting sub-fields of a fabric health
 // mask (field 174). Each sub-field is extracted as (mask >> shift) & widthMask
 // (mirroring NVIDIA's DCGM_GPU_FABRIC_HEALTH_TEST macro) and reported only when
-// it is in a fault state. Returns the faults as "name=value" strings, or an
-// empty slice when the mask indicates no fault.
-func fabricHealthMaskFaults(mask int64) []string {
-	var faults []string
+// it is in a fault state. Returns nil when the mask indicates no fault.
+func fabricHealthMaskFaults(mask int64) []fabricFault {
+	var faults []fabricFault
 	for _, sf := range fabricHealthSubFields {
 		v := (mask >> sf.shift) & sf.widthMask
 		if sf.fault(v) {
-			faults = append(faults, fmt.Sprintf("%s=%d", sf.name, v))
+			faults = append(faults, fabricFault{sf, v})
 		}
 	}
 	return faults
@@ -77,6 +80,7 @@ func fabricHealthMaskFaults(mask int64) []string {
 // ref: https://github.com/NVIDIA/DCGM/blob/master/dcgmlib/dcgm_fields.h (DCGM_FI_DEV_FABRIC_HEALTH_MASK = 174)
 type fabricHealthSubField struct {
 	name      string
+	smiName   string // the matching <fabric><health> element in `nvidia-smi -q -x`
 	shift     uint
 	widthMask int64
 	fault     func(v int64) bool
@@ -87,12 +91,12 @@ func faultWhenTrue(v int64) bool { return v == 1 }
 
 var fabricHealthSubFields = []fabricHealthSubField{
 	// Boolean sub-fields: 0=NotSupported, 1=True (fault), 2=False (healthy).
-	{name: "degraded_bw", shift: 0, widthMask: 0x3, fault: faultWhenTrue},
-	{name: "route_recovery", shift: 2, widthMask: 0x3, fault: faultWhenTrue},
-	{name: "route_unhealthy", shift: 4, widthMask: 0x3, fault: faultWhenTrue},
-	{name: "access_timeout_recovery", shift: 6, widthMask: 0x3, fault: faultWhenTrue},
+	{name: "degraded_bw", smiName: "bandwidth", shift: 0, widthMask: 0x3, fault: faultWhenTrue},
+	{name: "route_recovery", smiName: "route_recovery_in_progress", shift: 2, widthMask: 0x3, fault: faultWhenTrue},
+	{name: "route_unhealthy", smiName: "route_unhealthy", shift: 4, widthMask: 0x3, fault: faultWhenTrue},
+	{name: "access_timeout_recovery", smiName: "access_timeout_recovery", shift: 6, widthMask: 0x3, fault: faultWhenTrue},
 	// Incorrect configuration: 0=NotSupported, 1=None (correct), >=2=incorrect.
-	{name: "incorrect_configuration", shift: 8, widthMask: 0xf, fault: func(v int64) bool { return v >= 2 }},
+	{name: "incorrect_configuration", smiName: "incorrect_configuration", shift: 8, widthMask: 0xf, fault: func(v int64) bool { return v >= 2 }},
 	// partition_assigned (shift 12) is informational, not a health fault, so
 	// it is intentionally omitted.
 }

@@ -52,8 +52,9 @@ type FabricCrossCheck struct {
 
 // GPUFabricHealth is one GPU's fabric health as nvidia-smi reports it.
 type GPUFabricHealth struct {
-	BusID         string // PCI bus ID, e.g. 00000000:51:00.0
-	HealthSummary string // <fabric><health><summary>: Healthy, Unhealthy, Limited Capacity, or N/A
+	BusID         string            // PCI bus ID, e.g. 00000000:51:00.0
+	HealthSummary string            // <fabric><health><summary>: Healthy, Unhealthy, Limited Capacity, or N/A
+	SubFields     map[string]string // the other <fabric><health> elements by name, e.g. access_timeout_recovery: False
 }
 
 // Classify maps a source-agnostic signal snapshot to node conditions. It is
@@ -81,8 +82,7 @@ func Classify(s NormalizedSignals) []monitor.Condition {
 	// could not read the mask, so there is nothing to decode.
 	if s.FabricHealthMask != nil && !isInt64Blank(int64(*s.FabricHealthMask)) {
 		if faults := fabricHealthMaskFaults(int64(*s.FabricHealthMask)); len(faults) > 0 {
-			message := fmt.Sprintf("GPU fabric health mask 0x%x: %s", *s.FabricHealthMask, strings.Join(faults, ", "))
-			out = append(out, fabricHealthMaskFault(message, s.FabricCrossCheck, s.GPUCount))
+			out = append(out, fabricHealthMaskFault(*s.FabricHealthMask, faults, s.FabricCrossCheck, s.GPUCount))
 		}
 	}
 
@@ -154,10 +154,19 @@ func Classify(s NormalizedSignals) []monitor.Condition {
 }
 
 // fabricHealthMaskFault is Fatal unless nvidia-smi lists as many GPUs as DCGM
-// and reports every one Healthy, in which case it is a Warning. All GPUs must
-// be Healthy because DCGM GPU IDs do not map to nvidia-smi bus IDs. Running
-// processes never decide the severity: a busy GPU can still be faulty.
-func fabricHealthMaskFault(message string, check *FabricCrossCheck, gpuCount *uint) monitor.Condition {
+// and, on every one, reports the fabric health summary Healthy and each
+// faulting sub-field False; then it is a Warning. Only an explicit False
+// counts, so N/A or a missing element keeps the fault. All GPUs must agree
+// because DCGM GPU IDs do not map to nvidia-smi bus IDs. Running processes
+// never decide the severity: a busy GPU can still be faulty.
+func fabricHealthMaskFault(mask uint64, faults []fabricFault, check *FabricCrossCheck, gpuCount *uint) monitor.Condition {
+	decoded := make([]string, len(faults))
+	smiNames := make([]string, len(faults))
+	for i, f := range faults {
+		decoded[i] = fmt.Sprintf("%s=%d", f.name, f.value)
+		smiNames[i] = f.smiName
+	}
+	message := fmt.Sprintf("GPU fabric health mask 0x%x: %s", mask, strings.Join(decoded, ", "))
 	if check == nil {
 		return reasons.NvidiaFabricError.Builder().Message(message).Build()
 	}
@@ -176,13 +185,21 @@ func fabricHealthMaskFault(message string, check *FabricCrossCheck, gpuCount *ui
 				Message(fmt.Sprintf("%s; nvidia-smi fabric health summary for GPU %s: %q", message, gpu.BusID, gpu.HealthSummary)).
 				Build()
 		}
+		for _, f := range faults {
+			if v := gpu.SubFields[f.smiName]; v != "False" {
+				return reasons.NvidiaFabricError.Builder().
+					Message(fmt.Sprintf("%s; nvidia-smi reports %s %q for GPU %s", message, f.smiName, v, gpu.BusID)).
+					Build()
+			}
+		}
 	}
 	running := "no"
 	if check.ProcessesRunning {
 		running = "yes"
 	}
 	return reasons.NvidiaFabricWarning.Builder().
-		Message(fmt.Sprintf("%s; nvidia-smi reports fabric health summary Healthy on all %d GPUs; GPU processes running: %s", message, len(check.GPUs), running)).
+		Message(fmt.Sprintf("%s; nvidia-smi reports %s False and fabric health summary Healthy on all %d GPUs; GPU processes running: %s",
+			message, strings.Join(smiNames, ", "), len(check.GPUs), running)).
 		Build()
 }
 

@@ -1,5 +1,5 @@
-// Package nvidiasmi reads GPU fabric health and GPU processes from the host's
-// nvidia-smi into a classify.FabricCrossCheck.
+// Package nvidiasmi reads GPU fabric health and GPU processes from nvidia-smi
+// into a classify.FabricCrossCheck.
 package nvidiasmi
 
 import (
@@ -39,19 +39,19 @@ func NewReader() *Reader {
 	return &Reader{root: config.HostRoot(), timeout: DefaultTimeout}
 }
 
-// binary returns the nvidia-smi to run: the one under the GPU Operator driver
-// root when the driver is containerized there, otherwise the plain name
-// resolved on PATH under the host root. This mirrors the driver-root search in
-// package dcgm and nvml.
-func (r *Reader) binary() string {
+// execRoot returns the root to run nvidia-smi in. A containerized driver, as
+// the GPU Operator installs, keeps nvidia-smi and the libraries it loads under
+// its own root, so nvidia-smi runs there; otherwise it runs under the host
+// root. This follows the driver-root search in packages dcgm and nvml.
+func (r *Reader) execRoot() string {
 	if root := config.NvidiaDriverRoot(); root != "" {
-		return filepath.Join(root, "usr/bin/nvidia-smi")
+		return filepath.Join(r.root, root)
 	}
-	operatorSMI := filepath.Join(config.DefaultGPUOperatorDriverRoot, "usr/bin/nvidia-smi")
-	if _, err := os.Stat(config.ToHostPath(operatorSMI)); err == nil {
-		return operatorSMI
+	operatorRoot := filepath.Join(r.root, config.DefaultGPUOperatorDriverRoot)
+	if _, err := os.Stat(filepath.Join(operatorRoot, "usr/bin/nvidia-smi")); err == nil {
+		return operatorRoot
 	}
-	return "nvidia-smi"
+	return r.root
 }
 
 // Read runs `nvidia-smi -q -x` and parses its output.
@@ -63,7 +63,7 @@ func (r *Reader) Read(ctx context.Context) (*classify.FabricCrossCheck, error) {
 			return nil, ErrStillRunning
 		}
 	}
-	out, exited, err := osext.NewExec(r.root).OutputTracked(ctx, r.timeout, r.binary(), "-q", "-x")
+	out, exited, err := osext.NewExec(r.execRoot()).OutputTracked(ctx, r.timeout, "nvidia-smi", "-q", "-x")
 	r.exited = exited
 	if err != nil {
 		return nil, fmt.Errorf("running nvidia-smi: %w", err)
@@ -77,8 +77,14 @@ func Parse(data []byte) (*classify.FabricCrossCheck, error) {
 	var doc struct {
 		XMLName xml.Name `xml:"nvidia_smi_log"`
 		GPUs    []struct {
-			BusID     string     `xml:"id,attr"`
-			Summary   string     `xml:"fabric>health>summary"`
+			BusID  string `xml:"id,attr"`
+			Health struct {
+				Summary   string `xml:"summary"`
+				SubFields []struct {
+					XMLName xml.Name
+					Value   string `xml:",chardata"`
+				} `xml:",any"`
+			} `xml:"fabric>health"`
 			Processes []struct{} `xml:"processes>process_info"`
 		} `xml:"gpu"`
 	}
@@ -90,9 +96,14 @@ func Parse(data []byte) (*classify.FabricCrossCheck, error) {
 	}
 	check := &classify.FabricCrossCheck{}
 	for _, gpu := range doc.GPUs {
+		subFields := map[string]string{}
+		for _, sf := range gpu.Health.SubFields {
+			subFields[sf.XMLName.Local] = strings.TrimSpace(sf.Value)
+		}
 		check.GPUs = append(check.GPUs, classify.GPUFabricHealth{
 			BusID:         gpu.BusID,
-			HealthSummary: strings.TrimSpace(gpu.Summary),
+			HealthSummary: strings.TrimSpace(gpu.Health.Summary),
+			SubFields:     subFields,
 		})
 		if len(gpu.Processes) > 0 {
 			check.ProcessesRunning = true

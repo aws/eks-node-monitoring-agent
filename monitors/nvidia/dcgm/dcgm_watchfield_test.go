@@ -191,8 +191,9 @@ func TestFields(t *testing.T) {
 		assert.Empty(t, conditions)
 	})
 
-	// nvidia-smi reports every GPU Healthy: one Warning, nvidia-smi read once
-	// per call, and the repeat is rate-limited.
+	// nvidia-smi reports every GPU Healthy and the faulting sub-field False:
+	// one Warning, nvidia-smi read once per call, and the repeat is
+	// rate-limited.
 	t.Run("FabricHealthMaskFaultNotConfirmedByNvidiaSMI", func(t *testing.T) {
 		mockDcgm := &fake.FakeDcgm{FieldValues: healthMasks(0x40, 0x40), DeviceCount: 2}
 		dcgmSystem := dcgm.NewDCGMSystem(mockDcgm, dcgm.GetDiagType())
@@ -201,17 +202,18 @@ func TestFields(t *testing.T) {
 		reads := 0
 		dcgm.SetFabricCrossCheck(dcgmSystem, func(context.Context) (*classify.FabricCrossCheck, error) {
 			reads++
+			subFields := map[string]string{"access_timeout_recovery": "False"}
 			return &classify.FabricCrossCheck{
 				GPUs: []classify.GPUFabricHealth{
-					{BusID: "00000000:51:00.0", HealthSummary: "Healthy"},
-					{BusID: "00000000:52:00.0", HealthSummary: "Healthy"},
+					{BusID: "00000000:51:00.0", HealthSummary: "Healthy", SubFields: subFields},
+					{BusID: "00000000:52:00.0", HealthSummary: "Healthy", SubFields: subFields},
 				},
 				ProcessesRunning: true,
 			}, nil
 		})
 		warning := monitor.Condition{
 			Reason:   "NvidiaFabricWarning",
-			Message:  "GPU fabric health mask 0x40: access_timeout_recovery=1; nvidia-smi reports fabric health summary Healthy on all 2 GPUs; GPU processes running: yes",
+			Message:  "GPU fabric health mask 0x40: access_timeout_recovery=1; nvidia-smi reports access_timeout_recovery False and fabric health summary Healthy on all 2 GPUs; GPU processes running: yes",
 			Severity: monitor.SeverityWarning,
 		}
 
