@@ -2,6 +2,7 @@ package networking
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 	"github.com/aws/eks-node-monitoring-agent/api/monitor/resource"
+	"github.com/aws/eks-node-monitoring-agent/monitors/networking/efa"
 	"github.com/aws/eks-node-monitoring-agent/monitors/networking/iptables"
 	"github.com/aws/eks-node-monitoring-agent/pkg/config"
 	"github.com/aws/eks-node-monitoring-agent/pkg/observer"
@@ -1061,4 +1063,351 @@ func TestNPAGate_SkipsWithoutEKSAutoTag(t *testing.T) {
 	case <-time.After(100 * time.Millisecond):
 		// no condition emitted — gate working as intended
 	}
+}
+
+// flakyManager fails its first failures Notify calls and then behaves like
+// mockManager.
+type flakyManager struct {
+	mockManager
+	failures int
+}
+
+func (m *flakyManager) Notify(ctx context.Context, condition monitor.Condition) error {
+	if m.failures > 0 {
+		m.failures--
+		return fmt.Errorf("notify failed")
+	}
+	return m.mockManager.Notify(ctx, condition)
+}
+
+// newEFATestMonitor returns a monitor whose EFA conditions are sent to the
+// returned manager, with the EKSAuto tag when autoMode is set.
+func newEFATestMonitor(autoMode bool) (*NetworkingMonitor, *mockManager) {
+	mgr := &mockManager{obs: observer.BaseObserver{}, res: make(chan monitor.Condition, 10)}
+	mon := NewNetworkingMonitor()
+	mon.manager = mgr
+	mon.runtimeContext = &config.RuntimeContext{}
+	if autoMode {
+		mon.runtimeContext.AddTags(config.EKSAuto)
+	}
+	return mon, mgr
+}
+
+func TestEFADevicesCheck(t *testing.T) {
+	for _, testCase := range []struct {
+		name        string
+		pciDevices  efa.EFAPCIDevices
+		activeCount int
+		wantMessage string
+	}{
+		{name: "EFANotAttached"},
+		{name: "AllDevicesAvailable", pciDevices: efa.EFAPCIDevices{Attached: 32, Bound: 32}, activeCount: 32},
+		{name: "FewerAttachedThanSupported", pciDevices: efa.EFAPCIDevices{Attached: 16, Bound: 16}, activeCount: 16},
+		{
+			name:        "DeviceNotBound",
+			pciDevices:  efa.EFAPCIDevices{Attached: 32, Bound: 31},
+			activeCount: 31,
+			wantMessage: "Only 31 of 32 attached EFA devices are available",
+		},
+		{
+			name:        "LinkDown",
+			pciDevices:  efa.EFAPCIDevices{Attached: 32, Bound: 32},
+			activeCount: 30,
+			wantMessage: "Only 30 of 32 attached EFA devices are available",
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			mon, mgr := newEFATestMonitor(false)
+
+			// run enough consecutive checks for a persistent mismatch to be reported.
+			now := time.Now()
+			for i := range efaRailCountMismatchChecks {
+				require.NoError(t, mon.checkEFADevices(context.TODO(), testCase.pciDevices, testCase.activeCount, now.Add(time.Duration(i)*5*time.Minute)))
+			}
+			if testCase.wantMessage == "" {
+				assert.Empty(t, mgr.res)
+				return
+			}
+			require.Len(t, mgr.res, 1)
+			condition := <-mgr.res
+			assert.Equal(t, "EFARailCountMismatch", condition.Reason)
+			assert.Equal(t, monitor.SeverityWarning, condition.Severity)
+			assert.Equal(t, testCase.wantMessage, condition.Message)
+		})
+	}
+
+	t.Run("RequiresConsecutiveChecks", func(t *testing.T) {
+		mon, mgr := newEFATestMonitor(false)
+		now := time.Now()
+		attached := efa.EFAPCIDevices{Attached: 32, Bound: 32}
+
+		require.NoError(t, mon.checkEFADevices(context.TODO(), attached, 31, now))
+		require.NoError(t, mon.checkEFADevices(context.TODO(), attached, 31, now.Add(5*time.Minute)))
+		assert.Empty(t, mgr.res, "a mismatch shorter than the required checks should not be reported")
+
+		require.NoError(t, mon.checkEFADevices(context.TODO(), attached, 32, now.Add(10*time.Minute)))
+		require.NoError(t, mon.checkEFADevices(context.TODO(), attached, 31, now.Add(15*time.Minute)))
+		require.NoError(t, mon.checkEFADevices(context.TODO(), attached, 31, now.Add(20*time.Minute)))
+		assert.Empty(t, mgr.res, "a healthy check should restart the count")
+
+		require.NoError(t, mon.checkEFADevices(context.TODO(), attached, 30, now.Add(25*time.Minute)))
+		require.Len(t, mgr.res, 1, "a mismatch that persists for the required checks should be reported, even if its count changes")
+		assert.Equal(t, "Only 30 of 32 attached EFA devices are available", (<-mgr.res).Message)
+	})
+
+	t.Run("RetriesAfterNotifyFails", func(t *testing.T) {
+		mon, _ := newEFATestMonitor(false)
+		mgr := &flakyManager{mockManager: mockManager{res: make(chan monitor.Condition, 1)}, failures: 1}
+		mon.manager = mgr
+		now := time.Now()
+		attached := efa.EFAPCIDevices{Attached: 32, Bound: 32}
+
+		// the mismatch is first sent on the efaRailCountMismatchChecks-th check.
+		for i := range efaRailCountMismatchChecks - 1 {
+			require.NoError(t, mon.checkEFADevices(context.TODO(), attached, 31, now.Add(time.Duration(i-efaRailCountMismatchChecks+1)*5*time.Minute)))
+		}
+		require.Error(t, mon.checkEFADevices(context.TODO(), attached, 31, now))
+		assert.Empty(t, mgr.res, "a failed send records nothing")
+
+		require.NoError(t, mon.checkEFADevices(context.TODO(), attached, 31, now.Add(5*time.Minute)))
+		assert.Len(t, mgr.res, 1, "the next check retries instead of waiting out the re-notify interval")
+	})
+
+	t.Run("RateLimitsWarnings", func(t *testing.T) {
+		mon, mgr := newEFATestMonitor(false)
+		now := time.Now()
+		attached := efa.EFAPCIDevices{Attached: 32, Bound: 32}
+
+		for i := range efaRailCountMismatchChecks {
+			require.NoError(t, mon.checkEFADevices(context.TODO(), attached, 31, now.Add(time.Duration(i-efaRailCountMismatchChecks+1)*5*time.Minute)))
+		}
+		assert.Len(t, mgr.res, 1, "first persistent mismatch should be reported")
+		<-mgr.res
+
+		require.NoError(t, mon.checkEFADevices(context.TODO(), attached, 31, now.Add(5*time.Minute)))
+		assert.Empty(t, mgr.res, "mismatch within the re-notify interval should be suppressed")
+
+		require.NoError(t, mon.checkEFADevices(context.TODO(), attached, 30, now.Add(10*time.Minute)))
+		assert.Len(t, mgr.res, 1, "a change in the device count should be reported right away")
+		<-mgr.res
+
+		require.NoError(t, mon.checkEFADevices(context.TODO(), attached, 30, now.Add(10*time.Minute+efaReNotifyInterval)))
+		assert.Len(t, mgr.res, 1, "mismatch after the re-notify interval should be reported")
+		<-mgr.res
+
+		require.NoError(t, mon.checkEFADevices(context.TODO(), efa.EFAPCIDevices{Attached: 31, Bound: 31}, 30, now.Add(15*time.Minute+efaReNotifyInterval)))
+		require.Len(t, mgr.res, 1, "a change in the attached count alone should be reported right away")
+		assert.Equal(t, "Only 30 of 31 attached EFA devices are available", (<-mgr.res).Message)
+	})
+}
+
+func TestEFADriverNotLoadedCheck(t *testing.T) {
+	notLoaded := efa.EFAPCIDevices{Attached: 2}
+	loaded := efa.EFAPCIDevices{Attached: 2, Bound: 2}
+	wantMessage := "Found 2 attached EFA devices, but none have been bound to the efa driver for 15m0s"
+
+	t.Run("AutoModeFatalAfterWindow", func(t *testing.T) {
+		mon, mgr := newEFATestMonitor(true)
+		now := time.Now()
+
+		require.NoError(t, mon.checkEFADevices(context.TODO(), notLoaded, 0, now))
+		require.NoError(t, mon.checkEFADevices(context.TODO(), notLoaded, 0, now.Add(10*time.Minute)))
+		assert.Empty(t, mgr.res, "the driver not loading should not be reported before the window")
+
+		require.NoError(t, mon.checkEFADevices(context.TODO(), notLoaded, 0, now.Add(efaDriverNotLoadedWindow)))
+		require.Len(t, mgr.res, 1)
+		condition := <-mgr.res
+		assert.Equal(t, "EFADriverNotLoaded", condition.Reason)
+		assert.Equal(t, monitor.SeverityFatal, condition.Severity)
+		assert.Equal(t, wantMessage, condition.Message)
+		assert.False(t, condition.Resolved)
+
+		require.NoError(t, mon.checkEFADevices(context.TODO(), notLoaded, 0, now.Add(efaDriverNotLoadedWindow+5*time.Minute)))
+		require.Len(t, mgr.res, 1, "the condition should be reported on every check while it persists")
+		<-mgr.res
+
+		require.NoError(t, mon.checkEFADevices(context.TODO(), loaded, 2, now.Add(efaDriverNotLoadedWindow+10*time.Minute)))
+		require.Len(t, mgr.res, 1, "the condition should be resolved once the driver is bound")
+		condition = <-mgr.res
+		assert.Equal(t, "EFADriverNotLoaded", condition.Reason)
+		assert.Equal(t, monitor.SeverityFatal, condition.Severity)
+		assert.True(t, condition.Resolved)
+
+		require.NoError(t, mon.checkEFADevices(context.TODO(), loaded, 2, now.Add(efaDriverNotLoadedWindow+15*time.Minute)))
+		assert.Empty(t, mgr.res, "a resolved condition should only be resolved once")
+	})
+
+	t.Run("OtherNodesWarningAfterWindow", func(t *testing.T) {
+		mon, mgr := newEFATestMonitor(false)
+		now := time.Now()
+
+		require.NoError(t, mon.checkEFADevices(context.TODO(), notLoaded, 0, now))
+		require.NoError(t, mon.checkEFADevices(context.TODO(), notLoaded, 0, now.Add(efaDriverNotLoadedWindow)))
+		require.Len(t, mgr.res, 1)
+		condition := <-mgr.res
+		assert.Equal(t, "EFADriverNotLoaded", condition.Reason)
+		assert.Equal(t, monitor.SeverityWarning, condition.Severity)
+		assert.Equal(t, wantMessage, condition.Message)
+
+		require.NoError(t, mon.checkEFADevices(context.TODO(), notLoaded, 0, now.Add(efaDriverNotLoadedWindow+5*time.Minute)))
+		assert.Empty(t, mgr.res, "an unchanged Warning within the re-notify interval should be suppressed")
+
+		require.NoError(t, mon.checkEFADevices(context.TODO(), loaded, 2, now.Add(efaDriverNotLoadedWindow+10*time.Minute)))
+		assert.Empty(t, mgr.res, "a Warning has no condition to resolve")
+	})
+
+	t.Run("RecoveryRestartsWindow", func(t *testing.T) {
+		mon, mgr := newEFATestMonitor(true)
+		now := time.Now()
+
+		require.NoError(t, mon.checkEFADevices(context.TODO(), notLoaded, 0, now))
+		require.NoError(t, mon.checkEFADevices(context.TODO(), loaded, 2, now.Add(10*time.Minute)))
+		require.NoError(t, mon.checkEFADevices(context.TODO(), notLoaded, 0, now.Add(20*time.Minute)))
+		require.NoError(t, mon.checkEFADevices(context.TODO(), notLoaded, 0, now.Add(30*time.Minute)))
+		assert.Empty(t, mgr.res, "binding the driver should restart the window")
+
+		require.NoError(t, mon.checkEFADevices(context.TODO(), notLoaded, 0, now.Add(20*time.Minute+efaDriverNotLoadedWindow)))
+		assert.Len(t, mgr.res, 1)
+	})
+}
+
+func TestHandleEFADevices(t *testing.T) {
+	// setupHostRoot points the host root at a temp dir and replaces each of
+	// the given sysfs directories with a file, so reading it fails.
+	setupHostRoot := func(t *testing.T, unreadable ...string) {
+		root := t.TempDir()
+		t.Setenv(config.HOST_ROOT_ENV, root)
+		for _, dir := range []string{"/sys/bus/pci/devices", "/sys/class/infiniband"} {
+			path := filepath.Join(root, dir)
+			if slices.Contains(unreadable, dir) {
+				require.NoError(t, os.MkdirAll(filepath.Dir(path), 0755))
+				require.NoError(t, os.WriteFile(path, nil, 0644))
+				continue
+			}
+			require.NoError(t, os.MkdirAll(path, 0755))
+		}
+	}
+
+	t.Run("SkipsHybridNodes", func(t *testing.T) {
+		setupHostRoot(t, "/sys/bus/pci/devices", "/sys/class/infiniband")
+		mon, mgr := newEFATestMonitor(false)
+		mon.runtimeContext.AddTags(config.Hybrid)
+
+		assert.NoError(t, mon.handleEFADevices(context.TODO(), time.Now()), "hybrid nodes should not read sysfs")
+		assert.Empty(t, mgr.res)
+	})
+
+	t.Run("PCIDevicesUnreadable", func(t *testing.T) {
+		setupHostRoot(t, "/sys/bus/pci/devices")
+		mon, _ := newEFATestMonitor(false)
+
+		assert.ErrorContains(t, mon.handleEFADevices(context.TODO(), time.Now()), "failed to count EFA PCI devices")
+	})
+
+	t.Run("InfinibandUnreadable", func(t *testing.T) {
+		setupHostRoot(t, "/sys/class/infiniband")
+		mon, _ := newEFATestMonitor(false)
+
+		assert.ErrorContains(t, mon.handleEFADevices(context.TODO(), time.Now()), "failed to count active EFA devices")
+	})
+
+	t.Run("NoEFADevices", func(t *testing.T) {
+		setupHostRoot(t)
+		mon, mgr := newEFATestMonitor(false)
+
+		assert.NoError(t, mon.handleEFADevices(context.TODO(), time.Now()))
+		assert.Empty(t, mgr.res)
+	})
+}
+
+func TestHandleIPRulesAndRoutesRecheck(t *testing.T) {
+	const a, b = "10.0.24.82", "10.0.17.51"
+	route := func(ip string) string { return ip + " dev enia2d278c49cc scope link" }
+	rule := func(ip string) string { return "512:\tfrom all to " + ip + " lookup main" }
+	state := func(rules []string, routes []string, ips ...string) *ipState {
+		meta := map[string]*ipMetadata{}
+		for _, ip := range ips {
+			meta[ip] = &ipMetadata{primary: true}
+		}
+		return &ipState{mode: IPv4, meta: meta, rules: rules, routes: routes}
+	}
+	missingRuleA := state(nil, []string{route(a)}, a)
+	healthyA := state([]string{rule(a)}, []string{route(a)}, a)
+
+	type observation struct {
+		state *ipState
+		err   error
+	}
+	run := func(t *testing.T, observations ...observation) (int, []monitor.Condition, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		rtCtx := &config.RuntimeContext{}
+		rtCtx.AddTags(config.EKSAuto)
+		mon := NewNetworkingMonitor(WithRuntimeContext(rtCtx))
+		mon.ipRulesRecheckDelay = 0
+		calls := 0
+		mon.getIPState = func() (*ipState, error) {
+			require.Less(t, calls, len(observations), "unexpected getIPState call")
+			o := observations[calls]
+			calls++
+			return o.state, o.err
+		}
+		mockManager := &mockManager{res: make(chan monitor.Condition, 10)}
+		mon.Register(ctx, mockManager)
+		err := mon.handleIPRulesAndRoutes(ctx)
+		var conditions []monitor.Condition
+		for len(mockManager.res) > 0 {
+			conditions = append(conditions, <-mockManager.res)
+		}
+		return calls, conditions, err
+	}
+	reasonsOf := func(conditions []monitor.Condition) (out []string) {
+		for _, c := range conditions {
+			out = append(out, c.Reason)
+		}
+		return out
+	}
+
+	t.Run("RuleWrittenBeforeRecheck", func(t *testing.T) {
+		calls, conditions, err := run(t, observation{state: missingRuleA}, observation{state: healthyA})
+		assert.NoError(t, err)
+		assert.Equal(t, 2, calls)
+		assert.Empty(t, conditions)
+	})
+
+	t.Run("StillMissingOnRecheck", func(t *testing.T) {
+		_, conditions, err := run(t, observation{state: missingRuleA}, observation{state: missingRuleA})
+		assert.NoError(t, err)
+		assert.Equal(t, []string{"MissingIPRules"}, reasonsOf(conditions))
+	})
+
+	t.Run("NewIssueOnlyOnRecheck", func(t *testing.T) {
+		// a was fixed, b only went missing on the recheck: neither persisted across both.
+		second := state([]string{rule(a)}, []string{route(a), route(b)}, a, b)
+		_, conditions, err := run(t, observation{state: missingRuleA}, observation{state: second})
+		assert.NoError(t, err)
+		assert.Empty(t, conditions)
+	})
+
+	t.Run("RuleWrittenRouteStillMissing", func(t *testing.T) {
+		// both missing at first (reported as a rule issue); the rule appears but the route never does.
+		first := state(nil, nil, a)
+		second := state([]string{rule(a)}, nil, a)
+		_, conditions, err := run(t, observation{state: first}, observation{state: second})
+		assert.NoError(t, err)
+		assert.Equal(t, []string{"MissingIPRoutes"}, reasonsOf(conditions))
+	})
+
+	t.Run("RecheckFailsReportsFirstObservation", func(t *testing.T) {
+		_, conditions, err := run(t, observation{state: missingRuleA}, observation{err: errors.New("ipamd unavailable")})
+		assert.Error(t, err)
+		assert.Equal(t, []string{"MissingIPRules"}, reasonsOf(conditions))
+	})
+
+	t.Run("NothingMissingSkipsRecheck", func(t *testing.T) {
+		calls, conditions, err := run(t, observation{state: healthyA})
+		assert.NoError(t, err)
+		assert.Equal(t, 1, calls)
+		assert.Empty(t, conditions)
+	})
 }

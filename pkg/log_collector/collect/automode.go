@@ -27,7 +27,6 @@ func (c *AutoMode) Collect(acc *Accessor) error {
 		acc.CommandOutput([]string{"journalctl", "-o", "short-iso-precise", "-u", "eks-healthchecker"}, "automode/eks-healthchecker.txt", CommandOptionsNone),
 		acc.CommandOutput([]string{"journalctl", "-o", "short-iso-precise", "-u", "kube-proxy"}, "automode/kube-proxy.txt", CommandOptionsNone),
 		acc.CommandOutput([]string{"journalctl", "-o", "short-iso-precise", "-u", "coredns-bootstrap"}, "automode/coredns-boostrap.txt", CommandOptionsNone),
-		acc.CommandOutput([]string{"journalctl", "-o", "short-iso-precise", "-u", "coredns"}, "automode/coredns.txt", CommandOptionsNone),
 		acc.CommandOutput([]string{"journalctl", "-o", "short-iso-precise", "-u", "eks-ebs-csi-driver"}, "automode/eks-ebs-csi-driver.txt", CommandOptionsNone),
 		acc.CommandOutput([]string{"journalctl", "-o", "short-iso-precise", "-u", "eks-node-monitoring-agent"}, "automode/eks-node-monitoring-agent.txt", CommandOptionsNone),
 		acc.CommandOutput([]string{"journalctl", "-o", "short-iso-precise", "-u", "eks-networking-config-agent"}, "automode/eks-networking-config-agent.txt", CommandOptionsNone),

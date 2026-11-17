@@ -197,7 +197,7 @@ func dcgmiHostExec(ctx context.Context, cfg *envconf.Config, nodeName string, dc
 							// required shared libaries on the host only work if
 							// properly chrooted first into the host root.
 							Command:         append([]string{"chroot", hostRootMount.MountPath, "/usr/bin/dcgmi"}, dcgmiArgs...),
-							Image:           "public.ecr.aws/amazonlinux/amazonlinux:2023-minimal",
+							Image:           TestImage,
 							SecurityContext: &privilegedContext,
 							VolumeMounts:    []corev1.VolumeMount{hostRootMount},
 						},
