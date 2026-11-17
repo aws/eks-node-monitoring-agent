@@ -431,7 +431,7 @@ The monitoring condition is `StorageReady` for issues in the following table tha
 
 |PartitionNearlyFull
 |Event
-|A writable partition that the `kubelet` does not monitor for disk pressure, such as one holding `/var/log`, has less than 10% of its space or 5% of its inodes free. Writes to it fail once it is full, which can prevent logging and the creation of new pod sandboxes.
+|A writable partition holding `/`, `/var`, `/var/log` or `/var/lib/cni` that the `kubelet` does not monitor for disk pressure has less than 10% of its space or 5% of its inodes free. Writes to it fail once it is full, which can prevent logging and the creation of new pod sandboxes.
 
 |XFSSmallAverageClusterSize
 |Event

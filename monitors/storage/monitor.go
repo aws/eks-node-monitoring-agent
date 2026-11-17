@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -24,7 +23,6 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/pkg/util/renotify"
 	"github.com/go-logr/logr"
 	"github.com/moby/sys/mountinfo"
-	"golang.org/x/sys/unix"
 	"k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -372,6 +370,9 @@ const (
 	partitionWarningReNotifyInterval = 30 * time.Minute
 )
 
+// systemPaths are the node paths whose partitions are checked.
+var systemPaths = []string{"/", "/var", "/var/log", "/var/lib/cni"}
+
 type deviceNumber struct {
 	major, minor int
 }
@@ -379,10 +380,10 @@ type deviceNumber struct {
 type partition struct {
 	device deviceNumber
 	source string
-	// path is a mount point of the partition as seen by the agent.
-	path string
-	// mountpoints are the partition's mount points on the host.
-	mountpoints []string
+	// mountpoint is where the agent sees the partition mounted.
+	mountpoint string
+	// paths are the system paths the partition holds.
+	paths []string
 }
 
 func measurePartition(path string) (float64, float64, error) {
@@ -399,59 +400,67 @@ func (m *StorageMonitor) handlePartitionUsage() error {
 	if err != nil {
 		return err
 	}
-	// kubelet reports disk pressure for the filesystems holding its root
-	// directory and the container runtime's.
-	monitored := map[deviceNumber]bool{}
-	for _, dir := range []string{kubeletRootDir, containerdRootDir} {
-		var st unix.Stat_t
-		if err := unix.Stat(config.ToHostPath(dir), &st); err == nil {
-			monitored[deviceNumber{int(unix.Major(st.Dev)), int(unix.Minor(st.Dev))}] = true
-		}
+	exists := func(path string) bool {
+		_, err := os.Lstat(path)
+		return !errors.Is(err, os.ErrNotExist)
 	}
 	var merr error
-	for _, p := range selectPartitions(mounts, config.HostRoot(), monitored) {
+	for _, p := range selectPartitions(mounts, config.HostRoot(), exists) {
 		merr = errors.Join(merr, m.checkPartition(p))
 	}
 	return merr
 }
 
-// selectPartitions returns the writable block-device filesystems mounted at
-// or under hostRoot, one per device. It skips the excluded devices and mounts
-// under the kubelet root directory, which hold pod volumes.
-func selectPartitions(mounts []*mountinfo.Info, hostRoot string, excluded map[deviceNumber]bool) []partition {
-	hostRoot = filepath.Clean(hostRoot)
-	kubeletDir := filepath.Join(hostRoot, kubeletRootDir)
-	byDevice := map[deviceNumber]*partition{}
-	for _, mount := range mounts {
-		device := deviceNumber{mount.Major, mount.Minor}
-		if mount.Major == 0 || excluded[device] || isReadOnly(mount) ||
-			!isWithin(mount.Mountpoint, hostRoot) || isWithin(mount.Mountpoint, kubeletDir) {
+// selectPartitions returns the writable partitions holding the system paths,
+// one per device, in system path order. It skips the partitions holding the
+// kubelet root directory and the container runtime's, for which kubelet
+// reports disk pressure.
+func selectPartitions(mounts []*mountinfo.Info, hostRoot string, exists func(path string) bool) []partition {
+	mountFor := func(path string) *mountinfo.Info {
+		path = filepath.Join(hostRoot, path)
+		if !exists(path) {
+			return nil
+		}
+		var found *mountinfo.Info
+		for _, mount := range mounts {
+			// a later mount at the same mount point is mounted over the earlier one
+			if isWithin(path, mount.Mountpoint) && (found == nil || len(mount.Mountpoint) >= len(found.Mountpoint)) {
+				found = mount
+			}
+		}
+		return found
+	}
+	monitored := map[deviceNumber]bool{}
+	for _, dir := range []string{kubeletRootDir, containerdRootDir} {
+		if mount := mountFor(dir); mount != nil {
+			monitored[deviceNumber{mount.Major, mount.Minor}] = true
+		}
+	}
+	var partitions []partition
+	index := map[deviceNumber]int{}
+	for _, path := range systemPaths {
+		mount := mountFor(path)
+		if mount == nil || isReadOnly(mount) {
 			continue
 		}
-		p, ok := byDevice[device]
-		if !ok {
-			p = &partition{device: device, source: mount.Source, path: mount.Mountpoint}
-			byDevice[device] = p
+		device := deviceNumber{mount.Major, mount.Minor}
+		if monitored[device] {
+			continue
 		}
-		p.mountpoints = append(p.mountpoints, filepath.Join("/", strings.TrimPrefix(mount.Mountpoint, hostRoot)))
+		if i, ok := index[device]; ok {
+			partitions[i].paths = append(partitions[i].paths, path)
+			continue
+		}
+		index[device] = len(partitions)
+		partitions = append(partitions, partition{device: device, source: mount.Source, mountpoint: mount.Mountpoint, paths: []string{path}})
 	}
-	partitions := make([]partition, 0, len(byDevice))
-	for _, p := range byDevice {
-		slices.Sort(p.mountpoints)
-		p.mountpoints = slices.Compact(p.mountpoints)
-		partitions = append(partitions, *p)
-	}
-	slices.SortFunc(partitions, func(a, b partition) int {
-		return cmp.Or(cmp.Compare(a.device.major, b.device.major), cmp.Compare(a.device.minor, b.device.minor))
-	})
 	return partitions
 }
 
-// isReadOnly also checks the superblock options, because a read-write bind
-// mount of a read-only filesystem reports ro only there.
+// isReadOnly reports whether the filesystem is read-only. Mount options are
+// ignored, so a read-only view of a writable filesystem is still measured.
 func isReadOnly(mount *mountinfo.Info) bool {
-	return slices.Contains(strings.Split(mount.Options, ","), "ro") ||
-		slices.Contains(strings.Split(mount.VFSOptions, ","), "ro")
+	return slices.Contains(strings.Split(mount.VFSOptions, ","), "ro")
 }
 
 func isWithin(path, dir string) bool {
@@ -459,9 +468,9 @@ func isWithin(path, dir string) bool {
 }
 
 func (m *StorageMonitor) checkPartition(p partition) error {
-	spaceUsed, inodesUsed, err := m.partitionUsage(p.path)
+	spaceUsed, inodesUsed, err := m.partitionUsage(p.mountpoint)
 	if err != nil {
-		return fmt.Errorf("failed to check usage of %s: %w", p.path, err)
+		return fmt.Errorf("failed to check usage of %s: %w", p.mountpoint, err)
 	}
 	var crossed, free []string
 	if spaceUsed > partitionSpaceUsedThreshold {
@@ -488,7 +497,7 @@ func (m *StorageMonitor) checkPartition(p partition) error {
 	if err := m.manager.Notify(context.Background(),
 		reasons.PartitionNearlyFull.
 			Builder().
-			Message(fmt.Sprintf("%s mounted at %s has %s free", p.source, strings.Join(p.mountpoints, ", "), strings.Join(free, " and "))).
+			Message(fmt.Sprintf("%s holding %s has %s free", p.source, strings.Join(p.paths, ", "), strings.Join(free, " and "))).
 			Build(),
 	); err != nil {
 		return err
