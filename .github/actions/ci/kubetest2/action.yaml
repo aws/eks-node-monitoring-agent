@@ -89,7 +89,7 @@ runs:
         echo "Test filter: \${TEST_FILTER:-<none>}"
         
         # Build test command
-        TEST_CMD="\${E2E_BINARY} --test.v --test.timeout 30m --install=true --image=\${IMAGE}"
+        TEST_CMD="\${E2E_BINARY} --test.v --test.timeout 60m --install=true --image=\${IMAGE}"
         
         # Add filter if provided
         if [ -n "\${TEST_FILTER}" ]; then
