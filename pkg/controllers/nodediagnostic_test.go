@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/aws/eks-node-monitoring-agent/api/v1alpha1"
+	"github.com/aws/eks-node-monitoring-agent/pkg/util/captureguard"
 	"github.com/go-logr/logr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -334,6 +335,7 @@ func TestHandleLogCapture_BlockedCollectorCompletesWithTimeout(t *testing.T) {
 		kubeClient:        fakeClient,
 		nodeName:          "test-node",
 		logCaptureTimeout: 100 * time.Millisecond,
+		guard:             &captureguard.Guard{},
 		// stands in for a collector wedged on unresponsive host I/O: it ignores
 		// cancellation, exactly as a process in uninterruptible sleep does.
 		collectFunc: func(ctx context.Context, _ []v1alpha1.LogCategory) (io.Reader, int, error) {
@@ -366,6 +368,7 @@ func TestHandleLogCapture_BlockedCollectorCompletesWithTimeout(t *testing.T) {
 func TestCollectLogsBounded_CompletesWithinTimeout(t *testing.T) {
 	c := &nodeDiagnosticController{
 		logCaptureTimeout: 30 * time.Second,
+		guard:             &captureguard.Guard{},
 		collectFunc: func(ctx context.Context, _ []v1alpha1.LogCategory) (io.Reader, int, error) {
 			return strings.NewReader("archive"), 2, nil
 		},
@@ -385,6 +388,7 @@ func TestCollectLogsBounded_ParentCancellation(t *testing.T) {
 	cancel()
 
 	c := &nodeDiagnosticController{
+		guard: &captureguard.Guard{},
 		collectFunc: func(ctx context.Context, _ []v1alpha1.LogCategory) (io.Reader, int, error) {
 			<-ctx.Done()
 			return nil, 0, ctx.Err()
@@ -404,6 +408,7 @@ func TestCollectLogsBounded_OutstandingRunIsNotRestarted(t *testing.T) {
 
 	c := &nodeDiagnosticController{
 		logCaptureTimeout: 50 * time.Millisecond,
+		guard:             &captureguard.Guard{},
 		collectFunc: func(ctx context.Context, _ []v1alpha1.LogCategory) (io.Reader, int, error) {
 			starts.Add(1)
 			// blocks past the bound and ignores cancellation, standing in for a
@@ -421,7 +426,7 @@ func TestCollectLogsBounded_OutstandingRunIsNotRestarted(t *testing.T) {
 	// second attempt must report the outstanding run rather than start another.
 	_, _, err = c.collectLogsBounded(context.Background(), nil)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "has not returned")
+	assert.Contains(t, err.Error(), "already running")
 	assert.Contains(t, err.Error(), "not starting another")
 	assert.NotContains(t, err.Error(), "timed out",
 		"the skip must be reported as a skip, not as a fresh timeout")
@@ -430,8 +435,9 @@ func TestCollectLogsBounded_OutstandingRunIsNotRestarted(t *testing.T) {
 
 	// once the abandoned collection returns, the next attempt runs normally.
 	close(release)
-	require.Eventually(t, func() bool { return !c.captureRunning.Load() },
+	require.Eventually(t, func() bool { return c.guard.TryAcquire() },
 		time.Second, 10*time.Millisecond, "the slot must be released when the collection returns")
+	c.guard.Release()
 
 	archive, _, err := c.collectLogsBounded(context.Background(), nil)
 	require.NoError(t, err)
@@ -447,6 +453,7 @@ func TestCollectLogsBounded_SkipReportsRealBlockDuration(t *testing.T) {
 
 	c := &nodeDiagnosticController{
 		logCaptureTimeout: 20 * time.Millisecond,
+		guard:             &captureguard.Guard{},
 		collectFunc: func(ctx context.Context, _ []v1alpha1.LogCategory) (io.Reader, int, error) {
 			<-release
 			return nil, 0, nil
@@ -464,15 +471,16 @@ func TestCollectLogsBounded_SkipReportsRealBlockDuration(t *testing.T) {
 	// the timestamp belongs to the outstanding collection. If a refused caller
 	// could overwrite it, this would measure the gap between two adjacent
 	// statements and report 0s.
-	assert.NotContains(t, err.Error(), "after 0s",
+	assert.NotContains(t, err.Error(), "started 0s ago",
 		"the duration must be measured from the outstanding collection, not from this attempt")
-	assert.Regexp(t, `has not returned after [1-9][0-9]*s`, err.Error(),
+	assert.Regexp(t, `started [1-9][0-9]*s ago`, err.Error(),
 		"a collection blocked for over a second must report at least 1s")
 }
 
 func TestCollectLogsBounded_SlotReleasedOnSuccess(t *testing.T) {
 	c := &nodeDiagnosticController{
 		logCaptureTimeout: time.Second,
+		guard:             &captureguard.Guard{},
 		collectFunc: func(ctx context.Context, _ []v1alpha1.LogCategory) (io.Reader, int, error) {
 			return strings.NewReader("archive"), 0, nil
 		},
