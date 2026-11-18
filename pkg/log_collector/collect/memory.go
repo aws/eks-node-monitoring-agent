@@ -36,7 +36,16 @@ func (m *Memory) Collect(acc *Accessor) error {
 		interval = DefaultMemorySampleInterval
 	}
 
-	merr := copyProcFile(acc, "/proc/meminfo", "system/meminfo.txt")
+	// a missing file is skipped rather than failing the bundle, as in Pressure.
+	copyIfPresent := func(path, dst string) error {
+		err := acc.CopyFile(filepath.Join(acc.cfg.Root, path), dst)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+
+	merr := copyIfPresent("/proc/meminfo", "system/meminfo.txt")
 
 	if _, err := os.Stat(filepath.Join(acc.cfg.Root, "/proc/vmstat")); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -46,7 +55,7 @@ func (m *Memory) Collect(acc *Accessor) error {
 	}
 
 	first := time.Now().UTC()
-	if err := copyProcFile(acc, "/proc/vmstat", "system/vmstat_1.txt"); err != nil {
+	if err := copyIfPresent("/proc/vmstat", "system/vmstat_1.txt"); err != nil {
 		// without a first sample a second one has nothing to be compared with.
 		return errors.Join(merr, err)
 	}
@@ -60,20 +69,7 @@ func (m *Memory) Collect(acc *Accessor) error {
 	}
 
 	second := time.Now().UTC()
-	merr = errors.Join(merr, copyProcFile(acc, "/proc/vmstat", "system/vmstat_2.txt"))
+	merr = errors.Join(merr, copyIfPresent("/proc/vmstat", "system/vmstat_2.txt"))
 	times += fmt.Sprintf("vmstat_2.txt %s\n", second.Format(time.RFC3339Nano))
 	return errors.Join(merr, acc.WriteOutput("system/vmstat_times.txt", []byte(times)))
-}
-
-// copyProcFile copies one file under the configured root into the bundle. A
-// missing file is skipped rather than failing the bundle.
-func copyProcFile(acc *Accessor, path, dst string) error {
-	data, err := os.ReadFile(filepath.Join(acc.cfg.Root, path))
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-	return acc.WriteOutput(dst, data)
 }
