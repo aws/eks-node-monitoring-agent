@@ -483,3 +483,111 @@ func TestPacedWriterTimesOutWhenConsoleStopsDraining(t *testing.T) {
 		t.Fatal("write blocked instead of timing out")
 	}
 }
+
+func writeFixture(t *testing.T, path, content string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+}
+
+func TestPressure(t *testing.T) {
+	dir := t.TempDir()
+	original := procPressureDir
+	procPressureDir = dir
+	t.Cleanup(func() { procPressureDir = original })
+
+	writeFixture(t, filepath.Join(dir, "memory"),
+		"some avg10=41.20 avg60=38.75 avg300=22.10 total=912345678\nfull avg10=30.02 avg60=27.90 avg300=15.43 total=601234567\n")
+	writeFixture(t, filepath.Join(dir, "cpu"),
+		"some avg10=3.10 avg60=2.95 avg300=2.40 total=123456789\n")
+	// io is left out to check that a missing file is reported and does not stop the others.
+
+	out := string(pressure(context.Background()))
+
+	assert.Contains(t, out, "memory some avg10=41.20 avg60=38.75 avg300=22.10 total=912345678\n")
+	assert.Contains(t, out, "memory full avg10=30.02 avg60=27.90 avg300=15.43 total=601234567\n")
+	assert.Contains(t, out, "cpu some avg10=3.10 avg60=2.95 avg300=2.40 total=123456789\n")
+	assert.Contains(t, out, "io failed to read "+filepath.Join(dir, "io"))
+	assert.Less(t, strings.Index(out, "memory some"), strings.Index(out, "cpu some"), "memory is written first")
+}
+
+func TestParseVmstat(t *testing.T) {
+	values := parseVmstat([]byte("nr_free_pages 1000\npgmajfault 42\nbroken\nnot_a_number abc\n\noom_kill 0\n"))
+	assert.Equal(t, map[string]uint64{"nr_free_pages": 1000, "pgmajfault": 42, "oom_kill": 0}, values)
+}
+
+func TestVmstatDelta(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vmstat")
+	clock := time.Date(2026, 11, 18, 10, 0, 0, 0, time.UTC)
+	v := newVmstatDelta(path)
+	v.now = func() time.Time { return clock }
+
+	t.Run("FirstCycleHasTotalsOnly", func(t *testing.T) {
+		writeFixture(t, path, "nr_free_pages 1000\npgmajfault 100\npswpin 10\noom_kill 1\n")
+		out := string(v.collect(context.Background()))
+
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		assert.Equal(t, []string{"field", "total", "delta"}, strings.Fields(lines[0]))
+		assert.Equal(t, []string{"pgmajfault", "100", "-"}, strings.Fields(lines[1]))
+		assert.NotContains(t, out, "nr_free_pages", "only the selected fields are written")
+	})
+
+	t.Run("SecondCycleHasDeltaOverInterval", func(t *testing.T) {
+		clock = clock.Add(5 * time.Minute)
+		writeFixture(t, path, "nr_free_pages 900\npgmajfault 1600\npswpin 10\noom_kill 3\n")
+		out := string(v.collect(context.Background()))
+
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		assert.Equal(t, []string{"field", "total", "delta_300s"}, strings.Fields(lines[0]))
+		assert.Equal(t, []string{"pgmajfault", "1600", "1500"}, strings.Fields(lines[1]))
+		assert.Equal(t, []string{"pswpin", "10", "0"}, strings.Fields(lines[2]))
+		assert.Equal(t, []string{"oom_kill", "3", "2"}, strings.Fields(lines[3]))
+	})
+
+	t.Run("FieldMissingOnThisKernelIsLeftOut", func(t *testing.T) {
+		assert.NotContains(t, string(v.collect(context.Background())), "thp_fault_fallback")
+	})
+
+	t.Run("CounterThatWentBackwardsHasNoDelta", func(t *testing.T) {
+		clock = clock.Add(5 * time.Minute)
+		writeFixture(t, path, "pgmajfault 5\n")
+		lines := strings.Split(strings.TrimSpace(string(v.collect(context.Background()))), "\n")
+		assert.Equal(t, []string{"pgmajfault", "5", "-"}, strings.Fields(lines[1]))
+	})
+
+	t.Run("UnreadableFileIsReported", func(t *testing.T) {
+		missing := newVmstatDelta(filepath.Join(t.TempDir(), "absent"))
+		assert.Contains(t, string(missing.collect(context.Background())), "failed to read")
+	})
+}
+
+// The pressure and vmstat sections are counted as fixed-length sections in the
+// console budget. Their worst case, with every counter at its largest value,
+// must fit the length reserved for them.
+func TestFixedSectionsFitTheirBudget(t *testing.T) {
+	const maxValue = "18446744073709551615"
+
+	dir := t.TempDir()
+	original := procPressureDir
+	procPressureDir = dir
+	t.Cleanup(func() { procPressureDir = original })
+	for _, resource := range pressureResources {
+		writeFixture(t, filepath.Join(dir, resource),
+			"some avg10=100.00 avg60=100.00 avg300=100.00 total="+maxValue+"\n"+
+				"full avg10=100.00 avg60=100.00 avg300=100.00 total="+maxValue+"\n")
+	}
+	assert.LessOrEqual(t, len(pressure(context.Background())), 500, "pressure section")
+
+	var vmstat strings.Builder
+	for _, field := range vmstatFields {
+		fmt.Fprintf(&vmstat, "%s %s\n", field, maxValue)
+	}
+	path := filepath.Join(t.TempDir(), "vmstat")
+	writeFixture(t, path, vmstat.String())
+	v := newVmstatDelta(path)
+	start := time.Now()
+	v.now = func() time.Time { return start }
+	v.collect(context.Background())
+	v.now = func() time.Time { return start.Add(5 * time.Minute) }
+	assert.LessOrEqual(t, len(v.collect(context.Background())), 1100, "vmstat section")
+}
