@@ -129,7 +129,7 @@ func TestModuleNotLoadedSkipsCommand(t *testing.T) {
 		t.Run(tc.bin, func(t *testing.T) {
 			bin := t.TempDir()
 			marker := filepath.Join(t.TempDir(), "ran")
-			require.NoError(t, os.WriteFile(filepath.Join(bin, tc.bin), []byte("#!/bin/sh\ntouch "+marker+"\n"), 0o755))
+			require.NoError(t, os.WriteFile(filepath.Join(bin, tc.bin), []byte("#!/bin/sh\necho ran > "+marker+"\n"), 0o755))
 			t.Setenv("PATH", bin)
 			stubModuleLoaded(t, false)
 

@@ -12,10 +12,10 @@ import (
 
 type IPTables struct{}
 
-// moduleLoaded reports whether a kernel module is loaded on the host, or built
-// in. ipvsadm runs modprobe when ip_vs is absent, and ipset can trigger kernel
-// module autoloading, so neither may run unless its module is already present:
-// a capture must not change kernel state, or its own evidence.
+// moduleLoaded reports whether a kernel module is loaded on the host. ipvsadm
+// runs modprobe when ip_vs is absent, and ipset can trigger kernel module
+// autoloading, so neither may run unless its module is already present: a
+// capture must not change kernel state, or its own evidence.
 var moduleLoaded = func(acc *Accessor, name string) bool {
 	_, err := os.Stat(filepath.Join(acc.cfg.Root, "/sys/module", name))
 	return err == nil
