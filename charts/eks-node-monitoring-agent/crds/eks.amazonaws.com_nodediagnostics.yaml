@@ -40,6 +40,21 @@ spec:
             type: object
           spec:
             properties:
+              autoLogCapture:
+                description: |-
+                  AutoLogCapture configures automatic log capture when a managed node
+                  condition fails. Unlike logCapture and packetCapture, the NodeDiagnostic
+                  that holds this field does not need to be named after a node. Any name
+                  works. If more than one NodeDiagnostic sets this field, the newest one
+                  is used.
+                properties:
+                  bucket:
+                    description: |-
+                      Bucket is the S3 bucket that receives capture bundles. Omit to turn
+                      automatic capture off.
+                    pattern: ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$
+                    type: string
+                type: object
               logCapture:
                 description: |-
                   LogCapture is a definition for a diagnostic task that will package relevant
