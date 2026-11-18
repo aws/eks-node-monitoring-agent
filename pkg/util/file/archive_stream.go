@@ -2,6 +2,7 @@ package file
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"errors"
@@ -10,8 +11,10 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // ErrBundleTooLarge fails the stream when the compressed bundle passes the
@@ -28,6 +31,7 @@ const (
 type SkippedFile struct {
 	Path   string
 	Reason string
+	Err    string
 }
 
 // Stream is a tar.gz of one step folder, produced while it is read.
@@ -98,10 +102,14 @@ func (s *Stream) Skipped() []SkippedFile {
 	return append([]SkippedFile(nil), s.skipped...)
 }
 
-func (s *Stream) skip(rel, reason string) {
+func (s *Stream) skip(rel, reason string, err error) {
+	errText := ""
+	if err != nil {
+		errText = err.Error()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.skipped = append(s.skipped, SkippedFile{Path: rel, Reason: reason})
+	s.skipped = append(s.skipped, SkippedFile{Path: rel, Reason: reason, Err: errText})
 }
 
 // write closes the tar and gzip writers only on success, never deferred:
@@ -133,7 +141,7 @@ func (s *Stream) write(ctx context.Context, w io.Writer, dir string, maxBytes in
 			return addDir(tw, rel, d)
 		case !d.Type().IsRegular():
 			// Not opened at all: opening a named pipe would block.
-			s.skip(rel, skipReasonNotRegular)
+			s.skip(rel, skipReasonNotRegular, nil)
 			return nil
 		}
 		return s.addFile(ctx, tw, filePath, rel, opts)
@@ -141,11 +149,64 @@ func (s *Stream) write(ctx context.Context, w io.Writer, dir string, maxBytes in
 	if err != nil {
 		return err
 	}
+	// One skipped.txt explains the gaps, so a reader can tell why a file is
+	// missing once the node is gone. Omitted when nothing was skipped, so a
+	// normal archive is byte for byte unchanged. It shares the counting path,
+	// so it counts against the cap like any other entry.
+	if err := s.writeSkipped(tw); err != nil {
+		return err
+	}
 	// tar before gzip, so the gzip footer counts against the cap too.
 	if err := tw.Close(); err != nil {
 		return err
 	}
 	return gw.Close()
+}
+
+// maxSkippedBytes caps skipped.txt so a flood of skips cannot bloat the bundle.
+const maxSkippedBytes = 64 << 10
+
+func (s *Stream) writeSkipped(tw *tar.Writer) error {
+	s.mu.Lock()
+	skipped := s.skipped
+	s.mu.Unlock()
+	if len(skipped) == 0 {
+		return nil
+	}
+
+	// The tar header needs the size, so build the whole text first.
+	body := buildSkippedText(skipped)
+	hdr := &tar.Header{
+		Name:     "skipped.txt",
+		Typeflag: tar.TypeReg,
+		Mode:     0o644,
+		Size:     int64(len(body)),
+		ModTime:  time.Now(),
+	}
+	if err := tw.WriteHeader(hdr); err != nil {
+		return err
+	}
+	_, err := tw.Write(body)
+	return err
+}
+
+// buildSkippedText renders one tab-separated line per skipped file and caps the
+// whole text, so a truncated list ends with a count of the rest.
+func buildSkippedText(skipped []SkippedFile) []byte {
+	var buf bytes.Buffer
+	for i, f := range skipped {
+		// Flatten newlines so one skipped file is always one line.
+		errText := strings.NewReplacer("\r", " ", "\n", " ").Replace(f.Err)
+		line := f.Path + "\t" + f.Reason + "\t" + errText + "\n"
+		remaining := len(skipped) - i
+		tail := fmt.Sprintf("... %d more skipped files\n", remaining)
+		if buf.Len()+len(line) > maxSkippedBytes {
+			buf.WriteString(tail)
+			break
+		}
+		buf.WriteString(line)
+	}
+	return buf.Bytes()
 }
 
 func addDir(tw *tar.Writer, rel string, d fs.DirEntry) error {
@@ -166,7 +227,7 @@ func addDir(tw *tar.Writer, rel string, d fs.DirEntry) error {
 func (s *Stream) addFile(ctx context.Context, tw *tar.Writer, filePath, rel string, opts streamOptions) error {
 	f, err := os.Open(filePath)
 	if err != nil {
-		s.skip(rel, skipReasonOpenFailed)
+		s.skip(rel, skipReasonOpenFailed, err)
 		return nil
 	}
 	defer f.Close()
@@ -178,11 +239,11 @@ func (s *Stream) addFile(ctx context.Context, tw *tar.Writer, filePath, rel stri
 	// folder is private to the agent, so that is not expected.
 	info, err := f.Stat()
 	if err != nil {
-		s.skip(rel, skipReasonOpenFailed)
+		s.skip(rel, skipReasonOpenFailed, err)
 		return nil
 	}
 	if !info.Mode().IsRegular() {
-		s.skip(rel, skipReasonNotRegular)
+		s.skip(rel, skipReasonNotRegular, nil)
 		return nil
 	}
 	hdr, err := streamHeader(info, rel)
@@ -194,7 +255,7 @@ func (s *Stream) addFile(ctx context.Context, tw *tar.Writer, filePath, rel stri
 	}
 
 	// Copy exactly the promised size: a file that grew cannot corrupt the tar.
-	r := &ctxReader{ctx: ctx, r: opts.wrapReader(filePath, f)}
+	r := NewContextReader(ctx, opts.wrapReader(filePath, f))
 	if _, err := io.CopyN(tw, r, hdr.Size); err != nil {
 		// Fail the whole archive once a header is out: a short copy would
 		// corrupt the tar, and padding would hide the loss. To pad or skip
@@ -216,20 +277,6 @@ func streamHeader(info fs.FileInfo, name string) (*tar.Header, error) {
 	hdr.Name = name
 	hdr.Uname, hdr.Gname = "", ""
 	return hdr, nil
-}
-
-// ctxReader stops a copy between reads once ctx is done, so a cancelled
-// capture does not finish a large file first.
-type ctxReader struct {
-	ctx context.Context
-	r   io.Reader
-}
-
-func (c *ctxReader) Read(p []byte) (int, error) {
-	if err := c.ctx.Err(); err != nil {
-		return 0, err
-	}
-	return c.r.Read(p)
 }
 
 // countingWriter checks the cap before each write, so no byte past it ever

@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"os"
@@ -276,16 +277,26 @@ func TestStreamTarGzipSkipsUnopenableFile(t *testing.T) {
 	entries := readArchive(t, s)
 	waitDone(t, s)
 
+	// the skipped files are now explained in skipped.txt
+	_, ok := findEntry(entries, "skipped.txt")
+	require.True(t, ok)
+	var regular []archiveEntry
+	for _, e := range entries {
+		if e.name != "skipped.txt" {
+			regular = append(regular, e)
+		}
+	}
 	assert.Equal(t, []archiveEntry{
 		{name: "a.txt", body: "alpha"},
 		{name: "sub/", dir: true},
 		{name: "sub/c.txt", body: "charlie"},
-	}, entries)
+	}, regular)
 	skipped := s.Skipped()
 	require.Len(t, skipped, 2)
 	assert.Equal(t, []string{"locked.txt", "sub/locked.log"}, []string{skipped[0].Path, skipped[1].Path})
 	for _, f := range skipped {
 		assert.NotEmpty(t, f.Reason, f.Path)
+		assert.NotEmpty(t, f.Err, f.Path)
 	}
 }
 
@@ -536,6 +547,123 @@ func readAllWithin(t *testing.T, s *Stream) ([]byte, error) {
 	return data, err
 }
 
+// findEntry returns the archive entry with the given name, or false.
+func findEntry(entries []archiveEntry, name string) (archiveEntry, bool) {
+	for _, e := range entries {
+		if e.name == name {
+			return e, true
+		}
+	}
+	return archiveEntry{}, false
+}
+
+func TestStreamTarGzipSkippedTxtListsGaps(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root can open any file")
+	}
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.txt"), []byte("alpha"))
+	writeFile(t, filepath.Join(dir, "locked.txt"), []byte("secret"))
+	require.NoError(t, os.Chmod(filepath.Join(dir, "locked.txt"), 0))
+	mkfifo(t, filepath.Join(dir, "pipe"))
+
+	s := StreamTarGzip(context.Background(), dir, 0)
+	defer s.Close()
+	data, err := readAllWithin(t, s)
+	require.NoError(t, err)
+	waitDone(t, s)
+
+	entries := readArchive(t, bytes.NewReader(data))
+	entry, ok := findEntry(entries, "skipped.txt")
+	require.True(t, ok, "archive must contain skipped.txt")
+
+	// one line per skipped file: path, reason, error
+	lines := strings.Split(strings.TrimRight(entry.body, "\n"), "\n")
+	byPath := map[string][]string{}
+	for _, line := range lines {
+		cols := strings.Split(line, "\t")
+		require.Len(t, cols, 3, line)
+		byPath[cols[0]] = cols
+	}
+	require.Contains(t, byPath, "locked.txt")
+	require.Contains(t, byPath, "pipe")
+	// the open failure carries the real error text
+	assert.Equal(t, skipReasonOpenFailed, byPath["locked.txt"][1])
+	assert.NotEmpty(t, byPath["locked.txt"][2])
+	// a named pipe is never opened, so its error column is empty
+	assert.Equal(t, skipReasonNotRegular, byPath["pipe"][1])
+	assert.Empty(t, byPath["pipe"][2])
+}
+
+func TestStreamTarGzipNoSkippedTxtWhenNothingSkipped(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.txt"), []byte("alpha"))
+	writeFile(t, filepath.Join(dir, "sub", "b.txt"), []byte("bravo"))
+
+	s := StreamTarGzip(context.Background(), dir, 0)
+	defer s.Close()
+	entries := readArchive(t, s)
+	waitDone(t, s)
+
+	_, ok := findEntry(entries, "skipped.txt")
+	assert.False(t, ok, "a normal archive must have no skipped.txt")
+	assert.Empty(t, s.Skipped())
+}
+
+func TestBuildSkippedTextFlattensNewlines(t *testing.T) {
+	text := buildSkippedText([]SkippedFile{
+		{Path: "a.txt", Reason: skipReasonOpenFailed, Err: "line one\nline two\r\nline three"},
+	})
+	lines := strings.Split(strings.TrimRight(string(text), "\n"), "\n")
+	require.Len(t, lines, 1, "a newline in the error must not split the line")
+	assert.Equal(t, "a.txt\t"+skipReasonOpenFailed+"\tline one line two  line three", lines[0])
+}
+
+func TestBuildSkippedTextTruncatesPastCap(t *testing.T) {
+	longErr := strings.Repeat("x", 1024)
+	var skipped []SkippedFile
+	for i := 0; i < 200; i++ {
+		skipped = append(skipped, SkippedFile{
+			Path:   fmt.Sprintf("file-%03d.log", i),
+			Reason: skipReasonOpenFailed,
+			Err:    longErr,
+		})
+	}
+	text := string(buildSkippedText(skipped))
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	last := lines[len(lines)-1]
+	assert.True(t, strings.HasPrefix(last, "... "), last)
+	assert.True(t, strings.HasSuffix(last, " more skipped files"), last)
+	// the count is the number of files not written as their own line
+	written := len(lines) - 1
+	assert.Equal(t, fmt.Sprintf("... %d more skipped files", len(skipped)-written), last)
+}
+
+func TestStreamTarGzipSkippedTxtCountsTowardSizeCap(t *testing.T) {
+	// one regular file alone, to size a cap that fits before skipped.txt
+	plainDir := t.TempDir()
+	writeFile(t, filepath.Join(plainDir, "a.txt"), []byte("alpha"))
+	plain, err := io.ReadAll(StreamTarGzip(context.Background(), plainDir, 0))
+	require.NoError(t, err)
+
+	// the same regular file plus many skips, so skipped.txt pushes past the cap
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, "a.txt"), []byte("alpha"))
+	for i := 0; i < 500; i++ {
+		mkfifo(t, filepath.Join(dir, fmt.Sprintf("pipe-%03d", i)))
+	}
+
+	// a cap that holds the plain archive but not the skipped.txt entry
+	s := StreamTarGzip(context.Background(), dir, int64(len(plain))+64)
+	defer s.Close()
+	_, err = readAllWithin(t, s)
+	waitDone(t, s)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrBundleTooLarge)
+	assert.NotErrorIs(t, err, io.EOF)
+}
+
 func TestStreamTarGzipSkipsSpecialFiles(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -573,11 +701,23 @@ func TestStreamTarGzipSkipsSpecialFiles(t *testing.T) {
 			require.NoError(t, err)
 			waitDone(t, s)
 
+			entries := readArchive(t, bytes.NewReader(data))
+			// the two special files are now explained in skipped.txt
+			skippedTxt, ok := findEntry(entries, "skipped.txt")
+			require.True(t, ok)
+			assert.Contains(t, skippedTxt.body, "special\t"+skipReasonNotRegular+"\t\n")
+			assert.Contains(t, skippedTxt.body, "sub/special\t"+skipReasonNotRegular+"\t\n")
+			var regular []archiveEntry
+			for _, e := range entries {
+				if e.name != "skipped.txt" {
+					regular = append(regular, e)
+				}
+			}
 			assert.Equal(t, []archiveEntry{
 				{name: "keep.txt", body: "kept"},
 				{name: "sub/", dir: true},
 				{name: "sub/inner.txt", body: "inner"},
-			}, readArchive(t, bytes.NewReader(data)))
+			}, regular)
 			skipped := s.Skipped()
 			require.Len(t, skipped, 2)
 			assert.Equal(t, []string{"special", "sub/special"}, []string{skipped[0].Path, skipped[1].Path})
