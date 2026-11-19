@@ -17,8 +17,10 @@ import (
 	"github.com/google/uuid"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/tools/cache"
 	controllerruntime "sigs.k8s.io/controller-runtime"
+	crcache "sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
@@ -35,6 +37,12 @@ import (
 	fileutil "github.com/aws/eks-node-monitoring-agent/pkg/util/file"
 	netutil "github.com/aws/eks-node-monitoring-agent/pkg/util/net"
 )
+
+// getInformerRetryInterval is how long the capture-cancel-watcher runnable
+// waits between attempts when GetInformer fails with a transient error (e.g.
+// API-discovery i/o timeout at boot before kube-proxy has programmed the
+// kubernetes service DNAT rule).
+const getInformerRetryInterval = 2 * time.Second
 
 type nodeDiagnosticController struct {
 	kubeClient     client.Client
@@ -112,9 +120,26 @@ func (c *nodeDiagnosticController) Register(ctx context.Context, m controllerrun
 	return m.Add(manager.RunnableFunc(func(ctx context.Context) error {
 		logger := log.FromContext(ctx).WithName("capture-cancel-watcher")
 
-		informer, err := mgrCache.GetInformer(ctx, &v1alpha1.NodeDiagnostic{})
-		if err != nil {
-			return fmt.Errorf("failed to get informer for NodeDiagnostic: %w", err)
+		// GetInformer triggers API discovery. At pod startup the kubernetes
+		// service DNAT rule may not yet be programmed by kube-proxy, so the
+		// first attempt can fail with a transient i/o timeout (~30 s). Without
+		// a retry the runnable returns an error that the manager treats as
+		// fatal, causing utilruntime.Must(run()) to panic and the pod to enter
+		// CrashLoopBackOff (issue #193). Poll until success or shutdown.
+		var informer crcache.Informer
+		if err := wait.PollUntilContextCancel(ctx, getInformerRetryInterval, true,
+			func(ctx context.Context) (bool, error) {
+				var err error
+				informer, err = mgrCache.GetInformer(ctx, &v1alpha1.NodeDiagnostic{})
+				if err != nil {
+					logger.Error(err, "transient failure getting NodeDiagnostic informer; will retry")
+					return false, nil // retry
+				}
+				return true, nil // done
+			},
+		); err != nil {
+			// ctx was cancelled (manager shutting down) — not a real error.
+			return nil
 		}
 
 		logger.Info("registering informer event handler for mid-capture cancellation")
