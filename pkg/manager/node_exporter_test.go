@@ -39,6 +39,15 @@ func (r *fakeEventRecorder) Event(object runtime.Object, eventtype, reason, mess
 	})
 }
 
+func (r *fakeEventRecorder) AnnotatedEventf(object runtime.Object, annotations map[string]string, eventtype, reason, messageFmt string, args ...interface{}) {
+	r.events.Items = append(r.events.Items, corev1.Event{
+		ObjectMeta: v1.ObjectMeta{Annotations: annotations},
+		Type:       eventtype,
+		Reason:     reason,
+		Message:    fmt.Sprintf(messageFmt, args...),
+	})
+}
+
 func TestNodeExporter_EventsRecordedImmediately(t *testing.T) {
 	ctx := context.TODO()
 
@@ -82,10 +91,10 @@ func TestNodeExporter_EventsRecordedImmediately(t *testing.T) {
 		Reason:  "TestReason",
 		Message: "TestMessage",
 	}
-	if err := nodeExporter.Info(ctx, testCondition, testConditionType); err != nil {
+	if err := nodeExporter.Info(ctx, testCondition, testConditionType, "test-component"); err != nil {
 		t.Fatal(err)
 	}
-	if err := nodeExporter.Warning(ctx, testCondition, testConditionType); err != nil {
+	if err := nodeExporter.Warning(ctx, testCondition, testConditionType, "test-component"); err != nil {
 		t.Fatal(err)
 	}
 	for _, eventType := range []string{corev1.EventTypeNormal, corev1.EventTypeWarning} {
@@ -375,7 +384,7 @@ func TestNodeExporter_ResolveRestoresReadyState(t *testing.T) {
 	}
 
 	// Resolving an unrelated reason must not recover the condition.
-	recovered, err := nodeExporter.Resolve(ctx, monitor.Condition{Reason: "SomethingElse"}, conditionType)
+	recovered, err := nodeExporter.Resolve(ctx, monitor.Condition{Reason: "SomethingElse"}, conditionType, "test-component")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -384,7 +393,7 @@ func TestNodeExporter_ResolveRestoresReadyState(t *testing.T) {
 	}
 
 	// Resolving the failing reason restores the ready state.
-	recovered, err = nodeExporter.Resolve(ctx, monitor.Condition{Reason: "IPAMDNotRunning"}, conditionType)
+	recovered, err = nodeExporter.Resolve(ctx, monitor.Condition{Reason: "IPAMDNotRunning"}, conditionType, "test-component")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -451,7 +460,7 @@ func TestNodeExporter_ResolveKeepsConditionFalseWhileOtherReasonsRemain(t *testi
 		t.Fatal(err)
 	}
 
-	recovered, err := nodeExporter.Resolve(ctx, monitor.Condition{Reason: "ErrorA"}, conditionType)
+	recovered, err := nodeExporter.Resolve(ctx, monitor.Condition{Reason: "ErrorA"}, conditionType, "test-component")
 	if err != nil {
 		t.Fatal(err)
 	}
