@@ -62,6 +62,79 @@ func TestClassify_currentPolicy(t *testing.T) {
 
 func u64(v uint64) *uint64 { return &v }
 
+// crossCheck returns n GPUs with the given summaries; GPUs past the end get the
+// last one. Every GPU reports each fabric health sub-field as False, unless
+// subFields is non-nil, in which case it is used as given.
+func crossCheck(n int, processesRunning bool, subFields map[string]string, summaries ...string) *FabricCrossCheck {
+	check := &FabricCrossCheck{ProcessesRunning: processesRunning}
+	for i := 0; i < n; i++ {
+		sf := subFields
+		if sf == nil {
+			sf = map[string]string{"bandwidth": "False", "route_recovery_in_progress": "False", "route_unhealthy": "False", "access_timeout_recovery": "False", "incorrect_configuration": "False"}
+		}
+		summary := summaries[min(i, len(summaries)-1)]
+		check.GPUs = append(check.GPUs, GPUFabricHealth{BusID: fmt.Sprintf("00000000:%02x:00.0", 0x51+i), HealthSummary: summary, SubFields: sf})
+	}
+	return check
+}
+
+// TestClassify_fabricCrossCheck covers how nvidia-smi's view changes a mask
+// fault. Mask 0x40 (access_timeout_recovery=True) decodes as a fault.
+func TestClassify_fabricCrossCheck(t *testing.T) {
+	u := func(v uint) *uint { return &v }
+	const fault = "GPU fabric health mask 0x40: access_timeout_recovery=1"
+	const multiFault = "GPU fabric health mask 0x11: degraded_bw=1, route_unhealthy=1"
+	for _, tc := range []struct {
+		name string
+		in   NormalizedSignals
+		want []monitor.Condition
+	}{
+		{"no cross-check => Fatal, message unchanged",
+			NormalizedSignals{FabricHealthMask: u64(0x40)},
+			[]monitor.Condition{{Reason: "NvidiaFabricError", Message: fault, Severity: monitor.SeverityFatal}}},
+		{"summary Healthy and sub-field False on all GPUs => Warning",
+			NormalizedSignals{FabricHealthMask: u64(0x40), GPUCount: u(8), FabricCrossCheck: crossCheck(8, true, nil, "Healthy")},
+			[]monitor.Condition{{Reason: "NvidiaFabricWarning", Message: fault + "; nvidia-smi reports access_timeout_recovery False and fabric health summary Healthy on all 8 GPUs; GPU processes running: yes", Severity: monitor.SeverityWarning}}},
+		{"every faulting sub-field must be False => Warning",
+			NormalizedSignals{FabricHealthMask: u64(0x11), GPUCount: u(8), FabricCrossCheck: crossCheck(8, false, nil, "Healthy")},
+			[]monitor.Condition{{Reason: "NvidiaFabricWarning", Message: multiFault + "; nvidia-smi reports bandwidth, route_unhealthy False and fabric health summary Healthy on all 8 GPUs; GPU processes running: no", Severity: monitor.SeverityWarning}}},
+		{"one of two faulting sub-fields not False => Fatal naming it",
+			NormalizedSignals{FabricHealthMask: u64(0x11), GPUCount: u(1), FabricCrossCheck: crossCheck(1, false, map[string]string{"bandwidth": "False", "route_unhealthy": "N/A"}, "Healthy")},
+			[]monitor.Condition{{Reason: "NvidiaFabricError", Message: multiFault + `; nvidia-smi reports route_unhealthy "N/A" for GPU 00000000:51:00.0`, Severity: monitor.SeverityFatal}}},
+		{"summary Healthy but sub-field True => Fatal",
+			NormalizedSignals{FabricHealthMask: u64(0x40), GPUCount: u(8), FabricCrossCheck: crossCheck(8, true, map[string]string{"access_timeout_recovery": "True"}, "Healthy")},
+			[]monitor.Condition{{Reason: "NvidiaFabricError", Message: fault + `; nvidia-smi reports access_timeout_recovery "True" for GPU 00000000:51:00.0`, Severity: monitor.SeverityFatal}}},
+		{"summary Healthy but sub-field N/A => Fatal",
+			NormalizedSignals{FabricHealthMask: u64(0x40), GPUCount: u(8), FabricCrossCheck: crossCheck(8, true, map[string]string{"access_timeout_recovery": "N/A"}, "Healthy")},
+			[]monitor.Condition{{Reason: "NvidiaFabricError", Message: fault + `; nvidia-smi reports access_timeout_recovery "N/A" for GPU 00000000:51:00.0`, Severity: monitor.SeverityFatal}}},
+		{"summary Healthy but sub-field missing => Fatal",
+			NormalizedSignals{FabricHealthMask: u64(0x40), GPUCount: u(8), FabricCrossCheck: crossCheck(8, true, map[string]string{}, "Healthy")},
+			[]monitor.Condition{{Reason: "NvidiaFabricError", Message: fault + `; nvidia-smi reports access_timeout_recovery "" for GPU 00000000:51:00.0`, Severity: monitor.SeverityFatal}}},
+		{"one GPU not Healthy => Fatal naming it",
+			NormalizedSignals{FabricHealthMask: u64(0x40), GPUCount: u(8), FabricCrossCheck: crossCheck(8, true, nil, "Healthy", "Unhealthy", "Healthy")},
+			[]monitor.Condition{{Reason: "NvidiaFabricError", Message: fault + `; nvidia-smi fabric health summary for GPU 00000000:52:00.0: "Unhealthy"`, Severity: monitor.SeverityFatal}}},
+		{"nvidia-smi lists fewer GPUs than DCGM => Fatal",
+			NormalizedSignals{FabricHealthMask: u64(0x40), GPUCount: u(8), FabricCrossCheck: crossCheck(7, true, nil, "Healthy")},
+			[]monitor.Condition{{Reason: "NvidiaFabricError", Message: fault + "; nvidia-smi lists 7 GPUs but DCGM detected 8 GPUs", Severity: monitor.SeverityFatal}}},
+		// Other GPU faults are never cross-checked.
+		{"double-bit ECC stays Fatal",
+			NormalizedSignals{DoubleBitECC: true, GPUCount: u(8), FabricCrossCheck: crossCheck(8, true, nil, "Healthy")},
+			[]monitor.Condition{{Reason: "NvidiaDoubleBitError", Message: "detected NVIDIA double-bit ECC error", Severity: monitor.SeverityFatal}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := Classify(tc.in)
+			if len(got) != len(tc.want) {
+				t.Fatalf("want %+v, got %+v", tc.want, got)
+			}
+			for i := range tc.want {
+				if got[i].Reason != tc.want[i].Reason || got[i].Message != tc.want[i].Message || got[i].Severity != tc.want[i].Severity {
+					t.Errorf("condition %d: want %+v, got %+v", i, tc.want[i], got[i])
+				}
+			}
+		})
+	}
+}
+
 // TestClassify_xidAllowlist locks the well-known XID allowlist. The expected
 // codes are an explicit literal rather than a loop over WellKnownXidCodes, so an
 // accidental addition to or removal from the allowlist fails here and shows up

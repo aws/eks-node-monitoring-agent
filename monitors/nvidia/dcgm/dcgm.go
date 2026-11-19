@@ -3,12 +3,14 @@
 package dcgm
 
 import (
+	"context"
 	"time"
 
 	dcgmapi "github.com/NVIDIA/go-dcgm/pkg/dcgm"
 
 	"github.com/aws/eks-node-monitoring-agent/internal/pkg/instanceinfo"
 	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/classify"
+	"github.com/aws/eks-node-monitoring-agent/monitors/nvidia/nvidiasmi"
 	"github.com/aws/eks-node-monitoring-agent/pkg/util/renotify"
 )
 
@@ -27,6 +29,7 @@ func NewDCGMSystemWithInstanceTypeInfoProvider(dcgmClient DCGM, diagType dcgmapi
 		fieldWarnings:            renotify.New[string](classify.WarningReNotifyInterval),
 		healthWarnings:           renotify.New[string](classify.WarningReNotifyInterval),
 		now:                      time.Now,
+		fabricCrossCheck:         nvidiasmi.NewReader().Read,
 	}
 }
 
@@ -47,4 +50,7 @@ type DCGMSystem struct {
 
 	// now is the clock for fieldWarnings and healthWarnings; tests replace it.
 	now func() time.Time
+
+	// fabricCrossCheck reads nvidia-smi for a faulting mask; tests replace it.
+	fabricCrossCheck func(context.Context) (*classify.FabricCrossCheck, error)
 }
