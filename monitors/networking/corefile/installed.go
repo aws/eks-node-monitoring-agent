@@ -17,8 +17,8 @@ type unitPropertyGetter interface {
 	Close()
 }
 
-// AgentInstalled reports whether the agent's unit exists. It returns true if
-// systemd can't be asked, so the probe still runs.
+// AgentInstalled reports whether the agent's unit exists and isn't masked. It
+// returns true if systemd can't be asked, so the probe still runs.
 func AgentInstalled(ctx context.Context, log logr.Logger) bool {
 	return agentInstalled(ctx, log, func(ctx context.Context) (unitPropertyGetter, error) {
 		return dbus.NewWithContext(ctx)
@@ -41,8 +41,12 @@ func agentInstalled(ctx context.Context, log logr.Logger, newConn func(context.C
 		log.Info("could not read the Corefile agent's LoadState; probing it anyway", "err", err.Error())
 		return true
 	}
-	if state, _ := property.Value.Value().(string); state == "not-found" {
+	switch state, _ := property.Value.Value().(string); state {
+	case "not-found":
 		log.Info("Corefile agent is not installed on this node; skipping its readyz probe", "unit", AgentUnit)
+		return false
+	case "masked":
+		log.Info("Corefile agent is masked on this node; skipping its readyz probe", "unit", AgentUnit)
 		return false
 	}
 	return true
