@@ -4,10 +4,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"k8s.io/client-go/tools/clientcmd"
@@ -102,22 +104,24 @@ func ping(acc *Accessor) error {
 }
 
 func systemdNetworkConfig(acc *Accessor) error {
+	var merr error
+	dumped := make(map[string]bool)
+
 	// Get active networkd interfaces using networkctl with osext.NewExec
 	interfaces, err := networkutils.GetNetworkInterfaces(acc)
 	if err != nil {
-		// If we have an error getting interfaces, log it
-		return acc.appendOutput("networking/CheckMacAddressPolicy.log",
-			[]byte(fmt.Sprintf("Failed to get network interfaces: %v\n", err)))
+		// If we have an error getting interfaces, log it and carry on
+		merr = errors.Join(merr, acc.appendOutput("networking/CheckMacAddressPolicy.log",
+			[]byte(fmt.Sprintf("Failed to get network interfaces: %v\n", err))))
 	}
 
 	// Make sure the systemd-network directory exists
 	if err := os.MkdirAll(filepath.Join(acc.cfg.Destination, "networking/systemd-network"), 0755); err != nil {
-		return err
+		return errors.Join(merr, err)
 	}
 
 	// Deduplicate by LinkFile to avoid processing the same file multiple times
 	processedLinkFiles := make(map[string]bool)
-	var merr error
 
 	// Process each interface with a LinkFile
 	for _, iface := range interfaces {
@@ -129,11 +133,80 @@ func systemdNetworkConfig(acc *Accessor) error {
 		// Use LinkFile basename as filename to avoid path issues
 		safeFileName := strings.ReplaceAll(filepath.Base(iface.LinkFile), "/", "_")
 		outputPath := filepath.Join("networking/systemd-network", safeFileName)
+		dumped[safeFileName] = true
 
 		// Just dump the entire output to the file
 		merr = errors.Join(merr,
 			acc.CommandOutput([]string{"systemd-analyze", "cat-config", iface.LinkFile},
 				outputPath, CommandOptionsIgnoreFailure))
+	}
+
+	// Also dump the units that no interface is using
+	units, err := networkdUnitFiles(acc)
+	merr = errors.Join(merr, err)
+	return errors.Join(merr, dumpNetworkdUnits(acc, units, dumped))
+}
+
+// networkdConfigDirs are the directories systemd-networkd reads units from, in
+// precedence order. /lib only differs from /usr/lib where /usr isn't merged.
+// see: https://www.freedesktop.org/software/systemd/man/latest/systemd.network.html
+var networkdConfigDirs = []string{
+	"/etc/systemd/network",
+	"/run/systemd/network",
+	"/usr/local/lib/systemd/network",
+	"/usr/lib/systemd/network",
+	"/lib/systemd/network",
+}
+
+// networkdUnitSuffixes are the unit types systemd-networkd loads.
+var networkdUnitSuffixes = []string{".link", ".network", ".netdev"}
+
+// networkdUnitFiles lists the networkd units in networkdConfigDirs, in
+// precedence order, as host paths. Symlinks are listed, not followed: an
+// absolute target would resolve against the agent's filesystem, not the host's.
+func networkdUnitFiles(acc *Accessor) ([]string, error) {
+	var (
+		merr  error
+		units []string
+	)
+	for _, dir := range networkdConfigDirs {
+		entries, err := os.ReadDir(filepath.Join(acc.cfg.Root, dir))
+		if err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				merr = errors.Join(merr, err)
+			}
+			continue
+		}
+		for _, entry := range entries {
+			// drop-in directories are left to systemd-analyze
+			if !entry.Type().IsRegular() && entry.Type()&fs.ModeSymlink == 0 {
+				continue
+			}
+			if !slices.ContainsFunc(networkdUnitSuffixes, func(suffix string) bool {
+				return strings.HasSuffix(entry.Name(), suffix)
+			}) {
+				continue
+			}
+			units = append(units, filepath.Join(dir, entry.Name()))
+		}
+	}
+	return units, merr
+}
+
+// dumpNetworkdUnits dumps the units not already in dumped. units are in
+// precedence order, so only the copy systemd uses is dumped.
+func dumpNetworkdUnits(acc *Accessor, units []string, dumped map[string]bool) error {
+	var merr error
+	for _, unit := range units {
+		name := filepath.Base(unit)
+		if dumped[name] {
+			continue
+		}
+		dumped[name] = true
+		// best-effort: one unreadable unit must not fail the capture
+		merr = errors.Join(merr,
+			acc.CommandOutput([]string{"systemd-analyze", "cat-config", unit},
+				filepath.Join("networking/systemd-network", name), CommandOptionsIgnoreFailure))
 	}
 	return merr
 }
