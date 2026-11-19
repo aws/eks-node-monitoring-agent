@@ -247,6 +247,10 @@ var (
 		template:        "EFAErrorMetric",
 		defaultSeverity: "Warning",
 	}
+	EFAPCIeLinkDegraded = ReasonMeta{
+		template:        "EFAPCIeLinkDegraded",
+		defaultSeverity: "Warning",
+	}
 	EFARailCountMismatch = ReasonMeta{
 		template:        "EFARailCountMismatch",
 		defaultSeverity: "Warning",
@@ -438,6 +442,7 @@ var byName = map[string]ReasonMeta{
 	"CoreDNSCorefileValidationFailed":      CoreDNSCorefileValidationFailed,
 	"EFADriverNotLoaded":                   EFADriverNotLoaded,
 	"EFAErrorMetric":                       EFAErrorMetric,
+	"EFAPCIeLinkDegraded":                  EFAPCIeLinkDegraded,
 	"EFARailCountMismatch":                 EFARailCountMismatch,
 	"IPAMDInconsistentState":               IPAMDInconsistentState,
 	"IPAMDNoIPs":                           IPAMDNoIPs,
