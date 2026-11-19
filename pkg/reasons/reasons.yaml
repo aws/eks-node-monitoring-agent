@@ -317,6 +317,14 @@ NetworkingReady:
       instance, for three consecutive checks. A device is available when it is
       bound to the efa driver and its port is ACTIVE and LinkUp. Missing rails
       may reduce the network bandwidth available across rails.
+  EFAPCIeLinkDegraded:
+    Template: 'EFAPCIeLinkDegraded'
+    DefaultSeverity: 'Warning'
+    Description: >-
+      The PCIe link of an EFA device trained to a lower speed or width than
+      both the device and the PCIe port it is connected to support, for three
+      consecutive checks. The device keeps working without errors, but its bandwidth is
+      reduced.
   CoreDNSCorefileValidationFailed:
     Template: 'CoreDNSCorefileValidationFailed'
     DefaultSeverity: 'Warning'

@@ -99,6 +99,12 @@ type NetworkingMonitor struct {
 	// efaRailCountDegradedChecks counts consecutive checks that found fewer
 	// available EFA devices than attached ones.
 	efaRailCountDegradedChecks int
+	// efaPCIeLinkDegradedChecks counts, per EFA PCI address, consecutive
+	// checks that found the device's PCIe link degraded.
+	efaPCIeLinkDegradedChecks map[string]int
+	// efaPCIeLinkNotified rate-limits the EFAPCIeLinkDegraded Warning, keyed
+	// by its message so a change in the degraded devices is reported.
+	efaPCIeLinkNotified *renotify.Tracker[string]
 
 	// ipRulesRecheckDelay and getIPState are overridable for tests.
 	ipRulesRecheckDelay time.Duration
@@ -176,11 +182,13 @@ func (m *NetworkingMonitor) isInterfaceExcluded(name string) bool {
 
 func NewNetworkingMonitor(options ...Option) *NetworkingMonitor {
 	m := &NetworkingMonitor{
-		exec:                 osext.NewExec(config.HostRoot()),
-		runtimeContext:       config.GetRuntimeContext(),
-		efaDriverNotified:    renotify.New[int](efaReNotifyInterval),
-		efaRailCountNotified: renotify.New[efaRailCount](efaReNotifyInterval),
-		ipRulesRecheckDelay:  defaultIPRulesRecheckDelay,
+		exec:                      osext.NewExec(config.HostRoot()),
+		runtimeContext:            config.GetRuntimeContext(),
+		efaDriverNotified:         renotify.New[int](efaReNotifyInterval),
+		efaRailCountNotified:      renotify.New[efaRailCount](efaReNotifyInterval),
+		efaPCIeLinkDegradedChecks: make(map[string]int),
+		efaPCIeLinkNotified:       renotify.New[string](efaReNotifyInterval),
+		ipRulesRecheckDelay:       defaultIPRulesRecheckDelay,
 	}
 	m.getIPState = m.readIPState
 
@@ -1195,7 +1203,7 @@ func (m *NetworkingMonitor) checkIPTables(rules []iptables.IPTablesRule) (merr e
 	return merr
 }
 
-// ~~~~ EFA devices (EFADriverNotLoaded, EFARailCountMismatch) ~~~~
+// ~~~~ EFA devices (EFADriverNotLoaded, EFARailCountMismatch, EFAPCIeLinkDegraded) ~~~~
 
 // efaReNotifyInterval is how often an unchanged EFA device Warning may be
 // reported. The device counts rarely change after boot, and every NMA Warning
@@ -1223,6 +1231,14 @@ func (m *NetworkingMonitor) handleEFADevices(ctx context.Context, now time.Time)
 		// EFA is only available on EC2 instances.
 		return nil
 	}
+	// the PCIe link check does not depend on the device counts, so a failure
+	// reading one does not skip the other.
+	return errors.Join(m.handleEFADeviceCounts(ctx, now), m.handleEFAPCIeLinks(ctx, now))
+}
+
+// handleEFADeviceCounts reads the EFA device counts for EFADriverNotLoaded and
+// EFARailCountMismatch.
+func (m *NetworkingMonitor) handleEFADeviceCounts(ctx context.Context, now time.Time) error {
 	pciDevices, err := efa.CountEFAPCIDevices()
 	if err != nil {
 		return fmt.Errorf("failed to count EFA PCI devices: %w", err)
@@ -1232,6 +1248,52 @@ func (m *NetworkingMonitor) handleEFADevices(ctx context.Context, now time.Time)
 		return fmt.Errorf("failed to count active EFA devices: %w", err)
 	}
 	return m.checkEFADevices(ctx, pciDevices, activeCount, now)
+}
+
+// handleEFAPCIeLinks reads the EFA PCIe links for EFAPCIeLinkDegraded.
+func (m *NetworkingMonitor) handleEFAPCIeLinks(ctx context.Context, now time.Time) error {
+	links, err := efa.EFAPCIeLinks()
+	if err != nil {
+		return fmt.Errorf("failed to read EFA PCIe links: %w", err)
+	}
+	return m.checkEFAPCIeLinks(ctx, links, now)
+}
+
+// efaPCIeLinkDegradedThreshold is how many consecutive checks must find an EFA
+// device's PCIe link degraded before EFAPCIeLinkDegraded is reported. A link
+// can retrain while the device is reset, so a single reading is not reported.
+const efaPCIeLinkDegradedThreshold = 3
+
+// checkEFAPCIeLinks reports EFAPCIeLinkDegraded when the PCIe link of an EFA
+// device has stayed below what it is capable of for efaPCIeLinkDegradedThreshold
+// consecutive checks. All such devices are reported in one Warning.
+func (m *NetworkingMonitor) checkEFAPCIeLinks(ctx context.Context, links []efa.EFAPCIeLink, now time.Time) error {
+	degradedChecks := make(map[string]int, len(links))
+	var details []string
+	for _, link := range links {
+		if !link.Degraded() {
+			continue
+		}
+		checks := m.efaPCIeLinkDegradedChecks[link.Address] + 1
+		degradedChecks[link.Address] = checks
+		if checks >= efaPCIeLinkDegradedThreshold {
+			details = append(details, fmt.Sprintf("%s is %s, capable of %s", link.Address, link.Current, link.Capable))
+		}
+	}
+	// devices that are healthy again, or gone, start counting from zero.
+	m.efaPCIeLinkDegradedChecks = degradedChecks
+	if len(details) == 0 {
+		m.efaPCIeLinkNotified.Reset()
+		return nil
+	}
+	slices.Sort(details)
+	message := "EFA PCIe link degraded: " + strings.Join(details, "; ")
+	return notifyEFADevices(ctx, m.manager, m.efaPCIeLinkNotified, message, now,
+		reasons.EFAPCIeLinkDegraded.
+			Builder().
+			Message(message).
+			Build(),
+	)
 }
 
 // checkEFADevices compares the EFA devices attached to the instance, which are
