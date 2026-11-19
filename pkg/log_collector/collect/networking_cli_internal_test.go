@@ -4,11 +4,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/go-logr/logr"
+	"github.com/go-logr/logr/funcr"
 )
 
 const (
@@ -97,28 +99,77 @@ func TestChooseNetworkPolicyCLI(t *testing.T) {
 	}
 }
 
-// uniqueMapIDs must dedup, drop blanks, and sort so the bundle is deterministic.
-func TestUniqueMapIDs(t *testing.T) {
+// policyMapIDs must route cp_* maps apart from ingress_map/egress_map (they decode
+// with different na-cli subcommands), ignore every other map, dedup, drop blank IDs,
+// and sort so the bundle is deterministic.
+func TestPolicyMapIDs(t *testing.T) {
 	loaded := strings.Join([]string{
 		"Map Name:  ingress_map",
 		"Map ID:  21",
 		"Map Name:  aws_conntrack_map",
 		"Map ID:  18",
+		"Map Name:  cp_egress_map",
+		"Map ID:  30",
 		"Map Name:  policy_events",
 		"Map ID:  19",
-		"Map Name:  aws_conntrack_map", // same global map referenced again
-		"Map ID:  18",
+		"Map Name:  egress_map",
+		"Map ID:  9",
+		"Map Name:  cp_ingress_map",
+		"Map ID:  25",
+		"Map Name:  ingress_map", // same map referenced again
+		"Map ID:  21",
+		"Map ID:  77", // no preceding name (consumed by the line above): not a policy map
 		"garbage line with no id",
+		"Map Name:  ingress_map",
 		"Map ID:  ", // blank id, must be skipped
 	}, "\n")
-	got := uniqueMapIDs(loaded)
-	want := []string{"18", "19", "21"} // deduped (18 once) + sorted
-	if len(got) != len(want) {
-		t.Fatalf("uniqueMapIDs = %v, want %v", got, want)
+	maps, cpMaps := policyMapIDs(loaded)
+	if want := []string{"21", "9"}; !reflect.DeepEqual(maps, want) {
+		t.Errorf("maps = %v, want %v", maps, want)
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("uniqueMapIDs[%d] = %q, want %q (full %v)", i, got[i], want[i], got)
+	if want := []string{"25", "30"}; !reflect.DeepEqual(cpMaps, want) {
+		t.Errorf("cpMaps = %v, want %v", cpMaps, want)
+	}
+}
+
+// dumpMaps must run the given subcommand per ID, and a failing dump must be
+// recorded in the output file (not discarded) without failing the capture.
+func TestDumpMapsRecordsFailure(t *testing.T) {
+	bin, dest := t.TempDir(), t.TempDir()
+	cli := filepath.Join(bin, "na-cli")
+	script := "#!/bin/sh\n" +
+		"[ \"$2\" = dump-cp-maps ] || exit 3\n" + // only the cp subcommand is valid here
+		"[ \"$3\" = 2 ] && exit 1\n" +
+		"echo \"dumped $3\"\n"
+	if err := os.WriteFile(cli, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	acc, err := NewAccessor(context.Background(), Config{Root: "/", Destination: dest, CommandTimeout: 5 * time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var logged []string
+	acc.logger = funcr.New(func(prefix, args string) { logged = append(logged, args) }, funcr.Options{})
+
+	if err := dumpMaps(acc, cli, "dump-cp-maps", []string{"1", "2"}, ebpfCPMapsDataFile); err != nil {
+		t.Fatalf("a failed dump must be best-effort (recorded, not returned); got %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(dest, ebpfCPMapsDataFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(data)
+	// the failure must also reach the agent log, not only the bundle
+	if len(logged) != 1 || !strings.Contains(logged[0], "map dump failed") || !strings.Contains(logged[0], `"mapID"="2"`) {
+		t.Errorf("want exactly one 'map dump failed' log for map 2, got %q", logged)
+	}
+	for _, want := range []string{
+		"*** EBPF map data for Map ID: 1 ***\ndumped 1\n",
+		"*** EBPF map data for Map ID: 2 ***\n" + mapDumpFailedLinePrefix + " Map ID: 2:",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output missing %q; got:\n%s", want, got)
 		}
 	}
 }
