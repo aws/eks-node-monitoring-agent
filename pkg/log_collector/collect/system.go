@@ -27,7 +27,36 @@ func (s System) Collect(acc *Accessor) error {
 		networking(acc),
 		bottlerocket(acc),
 		reboots(acc),
+		largeEnvironments(acc),
 	)
+}
+
+const largeEnvironmentThreshold = 1000
+
+func largeEnvironments(acc *Accessor) error {
+	environPaths, err := filepath.Glob(filepath.Join(acc.cfg.Root, "/proc/[0-9]*/environ"))
+	if err != nil {
+		return err
+	}
+	var buf bytes.Buffer
+	buf.WriteString("PID\tCount\n")
+	for _, environPath := range environPaths {
+		data, err := os.ReadFile(environPath)
+		if err != nil {
+			continue
+		}
+		count := 0
+		for _, entry := range bytes.Split(data, []byte{0}) {
+			if len(entry) > 0 {
+				count++
+			}
+		}
+		if count > largeEnvironmentThreshold {
+			pid := filepath.Base(filepath.Dir(environPath))
+			buf.WriteString(fmt.Sprintf("%s\t%d\n", pid, count))
+		}
+	}
+	return acc.WriteOutput("system/large_environments.txt", buf.Bytes())
 }
 
 func top(acc *Accessor) error {

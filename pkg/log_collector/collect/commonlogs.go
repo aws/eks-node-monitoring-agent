@@ -23,6 +23,7 @@ var DefaultVarLogFiles = []string{
 	"cloud-init-output.log",
 	"user-data.log",
 	"kube-proxy.log",
+	"unattended-upgrades",
 }
 
 var DefaultPodLogPatterns = []string{

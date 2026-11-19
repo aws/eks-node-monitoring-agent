@@ -41,6 +41,7 @@ var collectorMap = map[v1alpha1.LogCategory][]collect.Collector{
 				"cloud-init-output.log",
 				"kube-proxy.log",
 				"user-data.log",
+				"unattended-upgrades",
 			},
 		},
 		&collect.Instance{},
