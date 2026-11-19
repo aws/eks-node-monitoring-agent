@@ -1,0 +1,32 @@
+695 638 252:0 / / ro,relatime shared:327 master:1 - erofs /dev/root ro,seclabel,user_xattr,acl,cache_strategy=readaround
+696 695 0:6 / /dev rw,relatime shared:328 master:2 - devtmpfs devtmpfs rw,seclabel,size=7835780k,nr_inodes=1958945,mode=755
+703 695 0:23 / /sys ro,nosuid,nodev,noexec,relatime shared:333 master:6 - sysfs sysfs rw,seclabel
+714 695 0:26 / /run rw,nosuid,nodev,noexec shared:344 master:13 - tmpfs tmpfs rw,seclabel,size=3146492k,nr_inodes=819200,mode=755
+720 695 0:31 / /etc rw,nosuid,nodev,noexec,noatime shared:348 master:14 - tmpfs tmpfs rw,context=system_u:object_r:etc_t:s0,mode=755
+725 695 0:34 / /tmp rw,nosuid,nodev,noexec shared:353 master:20 - tmpfs tmpfs rw,seclabel,nr_inodes=1048576
+727 695 259:5 / /boot ro,nosuid,nodev,noexec,noatime shared:355 - ext4 /dev/nvme0n1p3 ro,seclabel
+728 695 259:9 / /.bottlerocket rw,nosuid,nodev,noexec,noatime shared:356 - ext4 /dev/nvme0n1p7 rw,context=system_u:object_r:private_t:s0
+729 695 259:12 / /local rw,nosuid,nodev,noatime shared:357 - xfs /dev/nvme1n1p1 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+730 729 252:0 /srv /local/mnt ro,nosuid,nodev,noexec,relatime shared:358 - erofs /dev/root ro,seclabel,user_xattr,acl,cache_strategy=readaround
+731 729 252:0 /srv /local/opt ro,nosuid,nodev,noexec,relatime shared:359 - erofs /dev/root ro,seclabel,user_xattr,acl,cache_strategy=readaround
+732 729 252:0 /srv /local/var ro,nosuid,nodev,noexec,relatime shared:360 - erofs /dev/root ro,seclabel,user_xattr,acl,cache_strategy=readaround
+733 695 259:12 /mnt /mnt rw,nosuid,nodev,noatime shared:361 master:167 - xfs /dev/nvme1n1p1 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+734 733 259:2 / /mnt/.ephemeral rw,nosuid,nodev,noatime shared:362 - xfs /dev/nvme2n1 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+735 734 252:0 /srv /mnt/.ephemeral/._var_lib_containerd ro,nosuid,nodev,noexec,relatime shared:363 - erofs /dev/root ro,seclabel,user_xattr,acl,cache_strategy=readaround
+736 734 252:0 /srv /mnt/.ephemeral/._var_lib_soci-snapshotter ro,nosuid,nodev,noexec,relatime shared:364 - erofs /dev/root ro,seclabel,user_xattr,acl,cache_strategy=readaround
+737 734 252:0 /srv /mnt/.ephemeral/._var_log_pods ro,nosuid,nodev,noexec,relatime shared:365 - erofs /dev/root ro,seclabel,user_xattr,acl,cache_strategy=readaround
+738 734 252:0 /srv /mnt/.ephemeral/._var_lib_kubelet ro,nosuid,nodev,noexec,relatime shared:366 - erofs /dev/root ro,seclabel,user_xattr,acl,cache_strategy=readaround
+739 695 259:12 /opt /opt rw,nosuid,nodev,noatime shared:367 master:191 - xfs /dev/nvme1n1p1 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+740 739 0:53 / /opt/cni rw,nosuid,nodev,noatime shared:368 master:212 - overlay overlay rw,context=system_u:object_r:cni_exec_t:s0,lowerdir=/usr/libexec/cni,upperdir=/var/lib/cni-plugins/.overlay/upper,workdir=/var/lib/cni-plugins/.overlay/work,uuid=on
+743 695 259:12 /var /var rw,nosuid,nodev,noatime shared:371 master:196 - xfs /dev/nvme1n1p1 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+744 743 259:9 / /var/lib/bottlerocket rw,nosuid,nodev,noexec,noatime shared:372 master:201 - ext4 /dev/nvme0n1p7 rw,context=system_u:object_r:private_t:s0
+745 743 252:0 /x86_64-bottlerocket-linux-gnu/sys-root/usr/share/bottlerocket/kernel-devel /var/lib/kernel-devel/.overlay/lower ro,relatime shared:373 master:1 - erofs /dev/root ro,seclabel,user_xattr,acl,cache_strategy=readaround
+746 743 259:2 /._var_lib_containerd /var/lib/containerd rw,nosuid,nodev,noatime shared:374 master:115 - xfs /dev/nvme2n1 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+747 743 259:2 /._var_lib_kubelet /var/lib/kubelet rw,nosuid,nodev,noatime shared:375 master:309 - xfs /dev/nvme2n1 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+748 743 259:2 /._var_lib_soci-snapshotter /var/lib/soci-snapshotter rw,nosuid,nodev,noatime shared:376 master:315 - xfs /dev/nvme2n1 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+749 743 259:2 /._var_log_pods /var/log/pods rw,nosuid,nodev,noatime shared:377 master:321 - xfs /dev/nvme2n1 rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota
+701 695 0:67 / /proc rw,nosuid,nodev,noexec,relatime shared:379 - proc proc rw
+759 701 0:67 /sys /proc/sys ro,nosuid,nodev,noexec,relatime shared:388 - proc proc rw
+716 714 0:26 /systemd/inaccessible/dir /run/credentials ro,nosuid,nodev,noexec shared:346 master:13 - tmpfs tmpfs rw,seclabel,size=3146492k,nr_inodes=819200,mode=755
+1388 747 0:74 / /var/lib/kubelet/pods/e5069da1-f793-4746-81c2-543ecafd0540/volumes/kubernetes.io~projected/kube-api-access-kbx7n rw,relatime shared:717 master:663 - tmpfs tmpfs rw,seclabel,size=14661344k,noswap
+1411 714 0:4 net:[4026532842] /run/netns/cni-8a65adf7-d2f1-8b38-709a-8ba31b50c192 rw shared:729 master:723 - nsfs nsfs rw

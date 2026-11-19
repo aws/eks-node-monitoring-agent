@@ -2,10 +2,15 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/moby/sys/mountinfo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -15,9 +20,10 @@ import (
 )
 
 type mockManager struct {
-	err error
-	obs observer.BaseObserver
-	res chan monitor.Condition
+	err       error
+	notifyErr error
+	obs       observer.BaseObserver
+	res       chan monitor.Condition
 }
 
 func (m *mockManager) Subscribe(resource.Type, []resource.Part) (<-chan string, error) {
@@ -25,6 +31,9 @@ func (m *mockManager) Subscribe(resource.Type, []resource.Part) (<-chan string, 
 }
 
 func (m *mockManager) Notify(ctx context.Context, condition monitor.Condition) error {
+	if m.notifyErr != nil {
+		return m.notifyErr
+	}
 	m.res <- condition
 	return nil
 }
@@ -229,4 +238,179 @@ func TestBlockDeviceIOErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSelectPartitions(t *testing.T) {
+	fixture := func(name string) string {
+		data, err := os.ReadFile(filepath.Join("testdata", name))
+		require.NoError(t, err)
+		return string(data)
+	}
+	allExist := func(string) bool { return true }
+	allPaths := []string{"/", "/var", "/var/log", "/var/lib/cni"}
+	varPaths := []string{"/var", "/var/log", "/var/lib/cni"}
+
+	for _, tt := range []struct {
+		name     string
+		mounts   string
+		hostRoot string
+		exists   func(string) bool
+		want     []partition
+	}{
+		{
+			name:     "DaemonSet on AL2023, kubelet on a RAID0 of instance store disks",
+			mounts:   fixture("mountinfo-al2023-daemonset-raid0.txt"),
+			hostRoot: "/host",
+			want: []partition{
+				{device: deviceNumber{259, 2}, source: "/dev/nvme0n1p1", mountpoint: "/host", paths: allPaths},
+			},
+		},
+		{
+			name: "DaemonSet on AL2023, with a local volume and a pod volume seen through the kubelet bind mount",
+			mounts: fixture("mountinfo-al2023-daemonset-raid0.txt") +
+				"2001 1227 259:5 / /host/mnt/disks/ssd0 rw,relatime master:901 - xfs /dev/nvme2n1 rw\n" +
+				"2002 1285 259:6 / /host/var/lib/kubelet/pods/0a1b/volumes/kubernetes.io~csi/pvc-0a1b/mount rw,relatime master:902 - ext4 /dev/nvme3n1 rw\n" +
+				"2003 1281 259:6 / /host/mnt/k8s-disks/0/kubelet/pods/0a1b/volumes/kubernetes.io~csi/pvc-0a1b/mount rw,relatime master:902 - ext4 /dev/nvme3n1 rw\n",
+			hostRoot: "/host",
+			want: []partition{
+				{device: deviceNumber{259, 2}, source: "/dev/nvme0n1p1", mountpoint: "/host", paths: allPaths},
+			},
+		},
+		{
+			name:     "DaemonSet on Bottlerocket, kubelet on ephemeral storage",
+			mounts:   fixture("mountinfo-bottlerocket-daemonset-ephemeral.txt"),
+			hostRoot: "/host",
+			want: []partition{
+				{device: deviceNumber{259, 17}, source: "/dev/nvme1n1p1", mountpoint: "/host/var", paths: varPaths},
+			},
+		},
+		{
+			name:     "host service on Bottlerocket, kubelet on ephemeral storage",
+			mounts:   fixture("mountinfo-bottlerocket-service-ephemeral.txt"),
+			hostRoot: "/",
+			want: []partition{
+				{device: deviceNumber{259, 12}, source: "/dev/nvme1n1p1", mountpoint: "/var", paths: varPaths},
+			},
+		},
+		{
+			name: "/var/log on its own partition, mounted over",
+			mounts: "25 1 259:1 / / rw,relatime - xfs /dev/nvme0n1p1 rw\n" +
+				"26 25 259:2 / /var/log rw,relatime - xfs /dev/nvme1n1 rw\n" +
+				"27 26 259:3 / /var/log rw,relatime - xfs /dev/nvme2n1 rw\n" +
+				"28 25 259:4 /kubelet /var/lib/kubelet rw,relatime - xfs /dev/nvme3n1 rw\n" +
+				"29 25 259:4 /containerd /var/lib/containerd rw,relatime - xfs /dev/nvme3n1 rw\n",
+			hostRoot: "/",
+			want: []partition{
+				{device: deviceNumber{259, 1}, source: "/dev/nvme0n1p1", mountpoint: "/", paths: []string{"/", "/var", "/var/lib/cni"}},
+				{device: deviceNumber{259, 3}, source: "/dev/nvme2n1", mountpoint: "/var/log", paths: []string{"/var/log"}},
+			},
+		},
+		{
+			name: "container runtime on its own partition",
+			mounts: "25 1 259:1 / / rw,relatime - xfs /dev/nvme0n1p1 rw\n" +
+				"26 25 259:2 / /var rw,relatime - xfs /dev/nvme1n1 rw\n" +
+				"27 26 259:3 / /var/lib/kubelet rw,relatime - xfs /dev/nvme2n1 rw\n",
+			hostRoot: "/",
+			want: []partition{
+				{device: deviceNumber{259, 1}, source: "/dev/nvme0n1p1", mountpoint: "/", paths: []string{"/"}},
+			},
+		},
+		{
+			name:     "kubelet on the root filesystem",
+			mounts:   "25 1 259:1 / / rw,relatime - xfs /dev/nvme0n1p1 rw\n",
+			hostRoot: "/",
+		},
+		{
+			name: "read-only mount of a writable filesystem",
+			mounts: "25 1 259:1 / / ro,relatime - xfs /dev/nvme0n1p1 rw\n" +
+				"26 25 259:2 /kubelet /var/lib/kubelet ro,relatime - xfs /dev/nvme1n1 rw\n" +
+				"27 25 259:2 /containerd /var/lib/containerd ro,relatime - xfs /dev/nvme1n1 rw\n",
+			hostRoot: "/",
+			want: []partition{
+				{device: deviceNumber{259, 1}, source: "/dev/nvme0n1p1", mountpoint: "/", paths: allPaths},
+			},
+		},
+		{
+			name:     "missing paths",
+			mounts:   "25 1 259:1 / / rw,relatime - xfs /dev/nvme0n1p1 rw\n",
+			hostRoot: "/",
+			exists: func(path string) bool {
+				return !strings.HasPrefix(path, "/var/lib/")
+			},
+			want: []partition{
+				{device: deviceNumber{259, 1}, source: "/dev/nvme0n1p1", mountpoint: "/", paths: []string{"/", "/var", "/var/log"}},
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			mounts, err := mountinfo.GetMountsFromReader(strings.NewReader(tt.mounts), nil)
+			require.NoError(t, err)
+			exists := tt.exists
+			if exists == nil {
+				exists = allExist
+			}
+			assert.Equal(t, tt.want, selectPartitions(mounts, tt.hostRoot, exists))
+		})
+	}
+}
+
+func TestCheckPartition(t *testing.T) {
+	mgr := &mockManager{res: make(chan monitor.Condition, 10)}
+	mon := NewStorageMonitor()
+	mon.manager = mgr
+	now := time.Unix(0, 0)
+	mon.now = func() time.Time { return now }
+	var spaceUsed, inodesUsed float64
+	var usageErr error
+	var measured string
+	mon.partitionUsage = func(path string) (float64, float64, error) {
+		measured = path
+		return spaceUsed, inodesUsed, usageErr
+	}
+	p := partition{device: deviceNumber{259, 17}, source: "/dev/nvme1n1p1", mountpoint: "/host/var", paths: []string{"/var", "/var/log"}}
+
+	check := func(space, inodes float64) []string {
+		t.Helper()
+		spaceUsed, inodesUsed = space, inodes
+		require.NoError(t, mon.checkPartition(p))
+		var messages []string
+		for {
+			select {
+			case c := <-mgr.res:
+				assert.Equal(t, "PartitionNearlyFull", c.Reason)
+				assert.Equal(t, monitor.SeverityWarning, c.Severity)
+				messages = append(messages, c.Message)
+			default:
+				return messages
+			}
+		}
+	}
+
+	assert.Empty(t, check(0.90, 0.95), "at the thresholds")
+	assert.Equal(t, "/host/var", measured)
+	assert.Equal(t, []string{"/dev/nvme1n1p1 holding /var, /var/log has 8.0% of its space free"}, check(0.92, 0.5))
+	assert.Empty(t, check(0.93, 0.5), "unchanged within the re-notify interval")
+
+	now = now.Add(partitionWarningReNotifyInterval)
+	assert.Len(t, check(0.93, 0.5), 1, "unchanged after the re-notify interval")
+	assert.Equal(t, []string{"/dev/nvme1n1p1 holding /var, /var/log has 7.0% of its space and 3.0% of its inodes free"}, check(0.93, 0.97), "inodes crossed as well")
+	assert.Equal(t, []string{"/dev/nvme1n1p1 holding /var, /var/log has 3.0% of its inodes free"}, check(0.5, 0.97), "space recovered")
+
+	assert.Empty(t, check(0.5, 0.5), "recovered")
+	assert.Len(t, check(0.92, 0.5), 1, "crossed again after recovering")
+
+	assert.Empty(t, check(0.5, 0.5), "recovered")
+	mgr.notifyErr = errors.New("notify failed")
+	spaceUsed = 0.92
+	assert.Error(t, mon.checkPartition(p))
+	mgr.notifyErr = nil
+	assert.Len(t, check(0.92, 0.5), 1, "retried after a failed notification")
+
+	other := partition{device: deviceNumber{259, 18}, source: "/dev/nvme2n1", mountpoint: "/host/var/log", paths: []string{"/var/log"}}
+	require.NoError(t, mon.checkPartition(other))
+	assert.Len(t, mgr.res, 1, "another partition is tracked separately")
+	<-mgr.res
+
+	usageErr = errors.New("statfs failed")
+	assert.Error(t, mon.checkPartition(p))
 }
