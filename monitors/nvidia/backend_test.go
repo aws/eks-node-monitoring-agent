@@ -62,6 +62,7 @@ func (d *countingDCGM) Reconcile(ctx context.Context) (bool, error) {
 
 // recordingManager collects every condition the monitor sends.
 type recordingManager struct {
+	monitor.Manager
 	obs   observer.BaseObserver
 	conds chan monitor.Condition
 }

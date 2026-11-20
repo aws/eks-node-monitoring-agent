@@ -31,6 +31,41 @@ type mockManager struct {
 	err error
 	obs observer.BaseObserver
 	res chan monitor.Condition
+	// insights holds the active insights by the ENI ID they're about.
+	insights map[string]monitor.Insight
+	// replacedGroups counts ReplaceInsights calls, so a test can distinguish
+	// a reconcile that published nothing from no reconcile at all.
+	replacedGroups int
+}
+
+// noInsights is the reportInsight of a check whose insights aren't asserted.
+func noInsights(monitor.Insight, string) {}
+
+// ReplaceInsights records the insights by ENI ID, replacing only the group it
+// was called for, as the real publisher does. replacedGroups counts the calls
+// so a test can tell "published nothing" from "never called".
+func (m *mockManager) ReplaceInsights(insight monitor.Insight, resourceValues []string) {
+	if m.insights == nil {
+		m.insights = map[string]monitor.Insight{}
+	}
+	for eniID, published := range m.insights {
+		if published == insight {
+			delete(m.insights, eniID)
+		}
+	}
+	for _, resourceValue := range resourceValues {
+		m.insights[resourceValue] = insight
+	}
+	m.replacedGroups++
+}
+
+// insightENIIDs returns the ENI IDs of the active insights.
+func (m *mockManager) insightENIIDs() []string {
+	var eniIDs []string
+	for eniID := range m.insights {
+		eniIDs = append(eniIDs, eniID)
+	}
+	return eniIDs
 }
 
 type mockExec struct {
@@ -71,6 +106,7 @@ func (m *mockManager) Notify(ctx context.Context, condition monitor.Condition) e
 
 // failingNotifyManager returns a distinct error from every Notify call.
 type failingNotifyManager struct {
+	monitor.Manager
 	errs []error
 }
 
@@ -331,7 +367,7 @@ func TestNetworkingPeriodic(t *testing.T) {
 			obs: observer.BaseObserver{},
 			res: make(chan monitor.Condition, 5),
 		}
-		ethtoolMonitor := makeEthtoolMonitor(mockManager)
+		ethtoolMonitor := makeEthtoolMonitor(mockManager, fakeENIs{})
 		mon.Register(ctx, mockManager)
 		ethtoolBytes, err := os.ReadFile("testdata/ethtool-ens5.txt")
 		if !assert.NoError(t, err) {
@@ -341,9 +377,11 @@ func TestNetworkingPeriodic(t *testing.T) {
 		if !assert.NoError(t, err) {
 			return
 		}
-		ethtoolMonitor.checkEthtool("ens5", stats)
+		if !assert.NoError(t, ethtoolMonitor.checkEthtool(context.Background(), "ens5", stats, noInsights)) {
+			return
+		}
 		stats[BandwidthInExceeded] = stats[BandwidthInExceeded] + 5000
-		if !assert.NoError(t, ethtoolMonitor.checkEthtool("ens5", stats)) {
+		if !assert.NoError(t, ethtoolMonitor.checkEthtool(context.Background(), "ens5", stats, noInsights)) {
 			return
 		}
 		select {
@@ -385,7 +423,7 @@ func TestNetworkingPeriodic(t *testing.T) {
 			obs: observer.BaseObserver{},
 			res: make(chan monitor.Condition, len(statLimiterConstructors)),
 		}
-		handler := ethtoolTickHandler(mockManager, fakeReader)
+		handler := ethtoolTickHandler(context.Background(), makeEthtoolMonitor(mockManager, fakeENIs{"ens5": "eni-ens5"}), fakeReader)
 
 		require.NoError(t, handler(time.Now())) // tick 1: establishes baseline
 		require.NoError(t, handler(time.Now())) // tick 2: should detect spike
@@ -413,7 +451,7 @@ func TestNetworkingPeriodic(t *testing.T) {
 			obs: observer.BaseObserver{},
 			res: make(chan monitor.Condition, 10),
 		}
-		ethtoolMonitor := makeEthtoolMonitor(mockManager)
+		ethtoolMonitor := makeEthtoolMonitor(mockManager, fakeENIs{})
 		now := time.Now()
 		ethtoolMonitor.now = func() time.Time { return now }
 
@@ -426,16 +464,16 @@ func TestNetworkingPeriodic(t *testing.T) {
 		}
 		spike := func(iface string) {
 			stats[BandwidthInExceeded] += 100000
-			require.NoError(t, ethtoolMonitor.checkEthtool(iface, stats))
+			require.NoError(t, ethtoolMonitor.checkEthtool(context.Background(), iface, stats, noInsights))
 		}
 
-		require.NoError(t, ethtoolMonitor.checkEthtool("ens5", stats)) // baseline
-		require.NoError(t, ethtoolMonitor.checkEthtool("ens6", stats)) // baseline
+		require.NoError(t, ethtoolMonitor.checkEthtool(context.Background(), "ens5", stats, noInsights)) // baseline
+		require.NoError(t, ethtoolMonitor.checkEthtool(context.Background(), "ens6", stats, noInsights)) // baseline
 
 		spike("ens5")
 		assert.Equal(t, []string{"BandwidthInExceeded"}, drain(), "first spike should be reported")
 
-		now = now.Add(interfaceMonitorPeriod)
+		now = now.Add(ethtoolMonitorPeriod)
 		spike("ens5")
 		assert.Empty(t, drain(), "spike within the re-notify interval should be suppressed")
 
@@ -454,13 +492,13 @@ func TestNetworkingPeriodic(t *testing.T) {
 		require.NoError(t, err)
 
 		mgr := &failingNotifyManager{}
-		ethtoolMonitor := makeEthtoolMonitor(mgr)
-		require.NoError(t, ethtoolMonitor.checkEthtool("ens5", stats)) // baseline
+		ethtoolMonitor := makeEthtoolMonitor(mgr, fakeENIs{"ens5": "eni-ens5"})
+		require.NoError(t, ethtoolMonitor.checkEthtool(context.Background(), "ens5", stats, noInsights)) // baseline
 		for statKey := range statLimiterConstructors {
 			stats[statKey] += 100000
 		}
 
-		err = ethtoolMonitor.checkEthtool("ens5", stats)
+		err = ethtoolMonitor.checkEthtool(context.Background(), "ens5", stats, noInsights)
 		require.Len(t, mgr.errs, len(statLimiterConstructors))
 		for _, notifyErr := range mgr.errs {
 			assert.ErrorIs(t, err, notifyErr, "every Notify error should be returned, not just the last")
