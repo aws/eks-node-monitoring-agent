@@ -497,6 +497,7 @@ spec:
                 - g7.48xlarge
                 - g7.4xlarge
                 - g7.8xlarge
+                - g7.metal
                 - g7e.12xlarge
                 - g7e.24xlarge
                 - g7e.2xlarge
