@@ -383,6 +383,10 @@ build-e2e: ## Build e2e test binary
 	go test -c -tags=e2e -o $(OUTPUT_BIN)/eks-node-monitoring-agent.test ./e2e/
 	@echo "Built $(OUTPUT_BIN)/eks-node-monitoring-agent.test"
 
+.PHONY: build-soak-controller
+build-soak-controller: ## Build the soak test controller (see e2e/soak/README.md)
+	go build -o $(OUTPUT_BIN)/soak-controller ./e2e/soak/cmd/soak-controller
+
 .PHONY: e2e
 e2e: update-e2e-manifests build-e2e ## Build and run e2e tests against the current cluster context
 	$(OUTPUT_BIN)/eks-node-monitoring-agent.test --test.v --test.timeout 60m --install=true --image=$(IMAGE_URI) $(ARGS)

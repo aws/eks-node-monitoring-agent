@@ -1,0 +1,62 @@
+# Leak-gate thresholds for the NMA soak test.
+#
+# PLACEHOLDERS: these are starting guesses, not measured baselines. Once the
+# calibration runs finish, set each peak to (max peak observed across runs)
+# x 1.15, tighten the trend limits to what flat runs actually show, and set
+# recordOnly to false to start failing releases.
+#
+# Memory peaks must stay at or below 80% of the chart's nodeAgent memory limit
+# (charts/eks-node-monitoring-agent/values.yaml); analysis_test.go enforces it.
+
+# when true, failures are reported but the verdict is RECORD_ONLY, not FAIL.
+recordOnly: true
+
+# samples in the first warmUp of the window are checked against peaks but
+# excluded from trend checks, since caches and pools fill up after a start.
+warmUp: 30m
+
+# trend checks need at least this much post-warm-up data per node.
+minTrendWindow: 2h
+
+# median growth and count growth compare the first and last medianWindow of
+# the trend window.
+medianWindow: 1h
+
+# maximum value of each signal over the whole window, per node.
+#
+# ResidentMemoryBytes (process RSS) is deliberately not gated: most of it is
+# file-backed (the agent binary and memory-mapped journal files), which the
+# kernel can reclaim and which grows with journal rotation on a busy node.
+# ContainerRSSBytes is the agent's anonymous memory and is gated instead.
+peak:
+  HeapInuseBytes: 60Mi
+  HeapAllocBytes: 60Mi
+  RuntimeSysBytes: 120Mi
+  ContainerRSSBytes: 100Mi
+  WorkingSetBytes: 150Mi
+  Goroutines: "500"
+  OpenFDs: "200"
+
+# memory must stay flat: maximum least-squares slope per hour. The working set
+# includes active page cache, so it is noisier and gets a looser limit.
+slopePerHour:
+  HeapInuseBytes: 2Mi
+  RuntimeSysBytes: 2Mi
+  ContainerRSSBytes: 2Mi
+  WorkingSetBytes: 4Mi
+
+# maximum growth of the last-medianWindow median over the first, in percent.
+medianGrowthPercent:
+  HeapInuseBytes: 10
+  RuntimeSysBytes: 10
+  ContainerRSSBytes: 10
+  WorkingSetBytes: 15
+
+# maximum absolute growth of the last-medianWindow median over the first.
+countGrowth:
+  Goroutines: "50"
+  OpenFDs: "20"
+
+# any agent restart, OOM kill or pod replacement in the window fails it.
+# restarts and OOM kills only count when they happen inside the window.
+maxRestarts: 0

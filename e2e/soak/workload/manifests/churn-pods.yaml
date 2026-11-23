@@ -1,0 +1,172 @@
+# Pod templates the churn driver stamps out round-robin. Names, namespace and
+# the churn labels are set by the driver. Every flavor has:
+#   - an EFS mount (PVC nma-soak-efs)
+#   - a VPC IP from an ENI (no hostNetwork)
+#   - a projected service-account token (600s expiry)
+#   - the churn label selected by the nma-soak-churn NetworkPolicy
+# and they vary in container count, init containers and images.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pause
+  labels:
+    nma-soak/flavor: pause
+spec:
+  serviceAccountName: nma-soak-churn
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 5
+  nodeSelector:
+    nma-soak/pool: churn
+  tolerations:
+    - {key: nma-soak/pool, operator: Equal, value: churn, effect: NoSchedule}
+  containers:
+    - name: pause
+      image: registry.k8s.io/pause:3.10
+      volumeMounts:
+        - {name: efs, mountPath: /data}
+        - {name: token, mountPath: /var/run/secrets/nma-soak, readOnly: true}
+      resources:
+        requests: {cpu: 5m, memory: 8Mi}
+        limits: {memory: 16Mi}
+  volumes:
+    - name: efs
+      persistentVolumeClaim: {claimName: nma-soak-efs}
+    - name: token
+      projected:
+        sources:
+          - serviceAccountToken: {path: token, expirationSeconds: 600}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: writer
+  labels:
+    nma-soak/flavor: writer
+spec:
+  serviceAccountName: nma-soak-churn
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 5
+  nodeSelector:
+    nma-soak/pool: churn
+  tolerations:
+    - {key: nma-soak/pool, operator: Equal, value: churn, effect: NoSchedule}
+  containers:
+    - name: writer
+      image: public.ecr.aws/amazonlinux/amazonlinux:2023-minimal
+      # writes to EFS and reads the token, and removes its file on shutdown so
+      # the shared volume doesn't fill up over a long soak.
+      command:
+        - /bin/bash
+        - -c
+        - |
+          f="/data/${HOSTNAME}"
+          trap 'rm -f "$f"; exit 0' TERM
+          wc -c < /var/run/secrets/nma-soak/token > "$f"
+          while :; do sleep 1; done
+      volumeMounts:
+        - {name: efs, mountPath: /data}
+        - {name: token, mountPath: /var/run/secrets/nma-soak, readOnly: true}
+      resources:
+        requests: {cpu: 5m, memory: 8Mi}
+        limits: {memory: 32Mi}
+  volumes:
+    - name: efs
+      persistentVolumeClaim: {claimName: nma-soak-efs}
+    - name: token
+      projected:
+        sources:
+          - serviceAccountToken: {path: token, expirationSeconds: 600}
+          - downwardAPI:
+              items:
+                - path: labels
+                  fieldRef: {fieldPath: metadata.labels}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web-sidecar
+  labels:
+    nma-soak/flavor: web-sidecar
+spec:
+  serviceAccountName: nma-soak-churn
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 5
+  nodeSelector:
+    nma-soak/pool: churn
+  tolerations:
+    - {key: nma-soak/pool, operator: Equal, value: churn, effect: NoSchedule}
+  containers:
+    - name: nginx
+      image: public.ecr.aws/nginx/nginx:1.27
+      ports:
+        - containerPort: 80
+      volumeMounts:
+        - {name: efs, mountPath: /data, readOnly: true}
+        - {name: token, mountPath: /var/run/secrets/nma-soak, readOnly: true}
+      resources:
+        requests: {cpu: 5m, memory: 16Mi}
+        limits: {memory: 64Mi}
+    - name: sidecar
+      image: registry.k8s.io/pause:3.10
+      resources:
+        requests: {cpu: 1m, memory: 4Mi}
+        limits: {memory: 16Mi}
+  volumes:
+    - name: efs
+      persistentVolumeClaim: {claimName: nma-soak-efs}
+    - name: token
+      projected:
+        sources:
+          - serviceAccountToken: {path: token, expirationSeconds: 600}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: init-multi
+  labels:
+    nma-soak/flavor: init-multi
+spec:
+  serviceAccountName: nma-soak-churn
+  restartPolicy: Never
+  terminationGracePeriodSeconds: 5
+  nodeSelector:
+    nma-soak/pool: churn
+  tolerations:
+    - {key: nma-soak/pool, operator: Equal, value: churn, effect: NoSchedule}
+  initContainers:
+    - name: init
+      image: public.ecr.aws/amazonlinux/amazonlinux:2023-minimal
+      command: ["/bin/bash", "-c", "test -s /var/run/secrets/nma-soak/token && test -d /data"]
+      volumeMounts:
+        - {name: efs, mountPath: /data, readOnly: true}
+        - {name: token, mountPath: /var/run/secrets/nma-soak, readOnly: true}
+      resources:
+        requests: {cpu: 5m, memory: 8Mi}
+        limits: {memory: 16Mi}
+  containers:
+    - name: main
+      image: public.ecr.aws/amazonlinux/amazonlinux:2023-minimal
+      command: ["/bin/bash", "-c", "trap 'exit 0' TERM; while :; do sleep 1; done"]
+      volumeMounts:
+        - {name: efs, mountPath: /data, readOnly: true}
+        - {name: token, mountPath: /var/run/secrets/nma-soak, readOnly: true}
+      resources:
+        requests: {cpu: 5m, memory: 8Mi}
+        limits: {memory: 16Mi}
+    - name: sidecar-a
+      image: registry.k8s.io/pause:3.10
+      resources:
+        requests: {cpu: 1m, memory: 4Mi}
+        limits: {memory: 16Mi}
+    - name: sidecar-b
+      image: registry.k8s.io/pause:3.10
+      resources:
+        requests: {cpu: 1m, memory: 4Mi}
+        limits: {memory: 16Mi}
+  volumes:
+    - name: efs
+      persistentVolumeClaim: {claimName: nma-soak-efs}
+    - name: token
+      projected:
+        sources:
+          - serviceAccountToken: {path: token, expirationSeconds: 600}
