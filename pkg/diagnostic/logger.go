@@ -163,7 +163,7 @@ func NewDiagnosticLogger(writer io.Writer, settings Settings) diagnosticLogger {
 		{name: "cpu", fn: cpuUsage},
 		{name: "memory", fn: memoryUsage},
 		{name: "pressure", fn: pressure},
-		{name: "vmstat", fn: processVmstat.collect},
+		{name: "vmstat", fn: sharedVmstat.collect},
 		{name: "disk", fn: diskUsage},
 		{name: "interfaces", fn: listNetworkInterfaces},
 		{name: "ipamd", fn: func(context.Context) []byte { return tailx(ipamd(), 5000) }},
@@ -413,9 +413,9 @@ type vmstatDelta struct {
 	prevAt time.Time
 }
 
-// processVmstat is shared by every logger in the process, so the exit flush in
+// sharedVmstat is used by every diagnostic logger in the agent, so the exit flush in
 // main.go writes the delta since the running logger's last cycle.
-var processVmstat = &vmstatDelta{now: time.Now}
+var sharedVmstat = &vmstatDelta{now: time.Now}
 
 func newVmstatDelta(path string) *vmstatDelta {
 	return &vmstatDelta{path: path, now: time.Now}

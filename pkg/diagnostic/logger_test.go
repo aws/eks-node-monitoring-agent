@@ -610,9 +610,9 @@ func TestExitFlushKeepsVmstatDelta(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "vmstat")
 	original := procVmstatPath
 	procVmstatPath = path
-	processVmstat.mu.Lock()
-	processVmstat.prev, processVmstat.prevAt = nil, time.Time{}
-	processVmstat.mu.Unlock()
+	sharedVmstat.mu.Lock()
+	sharedVmstat.prev, sharedVmstat.prevAt = nil, time.Time{}
+	sharedVmstat.mu.Unlock()
 	t.Cleanup(func() { procVmstatPath = original })
 	settings := Settings{ApiServerEndpoint: "https://127.0.0.1"}
 
