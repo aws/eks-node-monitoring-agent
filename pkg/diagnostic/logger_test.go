@@ -591,3 +591,40 @@ func TestFixedSectionsFitTheirBudget(t *testing.T) {
 	v.now = func() time.Time { return start.Add(5 * time.Minute) }
 	assert.LessOrEqual(t, len(v.collect(context.Background())), 1100, "vmstat section")
 }
+
+func vmstatSection(t *testing.T, l diagnosticLogger) string {
+	t.Helper()
+	for _, p := range l.producers {
+		if p.name == "vmstat" {
+			return string(p.fn(context.Background()))
+		}
+	}
+	t.Fatal("no vmstat producer")
+	return ""
+}
+
+// The exit flush in main.go builds a new logger. It must still write the delta
+// since the running logger's last cycle, because that last dump is the one a
+// reader looks at after the agent exits.
+func TestExitFlushKeepsVmstatDelta(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "vmstat")
+	original := procVmstatPath
+	procVmstatPath = path
+	processVmstat.mu.Lock()
+	processVmstat.prev, processVmstat.prevAt = nil, time.Time{}
+	processVmstat.mu.Unlock()
+	t.Cleanup(func() { procVmstatPath = original })
+	settings := Settings{ApiServerEndpoint: "https://127.0.0.1"}
+
+	// a cycle of the long-running logger
+	writeFixture(t, path, "pgmajfault 100\noom_kill 1\n")
+	vmstatSection(t, NewDiagnosticLogger(&bytes.Buffer{}, settings))
+
+	// the agent exits and main.go flushes once more through a new logger
+	writeFixture(t, path, "pgmajfault 1600\noom_kill 3\n")
+	lines := strings.Split(strings.TrimSpace(vmstatSection(t, NewDiagnosticLogger(&bytes.Buffer{}, settings))), "\n")
+
+	assert.True(t, strings.HasPrefix(strings.Fields(lines[0])[2], "delta_"), "header has the interval")
+	assert.Equal(t, []string{"pgmajfault", "1600", "1500"}, strings.Fields(lines[1]))
+	assert.Equal(t, []string{"oom_kill", "3", "2"}, strings.Fields(lines[2]))
+}

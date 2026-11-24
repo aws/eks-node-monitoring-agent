@@ -163,7 +163,7 @@ func NewDiagnosticLogger(writer io.Writer, settings Settings) diagnosticLogger {
 		{name: "cpu", fn: cpuUsage},
 		{name: "memory", fn: memoryUsage},
 		{name: "pressure", fn: pressure},
-		{name: "vmstat", fn: newVmstatDelta(procVmstatPath).collect},
+		{name: "vmstat", fn: processVmstat.collect},
 		{name: "disk", fn: diskUsage},
 		{name: "interfaces", fn: listNetworkInterfaces},
 		{name: "ipamd", fn: func(context.Context) []byte { return tailx(ipamd(), 5000) }},
@@ -413,20 +413,30 @@ type vmstatDelta struct {
 	prevAt time.Time
 }
 
+// processVmstat is shared by every logger in the process, so the exit flush in
+// main.go writes the delta since the running logger's last cycle.
+var processVmstat = &vmstatDelta{now: time.Now}
+
 func newVmstatDelta(path string) *vmstatDelta {
 	return &vmstatDelta{path: path, now: time.Now}
 }
 
 func (v *vmstatDelta) collect(context.Context) []byte {
-	data, err := os.ReadFile(v.path)
+	// The lock covers the read as well, so two loggers that collect at the same
+	// time store their samples in the order they were taken.
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	path := v.path
+	if path == "" {
+		path = procVmstatPath
+	}
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return []byte(fmt.Sprintf("failed to read %s due to: %s", v.path, err))
+		return []byte(fmt.Sprintf("failed to read %s due to: %s", path, err))
 	}
 	cur := parseVmstat(data)
 	now := v.now()
-
-	v.mu.Lock()
-	defer v.mu.Unlock()
 
 	var out bytes.Buffer
 	w := tabwriter.NewWriter(&out, 0, 0, 1, ' ', 0)
