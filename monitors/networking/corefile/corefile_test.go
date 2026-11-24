@@ -213,6 +213,7 @@ func TestHandleState_TransportError_DoesNotEmit(t *testing.T) {
 
 // readyzState is what the fake agent serves; tests mutate it between ticks.
 type readyzState struct {
+	down                          bool
 	status                        int
 	reason, appliedSHA, failedSHA string
 }
@@ -225,24 +226,44 @@ func newSequenceDetector(t *testing.T, mgr *mockManager, st *readyzState) (*Dete
 	t.Cleanup(srv.Close)
 	clock := time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC)
 	d := newDetectorWithURL(mgr, srv.URL)
+	d.client.Transport = downTransport{st: st, next: d.client.Transport}
 	d.now = func() time.Time { return clock }
 	return d, &clock
 }
 
-func tickCount(t *testing.T, d *Detector, mgr *mockManager) int {
+// downTransport fails the request in the caller's goroutine while st.down is
+// set, so the test server never reads st concurrently with the test.
+type downTransport struct {
+	st   *readyzState
+	next http.RoundTripper
+}
+
+func (t downTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t.st.down {
+		return nil, errors.New("connection refused")
+	}
+	return t.next.RoundTrip(req)
+}
+
+func tickConditions(t *testing.T, d *Detector, mgr *mockManager) []monitor.Condition {
 	t.Helper()
 	if err := d.HandleState(); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	n := 0
+	var got []monitor.Condition
 	for {
 		select {
-		case <-mgr.res:
-			n++
+		case c := <-mgr.res:
+			got = append(got, c)
 		default:
-			return n
+			return got
 		}
 	}
+}
+
+func tickCount(t *testing.T, d *Detector, mgr *mockManager) int {
+	t.Helper()
+	return len(tickConditions(t, d, mgr))
 }
 
 const (
@@ -321,4 +342,140 @@ func TestHandleState_FailedNotifyRetriesNextTick(t *testing.T) {
 	assert.Error(t, d.HandleState())
 	mgr.notifyErr = nil
 	assert.Equal(t, 1, tickCount(t, d, mgr))
+}
+
+func TestHandleState_SilentAgentWarnsAfterThreshold(t *testing.T) {
+	for name, silent := range map[string]readyzState{
+		"not answering": {down: true},
+		"initializing":  {status: http.StatusServiceUnavailable, reason: "CoreDNSCorefileInitializing"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			mgr := newTestManager()
+			st := silent
+			d, clock := newSequenceDetector(t, mgr, &st)
+
+			assert.Empty(t, tickConditions(t, d, mgr))
+			*clock = clock.Add(silentThreshold - time.Second)
+			assert.Empty(t, tickConditions(t, d, mgr))
+			*clock = clock.Add(time.Second)
+			got := tickConditions(t, d, mgr)
+			if assert.Len(t, got, 1) {
+				assert.Equal(t, reasons.CoreDNSCorefileAgentUnavailable.Template(), got[0].Reason)
+				assert.Equal(t, monitor.SeverityWarning, got[0].Severity)
+				assert.Contains(t, got[0].Message, "no Corefile outcome for at least 20 minutes")
+			}
+		})
+	}
+}
+
+func TestHandleState_SilentAgentReNotifiesUntilItReports(t *testing.T) {
+	mgr := newTestManager()
+	st := &readyzState{down: true}
+	d, clock := newSequenceDetector(t, mgr, st)
+
+	tickConditions(t, d, mgr)
+	*clock = clock.Add(silentThreshold)
+	assert.Len(t, tickConditions(t, d, mgr), 1)
+	*clock = clock.Add(time.Minute)
+	assert.Empty(t, tickConditions(t, d, mgr))
+	*clock = clock.Add(reNotifyInterval)
+	assert.Len(t, tickConditions(t, d, mgr), 1)
+
+	*st = readyzState{status: http.StatusOK, reason: "Applied", appliedSHA: shaA}
+	assert.Empty(t, tickConditions(t, d, mgr), "a 200 after the unavailable Warning must not emit")
+}
+
+func TestHandleState_SilentForCountsFromFirstSilentTick(t *testing.T) {
+	mgr := newTestManager()
+	d, clock := newSequenceDetector(t, mgr, &readyzState{down: true})
+
+	tickConditions(t, d, mgr)
+	*clock = clock.Add(silentThreshold)
+	tickConditions(t, d, mgr)
+	*clock = clock.Add(reNotifyInterval)
+	got := tickConditions(t, d, mgr)
+	if assert.Len(t, got, 1) {
+		assert.Contains(t, got[0].Message, "for at least 50 minutes")
+	}
+}
+
+func TestHandleState_InvalidJSONCountsAsSilent(t *testing.T) {
+	mgr := newTestManager()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = fmt.Fprintln(w, "not-json")
+	}))
+	defer srv.Close()
+	clock := time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC)
+	d := newDetectorWithURL(mgr, srv.URL)
+	d.now = func() time.Time { return clock }
+
+	assert.Empty(t, tickConditions(t, d, mgr))
+	clock = clock.Add(silentThreshold)
+	got := tickConditions(t, d, mgr)
+	if assert.Len(t, got, 1) {
+		assert.Equal(t, reasons.CoreDNSCorefileAgentUnavailable.Template(), got[0].Reason)
+		assert.Contains(t, got[0].Message, "not valid JSON")
+	}
+}
+
+// After the unavailable Warning, the first failure is announced even when it
+// matches the one before the silence, so the Warning gets a follow-up.
+func TestHandleState_FailureAfterUnavailableIsAnnounced(t *testing.T) {
+	mgr := newTestManager()
+	failure := readyzState{status: http.StatusServiceUnavailable, reason: "CoreDNSCorefileValidationFailed", failedSHA: shaA}
+	st := failure
+	d, clock := newSequenceDetector(t, mgr, &st)
+	assert.Equal(t, 1, tickCount(t, d, mgr))
+
+	st = readyzState{down: true}
+	tickConditions(t, d, mgr)
+	*clock = clock.Add(silentThreshold)
+	assert.Equal(t, 1, tickCount(t, d, mgr))
+
+	st = failure
+	got := tickConditions(t, d, mgr)
+	if assert.Len(t, got, 1) {
+		assert.Equal(t, reasons.CoreDNSCorefileValidationFailed.Template(), got[0].Reason)
+	}
+	assert.Equal(t, 0, tickCount(t, d, mgr))
+}
+
+// An unknown reason is an outcome: it ends the silence, and a later outage
+// warns again after a full threshold rather than waiting on reNotifyInterval.
+func TestHandleState_UnknownReasonEndsSilence(t *testing.T) {
+	mgr := newTestManager()
+	st := &readyzState{down: true}
+	d, clock := newSequenceDetector(t, mgr, st)
+
+	tickConditions(t, d, mgr)
+	*clock = clock.Add(silentThreshold)
+	assert.Equal(t, 1, tickCount(t, d, mgr))
+
+	*st = readyzState{status: http.StatusServiceUnavailable, reason: "CoreDNSCorefileSomethingNew"}
+	assert.Equal(t, 0, tickCount(t, d, mgr))
+
+	*st = readyzState{down: true}
+	tickConditions(t, d, mgr)
+	*clock = clock.Add(silentThreshold - time.Second)
+	assert.Equal(t, 0, tickCount(t, d, mgr))
+	*clock = clock.Add(time.Second)
+	assert.Equal(t, 1, tickCount(t, d, mgr))
+}
+
+// An outcome between silent ticks restarts the threshold, so restarts spread
+// over time don't add up to a Warning.
+func TestHandleState_OutcomeRestartsSilentThreshold(t *testing.T) {
+	mgr := newTestManager()
+	st := &readyzState{down: true}
+	d, clock := newSequenceDetector(t, mgr, st)
+
+	tickConditions(t, d, mgr)
+	*clock = clock.Add(silentThreshold - time.Minute)
+	*st = readyzState{status: http.StatusOK, reason: "CoreDNSCorefileConfigMapNotFound"}
+	tickConditions(t, d, mgr)
+	*st = readyzState{down: true}
+	tickConditions(t, d, mgr)
+	*clock = clock.Add(silentThreshold - time.Second)
+	assert.Empty(t, tickConditions(t, d, mgr))
 }

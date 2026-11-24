@@ -11,15 +11,18 @@
 // HTTP 200 means the customer Corefile is live (`Applied`), or DNS is healthy
 // without one (`CoreDNSCorefileConfigMapNotFound`: not opted in, or the
 // ConfigMap was deleted and the last applied Corefile keeps serving). HTTP 503
-// with a `reason` field indicates a specific failure state.
+// with a `reason` field indicates a failure state, or startup
+// (`CoreDNSCorefileInitializing`).
 //
-// Severity policy: all four reasons are Warning. Every outcome traces back
-// to a customer-config problem (rejected by validation, refused by CoreDNS on
-// reload, reverted to the last applied Corefile, reverted to baseline). Node replacement re-applies the same
-// Corefile from the ConfigMap and re-hits the same failure, so raising any
-// of these to Fatal would create a replacement loop for a customer-config
-// issue rather than a node-level failure. Baseline DNS keeps the node
-// functional in the revert cases, so no repair signal is warranted.
+// Severity policy: all failure reasons are Warning. Every failure traces
+// back to a customer-config problem (rejected by validation, refused by CoreDNS
+// on reload, reverted to the last applied Corefile, reverted to baseline). Node
+// replacement re-applies the same Corefile from the ConfigMap and re-hits the
+// same failure, so raising any of these to Fatal would create a replacement
+// loop for a customer-config issue rather than a node-level failure. Baseline
+// DNS keeps the node functional in the revert cases, so no repair signal is
+// warranted. An agent that reports no outcome for silentThreshold is a Warning
+// for the same reason: replacement boots the same agent.
 package corefile
 
 import (
@@ -50,6 +53,13 @@ const (
 	// reNotifyInterval keeps an unchanged failure's Event from aging out
 	// under the apiserver's default 1h event TTL.
 	reNotifyInterval = 30 * time.Minute
+
+	// silentThreshold outlasts boot and the agent's own startup retries (up to
+	// 15 minutes resolving the NodeClass's configMapRef), so a longer silence
+	// means the agent is not running or stuck.
+	silentThreshold = 20 * time.Minute
+
+	initializingReason = "CoreDNSCorefileInitializing"
 )
 
 // readyzResponse is the JSON body of GET /readyz. Fields match the agent's
@@ -63,6 +73,10 @@ type readyzResponse struct {
 	FailedSHA  string `json:"failedSha,omitempty"`
 	NodeName   string `json:"nodeName,omitempty"`
 	UpdatedAt  string `json:"updatedAt,omitempty"`
+}
+
+func (r readyzResponse) key() notifyKey {
+	return notifyKey{r.Reason, r.AppliedSHA, r.FailedSHA}
 }
 
 // shaSuffix labels each SHA so the reader can tell a rejected Corefile from
@@ -96,6 +110,15 @@ type Detector struct {
 	// every NMA Warning on a node shares one client-go spam-filter bucket, so
 	// notify only on change or after reNotifyInterval.
 	notified *renotify.Tracker[notifyKey]
+
+	// silentSince is when the current run of ticks without an outcome began;
+	// zero when the last tick had one.
+	silentSince time.Time
+
+	// reportedSilent is set once CoreDNSCorefileAgentUnavailable is posted.
+	// The outcome that ends the silence then resets notified, so a later
+	// silence warns after a full silentThreshold rather than reNotifyInterval.
+	reportedSilent bool
 }
 
 type notifyKey struct {
@@ -121,11 +144,10 @@ func New(manager monitor.Manager, log logr.Logger) *Detector {
 	}
 }
 
-// reasonMap translates the agent's status.Reason strings into NMA reasons.
+// reasonMap translates the agent's failure reasons into NMA reasons.
 // `Applied` and `CoreDNSCorefileConfigMapNotFound` return HTTP 200 and never
-// reach this map; `CoreDNSCorefileInitializing` (startup, HTTP 503 briefly)
-// is intentionally omitted so a Detector poll during agent startup does not
-// emit a spurious condition.
+// reach this map; `CoreDNSCorefileInitializing` (startup, HTTP 503) is
+// handled as no outcome yet.
 var reasonMap = map[string]reasons.ReasonMeta{
 	"CoreDNSCorefileValidationFailed":      reasons.CoreDNSCorefileValidationFailed,
 	"CoreDNSCorefileReloadFailed":          reasons.CoreDNSCorefileReloadFailed,
@@ -133,70 +155,115 @@ var reasonMap = map[string]reasons.ReasonMeta{
 	"CoreDNSCorefileRevertedToBaseline":    reasons.CoreDNSCorefileRevertedToBaseline,
 }
 
-// HandleState scrapes /readyz once and emits the mapped condition on
-// non-2xx with a known reason. Transport errors and unknown reasons are
-// logged and skipped so a temporarily unreachable agent (systemd restart,
-// pre-Applied startup window) does not flap the condition.
+// HandleState scrapes /readyz once. It emits the mapped Warning on non-2xx
+// with a known reason, nothing on 200, and a Warning when the agent has
+// reported no outcome for silentThreshold. A shorter silence (systemd
+// restart, startup) is skipped so it does not flap the condition.
 func (d *Detector) HandleState() error {
 	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.url, nil)
+	status, code, silent, err := d.scrape(ctx)
 	if err != nil {
-		return fmt.Errorf("build readyz request: %w", err)
+		return err
 	}
-	resp, err := d.client.Do(req)
-	if err != nil {
-		// Agent not up (yet), systemd restart, or transient loopback blip.
-		// Do not emit: Detector will observe again on the next tick.
-		d.log.V(1).Info("readyz probe failed; skipping tick", "err", err.Error())
-		return nil
+	if silent != "" {
+		return d.handleSilent(ctx, silent)
 	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
-	if err != nil {
-		d.log.V(1).Info("readyz body read failed; skipping tick", "err", err.Error())
-		return nil
+	d.silentSince = time.Time{}
+	if d.reportedSilent {
+		d.reportedSilent = false
+		d.notified.Reset()
 	}
 
 	// 200 covers Applied and CoreDNSCorefileConfigMapNotFound, both healthy
 	// per the agent's ReadyzHandler.
-	if resp.StatusCode == http.StatusOK {
+	if code == http.StatusOK {
 		d.notified.Reset()
 		return nil
 	}
 
-	var body503 readyzResponse
-	if err := json.Unmarshal(body, &body503); err != nil {
-		d.log.V(1).Info("readyz JSON parse failed; skipping tick", "err", err.Error(), "body", string(body))
-		return nil
-	}
-
-	meta, known := reasonMap[body503.Reason]
+	meta, known := reasonMap[status.Reason]
 	if !known {
-		// Startup (`CoreDNSCorefileInitializing`) or a reason string this
-		// build predates. Log at V(1) so an unexpected reason surfaces in
+		// A reason string this build predates. Log at V(1) so it surfaces in
 		// journald without leaking a condition.
 		d.log.V(1).Info("readyz reason not mapped; skipping",
-			"reason", body503.Reason, "detail", body503.Detail)
+			"reason", status.Reason, "detail", status.Detail)
 		return nil
 	}
 
-	key := notifyKey{body503.Reason, body503.AppliedSHA, body503.FailedSHA}
+	key := status.key()
 	now := d.now()
 	if !d.notified.ShouldNotify(key, now) {
 		return nil
 	}
 
-	msg := body503.Detail
+	msg := status.Detail
 	if msg == "" {
-		msg = body503.Reason
+		msg = status.Reason
 	}
-	msg += body503.shaSuffix()
+	msg += status.shaSuffix()
 	if err := d.manager.Notify(ctx, meta.Builder().Message(msg).Build()); err != nil {
 		return err
 	}
 	d.notified.Notified(key, now)
+	return nil
+}
+
+// scrape reads /readyz. silent is non-empty, and says why, when the agent
+// gave no outcome: it did not answer, sent an unreadable body, or is still
+// initializing.
+func (d *Detector) scrape(ctx context.Context) (status readyzResponse, code int, silent string, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.url, nil)
+	if err != nil {
+		return status, 0, "", fmt.Errorf("build readyz request: %w", err)
+	}
+	resp, err := d.client.Do(req)
+	if err != nil {
+		d.log.V(1).Info("readyz probe failed; treating the agent as unresponsive", "err", err.Error())
+		return status, 0, "readyz did not answer: " + err.Error(), nil
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if err != nil {
+		d.log.V(1).Info("readyz body read failed; treating the agent as unresponsive", "err", err.Error())
+		return status, resp.StatusCode, "readyz body read failed: " + err.Error(), nil
+	}
+	if err := json.Unmarshal(body, &status); err != nil {
+		d.log.V(1).Info("readyz JSON parse failed; treating the agent as unresponsive", "err", err.Error(), "body", string(body))
+		return status, resp.StatusCode, "readyz body is not valid JSON", nil
+	}
+	if status.Reason == initializingReason {
+		return status, resp.StatusCode, "the agent is still initializing: " + status.Detail, nil
+	}
+	return status, resp.StatusCode, "", nil
+}
+
+// handleSilent tracks how long the agent has gone without an outcome and raises
+// CoreDNSCorefileAgentUnavailable once that reaches silentThreshold, then again
+// every reNotifyInterval while it stays silent.
+func (d *Detector) handleSilent(ctx context.Context, cause string) error {
+	now := d.now()
+	if d.silentSince.IsZero() {
+		d.silentSince = now
+	}
+	silentFor := now.Sub(d.silentSince)
+	if silentFor < silentThreshold {
+		return nil
+	}
+
+	meta := reasons.CoreDNSCorefileAgentUnavailable
+	key := notifyKey{reason: meta.Template()}
+	if !d.notified.ShouldNotify(key, now) {
+		return nil
+	}
+	msg := fmt.Sprintf("eks-networking-config-agent has reported no Corefile outcome for at least %d minutes, so a custom Corefile set on the NodeClass may not be applied; last check: %s",
+		int(silentFor.Minutes()), cause)
+	if err := d.manager.Notify(ctx, meta.Builder().Message(msg).Build()); err != nil {
+		return err
+	}
+	d.notified.Notified(key, now)
+	d.reportedSilent = true
 	return nil
 }
