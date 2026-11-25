@@ -16,7 +16,10 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"pgregory.net/rapid"
+	crcache "sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllertest"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -529,4 +532,42 @@ func TestHandleDelete_WrongNodeName_NoCancelCalled(t *testing.T) {
 	c.handleDelete(logr.Discard(), nd)
 
 	assert.NoError(t, ctx.Err())
+}
+
+// fakeInformerGetter fails the first `failures` calls, then returns informer
+type fakeInformerGetter struct {
+	failures int
+	calls    int
+	informer crcache.Informer
+}
+
+func (f *fakeInformerGetter) GetInformer(
+	_ context.Context, _ client.Object, _ ...crcache.InformerGetOption,
+) (crcache.Informer, error) {
+	f.calls++
+	if f.calls <= f.failures {
+		return nil, fmt.Errorf("dial tcp 10.0.0.1:443: i/o timeout")
+	}
+	return f.informer, nil
+}
+
+func TestGetInformerWithRetry_RetriesUntilSuccess(t *testing.T) {
+	informer := &controllertest.FakeInformer{}
+	getter := &fakeInformerGetter{failures: 2, informer: informer}
+
+	got, err := getInformerWithRetry(context.Background(), logr.Discard(), getter, time.Millisecond)
+
+	require.NoError(t, err)
+	assert.Same(t, informer, got)
+	assert.Equal(t, 3, getter.calls)
+}
+
+func TestGetInformerWithRetry_ReturnsLastErrorWhenContextDone(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	getter := &fakeInformerGetter{failures: 1 << 30}
+
+	_, err := getInformerWithRetry(ctx, logr.Discard(), getter, time.Millisecond)
+
+	require.ErrorContains(t, err, "i/o timeout")
 }
