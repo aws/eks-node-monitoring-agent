@@ -11,8 +11,11 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"text/tabwriter"
 	"time"
 
 	"golang.org/x/time/rate"
@@ -159,6 +162,8 @@ func NewDiagnosticLogger(writer io.Writer, settings Settings) diagnosticLogger {
 	producers := []*producer{
 		{name: "cpu", fn: cpuUsage},
 		{name: "memory", fn: memoryUsage},
+		{name: "pressure", fn: pressure},
+		{name: "vmstat", fn: sharedVmstat.collect},
 		{name: "disk", fn: diskUsage},
 		{name: "interfaces", fn: listNetworkInterfaces},
 		{name: "ipamd", fn: func(context.Context) []byte { return tailx(ipamd(), 5000) }},
@@ -176,6 +181,8 @@ func NewDiagnosticLogger(writer io.Writer, settings Settings) diagnosticLogger {
 	const headerBytes = 40
 	constLengthSections := []int{
 		1503, // memory
+		500,  // pressure
+		1100, // vmstat
 		1505, // apiserver
 		2900, // systemd
 		5000, // ipamd
@@ -336,6 +343,143 @@ func memoryUsage(context.Context) []byte {
 	} else {
 		return out
 	}
+}
+
+// procPressureDir and procVmstatPath are variables so that tests can point
+// them at fixtures.
+var (
+	procPressureDir = "/proc/pressure"
+	procVmstatPath  = "/proc/vmstat"
+)
+
+// pressureResources is the order in which the PSI files are written. Memory
+// comes first because it is the one most often read after a node failure.
+var pressureResources = []string{"memory", "io", "cpu"}
+
+// pressure returns the node-level pressure stall information, one line per
+// "some" and "full" entry, prefixed with the resource name. PSI carries its own
+// 10, 60 and 300 second averages, so a single sample already shows the recent
+// state and no delta is needed.
+func pressure(context.Context) []byte {
+	var out bytes.Buffer
+	for _, resource := range pressureResources {
+		path := procPressureDir + "/" + resource
+		data, err := os.ReadFile(path)
+		if err != nil {
+			fmt.Fprintf(&out, "%s failed to read %s due to: %s\n", resource, path, err)
+			continue
+		}
+		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+			fmt.Fprintf(&out, "%s %s\n", resource, line)
+		}
+	}
+	return out.Bytes()
+}
+
+// vmstatFields is the subset of /proc/vmstat written to the console. All of
+// them are counters since boot; together they show whether the node was
+// reclaiming, swapping or refaulting, which /proc/meminfo does not.
+var vmstatFields = []string{
+	"pgmajfault",
+	"pswpin",
+	"pswpout",
+	"workingset_refault_file",
+	"workingset_refault_anon",
+	"pgscan_direct",
+	"pgsteal_direct",
+	"allocstall_normal",
+	"allocstall_movable",
+	"compact_stall",
+	"compact_fail",
+	"thp_fault_alloc",
+	"thp_fault_fallback",
+	"oom_kill",
+}
+
+// vmstatDelta writes the vmstatFields with their total and their change since
+// the previous cycle.
+//
+// The fields are counters since boot, so one sample cannot tell a node that is
+// thrashing now from one that thrashed hours ago. The console keeps only about
+// one cycle, so a reader cannot subtract two samples either. The previous
+// sample is kept here instead, and the difference over the interval is written
+// next to the total.
+type vmstatDelta struct {
+	path string
+	now  func() time.Time
+
+	mu     sync.Mutex
+	prev   map[string]uint64
+	prevAt time.Time
+}
+
+// sharedVmstat is used by every diagnostic logger in the agent, so the exit flush in
+// main.go writes the delta since the running logger's last cycle.
+var sharedVmstat = &vmstatDelta{now: time.Now}
+
+func newVmstatDelta(path string) *vmstatDelta {
+	return &vmstatDelta{path: path, now: time.Now}
+}
+
+func (v *vmstatDelta) collect(context.Context) []byte {
+	// The lock covers the read as well, so two loggers that collect at the same
+	// time store their samples in the order they were taken.
+	v.mu.Lock()
+	defer v.mu.Unlock()
+
+	path := v.path
+	if path == "" {
+		path = procVmstatPath
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return []byte(fmt.Sprintf("failed to read %s due to: %s", path, err))
+	}
+	cur := parseVmstat(data)
+	now := v.now()
+
+	var out bytes.Buffer
+	w := tabwriter.NewWriter(&out, 0, 0, 1, ' ', 0)
+	if v.prev == nil {
+		fmt.Fprintln(w, "field\ttotal\tdelta")
+	} else {
+		fmt.Fprintf(w, "field\ttotal\tdelta_%ds\n", int(now.Sub(v.prevAt).Round(time.Second).Seconds()))
+	}
+	for _, field := range vmstatFields {
+		total, ok := cur[field]
+		if !ok {
+			// Not every kernel has every field; a missing one is left out.
+			continue
+		}
+		delta := "-"
+		if before, seen := v.prev[field]; seen && total >= before {
+			delta = strconv.FormatUint(total-before, 10)
+		}
+		fmt.Fprintf(w, "%s\t%d\t%s\n", field, total, delta)
+	}
+	_ = w.Flush()
+
+	v.prev = cur
+	v.prevAt = now
+	return out.Bytes()
+}
+
+// parseVmstat reads the "name value" lines of /proc/vmstat. Lines that do not
+// parse are ignored.
+func parseVmstat(data []byte) map[string]uint64 {
+	values := make(map[string]uint64)
+	for _, line := range strings.Split(string(data), "\n") {
+		name, value, found := strings.Cut(strings.TrimSpace(line), " ")
+		if !found {
+			continue
+		}
+		n, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
+		if err != nil {
+			continue
+		}
+		values[name] = n
+	}
+	return values
 }
 
 func listNetworkInterfaces(context.Context) []byte {

@@ -66,6 +66,8 @@ func ConsoleLogging(awsCfg aws.Config) types.Feature {
 			var sectionChecklist = map[string]bool{
 				"cpu":        false,
 				"memory":     false,
+				"pressure":   false,
+				"vmstat":     false,
 				"disk":       false,
 				"interfaces": false,
 				"apiserver":  false,
