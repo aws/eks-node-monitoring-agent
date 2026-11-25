@@ -312,23 +312,9 @@ func copyFileRaw(ctx context.Context, srcFilename string, dstFilename string) er
 	// cancelled capture stops at the next chunk boundary instead of copying a
 	// large file to the end. A read already blocked in the kernel is not
 	// interrupted by this.
-	_, err = io.Copy(dstFile, &ctxReader{ctx: ctx, r: srcFile})
+	_, err = io.Copy(dstFile, file.NewContextReader(ctx, srcFile))
 	if err != nil {
 		return fmt.Errorf("copying %q to %q, %w", srcFile.Name(), dstFile.Name(), err)
 	}
 	return nil
-}
-
-// ctxReader fails a read once its context is done, so that an io.Copy of a large
-// or slow source stops at a chunk boundary after cancellation.
-type ctxReader struct {
-	ctx context.Context
-	r   io.Reader
-}
-
-func (c *ctxReader) Read(p []byte) (int, error) {
-	if err := c.ctx.Err(); err != nil {
-		return 0, err
-	}
-	return c.r.Read(p)
 }
