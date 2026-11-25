@@ -7,13 +7,22 @@ import (
 
 const (
 	KindNodeDiagnostic = "NodeDiagnostic"
+
+	// AutoLogCaptureObjectName is the only NodeDiagnostic name allowed to set
+	// spec.autoLogCapture. It is a literal in the XValidation rules on
+	// NodeDiagnostic below, so change both together.
+	AutoLogCaptureObjectName = "auto-log-capture"
 )
 
 // The name of the NodeDiagnostic resource is meant to match the name of the
-// node which should perform the diagnostic tasks
+// node which should perform the diagnostic tasks. The one exception is the
+// object named auto-log-capture, which holds the cluster-wide autoLogCapture
+// setting and is not tied to a node.
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Cluster
+// +kubebuilder:validation:XValidation:rule="!has(self.spec) || !has(self.spec.autoLogCapture) || self.metadata.name == 'auto-log-capture'",message="spec.autoLogCapture can only be set on the NodeDiagnostic named auto-log-capture"
+// +kubebuilder:validation:XValidation:rule="!has(self.spec) || !has(self.spec.autoLogCapture) || (!has(self.spec.logCapture) && !has(self.spec.packetCapture))",message="the auto-log-capture object cannot also set spec.logCapture or spec.packetCapture"
 type NodeDiagnostic struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -29,8 +38,9 @@ type NodeDiagnosticList struct {
 }
 
 type NodeDiagnosticSpec struct {
-	*LogCapture    `json:"logCapture,omitempty"`
-	*PacketCapture `json:"packetCapture,omitempty"`
+	*LogCapture     `json:"logCapture,omitempty"`
+	*PacketCapture  `json:"packetCapture,omitempty"`
+	*AutoLogCapture `json:"autoLogCapture,omitempty"`
 }
 
 type NodeDiagnosticStatus struct {
@@ -47,6 +57,18 @@ type LogCapture struct {
 	// +optional
 	// +kubebuilder:default={All}
 	Categories []LogCategory `json:"categories"`
+}
+
+// AutoLogCapture configures automatic log capture when a node condition this
+// agent reports fails. Only the NodeDiagnostic named auto-log-capture can set
+// it, and that object cannot also set logCapture or packetCapture. It is not
+// tied to a node: it applies cluster-wide.
+type AutoLogCapture struct {
+	// Bucket is the S3 bucket that receives capture bundles. It must be in
+	// the same Region as the nodes. Omit to turn automatic capture off.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$`
+	Bucket string `json:"bucket,omitempty"`
 }
 
 // UploadDestination is a URL describing where to deliver a diagnostic artifact.
