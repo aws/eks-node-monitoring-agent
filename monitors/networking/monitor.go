@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -49,6 +50,9 @@ const (
 	interfaceMonitorPeriod = 5 * time.Minute
 	// we only need to store the interfaces from our previous monitor period
 	interfaceCacheTTL = interfaceMonitorPeriod * 2
+
+	// ethtoolMonitorPeriod is how often the allowance stats are read.
+	ethtoolMonitorPeriod = 5 * time.Minute
 
 	// max duration between two observations of IPAMDNotRunning to indicate a fatal condition. depends
 	// on the handleIPAMD interval (currently 5m), so this should ideally be kept longer than that
@@ -265,7 +269,10 @@ func (m *NetworkingMonitor) Register(ctx context.Context, mgr monitor.Manager) e
 	}
 
 	for _, handler := range []interface{ Start(context.Context) error }{
-		util.NewChannelHandler(ethtoolTickHandler(mgr, readEthtoolStats), util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
+		// The ethtoolMonitor is created once so its rate limiters and stat/ENI cache persist across ticks;
+		// otherwise every reading looks like the first, allowance-exceeded spikes are never detected, and ENIs
+		// are queried through IMDS.
+		util.NewChannelHandler(ethtoolTickHandler(ctx, makeEthtoolMonitor(mgr, newIMDSENIResolver()), readEthtoolStats), util.TimeTickWithJitterContext(ctx, ethtoolMonitorPeriod)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleIPRulesAndRoutes(ctx) }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleIPTables() }, util.TimeTickWithJitterContext(ctx, 5*time.Minute)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleInterfaces() }, util.TimeTickWithJitterContext(ctx, interfaceMonitorPeriod)),
@@ -587,7 +594,19 @@ type ethtoolMonitor struct {
 	notified map[string]*renotify.Tracker[struct{}]
 	manager  monitor.Manager
 	now      func() time.Time
+	// enis provides the ENI ID by interface name
+	enis eniResolver
 }
+
+// The insight published while an ENI exceeds its link-local allowance, which
+// caps traffic to link-local services such as the VPC DNS resolver at 1024
+// packets per second per ENI. Every allowance exceeded insight shares the
+// type, and names the ENI it's about.
+const (
+	insightTypeNetworkAllowanceExceeded = "NetworkAllowanceExceeded"
+	insightReasonLinkLocal              = "LinkLocal"
+	insightResourceENIID                = "eni_id"
+)
 
 type statTracker struct {
 	recorded    int
@@ -600,6 +619,17 @@ var statReasons = map[string]reasons.ReasonMeta{
 	ConntrackExceeded:    reasons.ConntrackExceeded,
 	LinkLocalExceeded:    reasons.LinkLocalExceeded,
 	PPSExceeded:          reasons.PPSExceeded,
+}
+
+// statInsights maps an allowance stat to the eks_insight published for each
+// ENI exceeding it, with the ENI's ID filled into the insight's
+// ResourceValue. A stat that isn't here reports a Warning only.
+var statInsights = map[string]monitor.Insight{
+	LinkLocalExceeded: {
+		Type:         insightTypeNetworkAllowanceExceeded,
+		Reason:       insightReasonLinkLocal,
+		ResourceName: insightResourceENIID,
+	},
 }
 
 var statLimiterConstructors = map[string]func() *rate.Limiter{
@@ -617,12 +647,13 @@ func makeCompoundStatKey(interfaceName, statName string) compoundStatKey {
 	return compoundStatKey(interfaceName + "-" + statName)
 }
 
-func makeEthtoolMonitor(manager monitor.Manager) *ethtoolMonitor {
+func makeEthtoolMonitor(manager monitor.Manager, enis eniResolver) *ethtoolMonitor {
 	return &ethtoolMonitor{
 		manager:           manager,
 		statExceededCache: make(map[compoundStatKey]*statTracker),
 		notified:          make(map[string]*renotify.Tracker[struct{}]),
 		now:               time.Now,
+		enis:              enis,
 	}
 }
 
@@ -631,18 +662,34 @@ func makeEthtoolMonitor(manager monitor.Manager) *ethtoolMonitor {
 type ethtoolStatsReader func() (map[string]map[string]int, error)
 
 // ethtoolTickHandler returns the periodic handler that runs the ethtool check
-// on each tick. The monitor is created once so its stat cache and rate
-// limiters persist across ticks; otherwise every reading looks like the first
-// and allowance-exceeded spikes are never detected.
-func ethtoolTickHandler(mgr monitor.Manager, readStats ethtoolStatsReader) func(time.Time) error {
-	m := makeEthtoolMonitor(mgr)
-	return func(time.Time) error { return m.handleEthtool(readStats) }
+// on each tick.
+func ethtoolTickHandler(ctx context.Context, m *ethtoolMonitor, readStats ethtoolStatsReader) func(time.Time) error {
+	return func(time.Time) error { return m.handleEthtool(ctx, readStats) }
 }
 
-func (m *ethtoolMonitor) handleEthtool(readStats ethtoolStatsReader) error {
+func (m *ethtoolMonitor) handleEthtool(ctx context.Context, readStats ethtoolStatsReader) error {
 	statsByInterface, merr := readStats()
+	if len(statsByInterface) == 0 && merr != nil {
+		return merr
+	}
+	// every interface is read on each tick, so the insights reported here are
+	// all of the ones its stats show. every other ENI has its insight
+	// cleared, including those of an interface that's gone, or whose stats
+	// couldn't be read, since neither can show that it's still exceeding an
+	// allowance.
+	// an Insight carries no resource ID, so it keys the ENIs reported for it
+	// directly, and statInsights holds the same values
+	exceeding := map[monitor.Insight][]string{}
+	reportInsight := func(insight monitor.Insight, eniID string) {
+		exceeding[insight] = append(exceeding[insight], eniID)
+	}
 	for interfaceName, stats := range statsByInterface {
-		merr = errors.Join(merr, m.checkEthtool(interfaceName, stats))
+		merr = errors.Join(merr, m.checkEthtool(ctx, interfaceName, stats, reportInsight))
+	}
+	// reconciling every group a stat could report, rather than only the ones
+	// reported, is what clears the insights of the ENIs that recovered
+	for _, insight := range statInsights {
+		m.manager.ReplaceInsights(insight, exceeding[insight])
 	}
 	return merr
 }
@@ -676,24 +723,52 @@ func readEthtoolStats() (_ map[string]map[string]int, merr error) {
 }
 
 // checkEthtool checks whether the allowance exceeded metrics from ethtool are
-// breached at an unhealthy rate.
+// breached at an unhealthy rate. Each breached stat that has an insight in
+// statInsights is passed to reportInsight.
 // Warnings are reported at most once per ethtoolWarningReNotifyInterval for
 // each interface; all stats exceeded on the reporting tick are included.
-func (m *ethtoolMonitor) checkEthtool(interfaceName string, stats map[string]int) (merr error) {
+func (m *ethtoolMonitor) checkEthtool(ctx context.Context, interfaceName string, stats map[string]int, reportInsight func(monitor.Insight, string)) (merr error) {
 	now := m.now()
+	// the ENI is looked up at most once per check, however many stats with a
+	// insight spiked. the lookup is cached by interface name, so it only
+	// reaches IMDS until the ENI is first resolved.
+	eniID := sync.OnceValues(func() (string, error) {
+		return m.enis.ENIID(ctx, interfaceName)
+	})
 	// an interface without a tracker has never fired a Warning, so it may
 	// notify right away. trackers are only created once a Warning is sent.
 	tracker, tracked := m.notified[interfaceName]
 	shouldNotify, sent := !tracked || tracker.ShouldNotify(struct{}{}, now), false
 	for statKey, rateLimiterConstructor := range statLimiterConstructors {
 		if statValue, ok := stats[statKey]; ok {
+			// touch the ENI to keep the cache fresh, only the first check for a given ENI goes
+			// through IMDS, all subsequent ones are cached. increases stability of ENI ID resolution
+			// during Link-Local allowance spikes. error deferred to first use
+			_, _ = eniID()
 			cacheKey := makeCompoundStatKey(interfaceName, statKey)
 			if statCache, ok := m.statExceededCache[cacheKey]; ok {
 				// we want to detect when these metrics could be responsible for issues on the
 				// node. reporting when they increase or are non-zero gets pretty noisy and
 				// doesn't directly indicate any issues. instead, the approach here is to only
 				// emit the event when there is a noticeable spike in the exceeded stats.
-				if exceededCntDelta := statValue - statCache.recorded; !statCache.rateLimiter.AllowN(now, exceededCntDelta) && shouldNotify {
+				exceededCntDelta := statValue - statCache.recorded
+				spiked := !statCache.rateLimiter.AllowN(now, exceededCntDelta)
+				// the insight follows the spike itself, bypassing the throttling on warnings
+				if insight, ok := statInsights[statKey]; ok && spiked {
+					eni, err := eniID()
+					if err != nil {
+						// without an ENI there's nothing to name the insight after, so none
+						// is published and the next check retries the lookup.
+						// SAFETY: for an ENI that was previously reported in an insight, this should
+						// only error if the ENI's detached, causing MAC lookup to fail. In this case,
+						// resetting the insight (by not reporting) is the correct behavior since the
+						// ENI is no longer present
+						merr = errors.Join(merr, fmt.Errorf("publish the %s insight of %q: %w", statKey, interfaceName, err))
+					} else {
+						reportInsight(insight, eni)
+					}
+				}
+				if spiked && shouldNotify {
 					if err := m.manager.Notify(context.TODO(),
 						statReasons[statKey].
 							Builder().

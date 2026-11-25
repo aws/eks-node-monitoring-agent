@@ -35,6 +35,7 @@ func (m *mockObserver) Broadcast(source, message string) {
 }
 
 type mockManager struct {
+	monitor.Manager
 	err       error
 	obs       *mockObserver
 	res       chan monitor.Condition

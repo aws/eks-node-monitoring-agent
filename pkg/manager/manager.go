@@ -13,10 +13,12 @@ import (
 
 	"github.com/aws/eks-node-monitoring-agent/api/monitor"
 	"github.com/aws/eks-node-monitoring-agent/api/monitor/resource"
+	"github.com/aws/eks-node-monitoring-agent/pkg/insights"
 	"github.com/aws/eks-node-monitoring-agent/pkg/observer"
 )
 
 var (
+	activeInsights = insights.New()
 	conditionCount = prometheus.NewCounterVec(
 		prometheus.CounterOpts{Name: "problem_condition_count"},
 		[]string{"severity", "reason"},
@@ -29,6 +31,7 @@ var (
 
 func init() {
 	metrics.Registry.MustRegister(
+		activeInsights,
 		conditionCount,
 		conditionTypeGauge,
 	)
@@ -204,6 +207,9 @@ func (m *MonitorManager) Subscribe(rType resource.Type, rParts []resource.Part) 
 func makeManagerWrapper(monMgr *MonitorManager, mon monitor.Monitor) *managerWrapper {
 	return &managerWrapper{
 		MonitorManager: monMgr,
+		replaceInsightsFunc: func(insight monitor.Insight, resourceValues []string) {
+			activeInsights.Replace(mon.Name(), insight, resourceValues)
+		},
 		notifyFunc: func(ctx context.Context, condition monitor.Condition) error {
 			notif := notification{
 				monitorName: mon.Name(),
@@ -225,11 +231,16 @@ var _ monitor.Manager = (*managerWrapper)(nil)
 // package which scopes the notify call to the manager.
 type managerWrapper struct {
 	*MonitorManager
-	notifyFunc func(ctx context.Context, condition monitor.Condition) error
+	notifyFunc          func(ctx context.Context, condition monitor.Condition) error
+	replaceInsightsFunc func(insight monitor.Insight, resourceValues []string)
 }
 
 func (m *managerWrapper) Notify(ctx context.Context, cond monitor.Condition) error {
 	return m.notifyFunc(ctx, cond)
+}
+
+func (m *managerWrapper) ReplaceInsights(insight monitor.Insight, resourceValues []string) {
+	m.replaceInsightsFunc(insight, resourceValues)
 }
 
 // resourceID creates a unique identifier for a resource subscription
