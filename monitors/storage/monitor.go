@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,8 @@ import (
 	"github.com/aws/eks-node-monitoring-agent/pkg/osext"
 	"github.com/aws/eks-node-monitoring-agent/pkg/reasons"
 	"github.com/aws/eks-node-monitoring-agent/pkg/util"
+	fileutil "github.com/aws/eks-node-monitoring-agent/pkg/util/file"
+	"github.com/aws/eks-node-monitoring-agent/pkg/util/renotify"
 	"github.com/go-logr/logr"
 	"github.com/moby/sys/mountinfo"
 	"k8s.io/client-go/tools/cache"
@@ -40,6 +43,10 @@ type StorageMonitor struct {
 	manager    monitor.Manager
 	log        logr.Logger
 	delayCache cache.Store
+
+	partitionWarnings map[deviceNumber]*renotify.Tracker[string]
+	partitionUsage    func(path string) (spaceUsed, inodesUsed float64, err error)
+	now               func() time.Time
 }
 
 func buildIODelayCacheKey(id string, name string) string {
@@ -52,7 +59,10 @@ func delayCacheFunc(obj interface{}) (string, error) {
 
 func NewStorageMonitor() *StorageMonitor {
 	return &StorageMonitor{
-		delayCache: cache.NewTTLStore(delayCacheFunc, IODelayCacheDefaultExpirationTime),
+		delayCache:        cache.NewTTLStore(delayCacheFunc, IODelayCacheDefaultExpirationTime),
+		partitionWarnings: map[deviceNumber]*renotify.Tracker[string]{},
+		partitionUsage:    measurePartition,
+		now:               time.Now,
 	}
 }
 
@@ -89,6 +99,7 @@ func (m *StorageMonitor) Register(ctx context.Context, mgr monitor.Manager) erro
 		util.NewChannelHandler(m.handleBlockDeviceIOErrors, dmesg),
 		util.NewChannelHandler(func(time.Time) error { return m.handleXFS() }, util.TimeTickWithJitterContext(ctx, 10*time.Minute)),
 		util.NewChannelHandler(func(time.Time) error { return m.handleIODelays() }, util.TimeTickWithJitterContext(ctx, 10*time.Minute)),
+		util.NewChannelHandler(func(time.Time) error { return m.handlePartitionUsage() }, util.TimeTickWithJitterContext(ctx, 10*time.Minute)),
 	} {
 		go handler.Start(ctx)
 	}
@@ -343,4 +354,154 @@ func (m *StorageMonitor) checkIODelays(procBytes []byte) error {
 			Message(fmt.Sprintf("Process %s (PID %s) incurred %0.1f seconds of I/O delay", segments[colComm], segments[colPid], delayInSeconds)).
 			Build(),
 	)
+}
+
+// ~~~~ Partition usage ~~~~
+
+const (
+	kubeletRootDir    = "/var/lib/kubelet"
+	containerdRootDir = "/var/lib/containerd"
+
+	// kubelet's default nodefs hard eviction thresholds, applied to the
+	// partitions kubelet does not monitor.
+	partitionSpaceUsedThreshold  = 0.90
+	partitionInodesUsedThreshold = 0.95
+
+	partitionWarningReNotifyInterval = 30 * time.Minute
+)
+
+// systemPaths are the node paths whose partitions are checked.
+var systemPaths = []string{"/", "/var", "/var/log", "/var/lib/cni"}
+
+type deviceNumber struct {
+	major, minor int
+}
+
+type partition struct {
+	device deviceNumber
+	source string
+	// mountpoint is where the agent sees the partition mounted.
+	mountpoint string
+	// paths are the system paths the partition holds.
+	paths []string
+}
+
+func measurePartition(path string) (float64, float64, error) {
+	spaceUsed, err := fileutil.CheckDiskSpace(path)
+	if err != nil {
+		return 0, 0, err
+	}
+	inodesUsed, err := fileutil.CheckInodeUsage(path)
+	return spaceUsed, inodesUsed, err
+}
+
+func (m *StorageMonitor) handlePartitionUsage() error {
+	mounts, err := mountinfo.GetMounts(nil)
+	if err != nil {
+		return err
+	}
+	exists := func(path string) bool {
+		_, err := os.Lstat(path)
+		return !errors.Is(err, os.ErrNotExist)
+	}
+	var merr error
+	for _, p := range selectPartitions(mounts, config.HostRoot(), exists) {
+		merr = errors.Join(merr, m.checkPartition(p))
+	}
+	return merr
+}
+
+// selectPartitions returns the writable partitions holding the system paths,
+// one per device, in system path order. It skips the partitions holding the
+// kubelet root directory and the container runtime's, for which kubelet
+// reports disk pressure.
+func selectPartitions(mounts []*mountinfo.Info, hostRoot string, exists func(path string) bool) []partition {
+	mountFor := func(path string) *mountinfo.Info {
+		path = filepath.Join(hostRoot, path)
+		if !exists(path) {
+			return nil
+		}
+		var found *mountinfo.Info
+		for _, mount := range mounts {
+			// a later mount at the same mount point is mounted over the earlier one
+			if isWithin(path, mount.Mountpoint) && (found == nil || len(mount.Mountpoint) >= len(found.Mountpoint)) {
+				found = mount
+			}
+		}
+		return found
+	}
+	monitored := map[deviceNumber]bool{}
+	for _, dir := range []string{kubeletRootDir, containerdRootDir} {
+		if mount := mountFor(dir); mount != nil {
+			monitored[deviceNumber{mount.Major, mount.Minor}] = true
+		}
+	}
+	var partitions []partition
+	index := map[deviceNumber]int{}
+	for _, path := range systemPaths {
+		mount := mountFor(path)
+		if mount == nil || isReadOnly(mount) {
+			continue
+		}
+		device := deviceNumber{mount.Major, mount.Minor}
+		if monitored[device] {
+			continue
+		}
+		if i, ok := index[device]; ok {
+			partitions[i].paths = append(partitions[i].paths, path)
+			continue
+		}
+		index[device] = len(partitions)
+		partitions = append(partitions, partition{device: device, source: mount.Source, mountpoint: mount.Mountpoint, paths: []string{path}})
+	}
+	return partitions
+}
+
+// isReadOnly reports whether the filesystem is read-only. Mount options are
+// ignored, so a read-only view of a writable filesystem is still measured.
+func isReadOnly(mount *mountinfo.Info) bool {
+	return slices.Contains(strings.Split(mount.VFSOptions, ","), "ro")
+}
+
+func isWithin(path, dir string) bool {
+	return dir == "/" || path == dir || strings.HasPrefix(path, dir+"/")
+}
+
+func (m *StorageMonitor) checkPartition(p partition) error {
+	spaceUsed, inodesUsed, err := m.partitionUsage(p.mountpoint)
+	if err != nil {
+		return fmt.Errorf("failed to check usage of %s: %w", p.mountpoint, err)
+	}
+	var crossed, free []string
+	if spaceUsed > partitionSpaceUsedThreshold {
+		crossed = append(crossed, "space")
+		free = append(free, fmt.Sprintf("%.1f%% of its space", (1-spaceUsed)*100))
+	}
+	if inodesUsed > partitionInodesUsedThreshold {
+		crossed = append(crossed, "inodes")
+		free = append(free, fmt.Sprintf("%.1f%% of its inodes", (1-inodesUsed)*100))
+	}
+	if len(crossed) == 0 {
+		delete(m.partitionWarnings, p.device)
+		return nil
+	}
+	tracker, ok := m.partitionWarnings[p.device]
+	if !ok {
+		tracker = renotify.New[string](partitionWarningReNotifyInterval)
+		m.partitionWarnings[p.device] = tracker
+	}
+	key, now := strings.Join(crossed, ","), m.now()
+	if !tracker.ShouldNotify(key, now) {
+		return nil
+	}
+	if err := m.manager.Notify(context.Background(),
+		reasons.PartitionNearlyFull.
+			Builder().
+			Message(fmt.Sprintf("%s holding %s has %s free", p.source, strings.Join(p.paths, ", "), strings.Join(free, " and "))).
+			Build(),
+	); err != nil {
+		return err
+	}
+	tracker.Notified(key, now)
+	return nil
 }

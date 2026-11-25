@@ -370,6 +370,10 @@ var (
 		template:        "KubeletDiskUsageSlow",
 		defaultSeverity: "Warning",
 	}
+	PartitionNearlyFull = ReasonMeta{
+		template:        "PartitionNearlyFull",
+		defaultSeverity: "Warning",
+	}
 	XFSSmallAverageClusterSize = ReasonMeta{
 		template:        "XFSSmallAverageClusterSize",
 		defaultSeverity: "Warning",
@@ -468,5 +472,6 @@ var byName = map[string]ReasonMeta{
 	"EtcHostsMountFailed":                  EtcHostsMountFailed,
 	"IODelays":                             IODelays,
 	"KubeletDiskUsageSlow":                 KubeletDiskUsageSlow,
+	"PartitionNearlyFull":                  PartitionNearlyFull,
 	"XFSSmallAverageClusterSize":           XFSSmallAverageClusterSize,
 }
