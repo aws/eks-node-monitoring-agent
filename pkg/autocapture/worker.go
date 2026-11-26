@@ -2,6 +2,7 @@ package autocapture
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -9,18 +10,26 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/aws/eks-node-monitoring-agent/api/v1alpha1"
+	"github.com/aws/eks-node-monitoring-agent/pkg/config"
 	"github.com/aws/eks-node-monitoring-agent/pkg/manager"
+	"github.com/aws/eks-node-monitoring-agent/pkg/util/captureguard"
 )
 
 // defaultCooldown keeps a flapping condition from uploading a bundle per flip.
 const defaultCooldown = 30 * time.Minute
 
-// Worker reacts to capture requests from the node exporter. For now it only
-// logs what it would capture; collection and upload arrive in a later change.
+// defaultCaptureTimeout only bounds a stuck or very large capture.
+const defaultCaptureTimeout = 10 * time.Minute
+
+// Worker collects logs for capture requests from the node exporter.
 type Worker struct {
 	requests <-chan manager.CaptureRequest
 	client   client.Reader
 	log      logr.Logger
+
+	// guard is shared with the NodeDiagnostic controller so the two never
+	// collect at once on an already-unhealthy node.
+	guard *captureguard.Guard
 
 	// Guard once-only informational logs so repeated requests don't spam.
 	loggedOff     bool
@@ -28,20 +37,31 @@ type Worker struct {
 
 	cooldown time.Duration
 	now      func() time.Time
+
+	// A field so tests can use a short timeout.
+	captureTimeout time.Duration
 	// Kept in memory, not persisted: after a restart the worst case is one
 	// extra capture per still-failing condition, not worth persisting for.
 	// No lock needed: only handle touches the map, on Start's one goroutine.
 	lastCapture map[corev1.NodeConditionType]time.Time
+
+	// A field so tests can fake it.
+	collect func(ctx context.Context, categories []v1alpha1.LogCategory, handle StepFunc) (Summary, error)
 }
 
-func NewWorker(requests <-chan manager.CaptureRequest, reader client.Reader, log logr.Logger) *Worker {
+func NewWorker(requests <-chan manager.CaptureRequest, reader client.Reader, runtimeContext *config.RuntimeContext, guard *captureguard.Guard, log logr.Logger) *Worker {
 	return &Worker{
-		requests:    requests,
-		client:      reader,
-		log:         log,
-		cooldown:    defaultCooldown,
-		now:         time.Now,
-		lastCapture: make(map[corev1.NodeConditionType]time.Time),
+		requests:       requests,
+		client:         reader,
+		log:            log,
+		guard:          guard,
+		cooldown:       defaultCooldown,
+		now:            time.Now,
+		captureTimeout: defaultCaptureTimeout,
+		lastCapture:    make(map[corev1.NodeConditionType]time.Time),
+		collect: func(ctx context.Context, categories []v1alpha1.LogCategory, handle StepFunc) (Summary, error) {
+			return CollectSteps(ctx, runtimeContext, categories, handle)
+		},
 	}
 }
 
@@ -98,6 +118,73 @@ func (w *Worker) handle(ctx context.Context, req manager.CaptureRequest) {
 		w.log.Info("multiple NodeDiagnostics set spec.autoLogCapture.bucket; using the newest and ignoring the rest",
 			"using", name, "ignored", ignored)
 		w.loggedIgnored = true
+	}
+
+	// The NodeDiagnostic controller shares this guard, so their load never stacks.
+	if !w.guard.TryAcquire() {
+		w.log.Info("capture skipped: another log collection is running",
+			"condition", req.Condition, "reason", req.Reason)
+		// Nothing was collected, so don't let this skip start a cooldown.
+		delete(w.lastCapture, req.Condition)
+		return
+	}
+
+	ctxCap, cancel := context.WithTimeout(ctx, w.captureTimeout)
+	defer cancel()
+	started := w.now()
+
+	type collectResult struct {
+		summary Summary
+		err     error
+	}
+	// Buffered so the send never blocks after handle stops waiting.
+	done := make(chan collectResult, 1)
+	go func() {
+		summary, err := w.collect(ctxCap, CategoriesFor(req.Condition), func(_ context.Context, step Step) error {
+			// Per-collector detail is for debugging; the end summary is what
+			// an operator needs.
+			w.log.V(3).Info("collector collected",
+				"condition", req.Condition, "reason", req.Reason, "step", step.Name,
+				"files", step.Files, "bytes", step.Bytes, "failed", step.Failed,
+				"seconds", step.Duration.Seconds())
+			return nil
+		})
+		// Released here, before the send, so whoever gets the result sees the
+		// guard free. Never defer it in handle: a timeout returns while this runs.
+		w.guard.Release()
+		done <- collectResult{summary: summary, err: err}
+	}()
+
+	select {
+	case <-ctxCap.Done():
+		// Parent canceled means the agent is stopping; otherwise our timeout fired.
+		if ctx.Err() != nil {
+			w.log.Info("capture stopped",
+				"condition", req.Condition, "reason", req.Reason)
+		} else {
+			w.log.Info("capture timed out, collector may be blocked on host I/O",
+				"condition", req.Condition, "reason", req.Reason)
+		}
+		// The collector stops at its next ctx check and cleans up its own folder.
+		return
+	case res := <-done:
+		if errors.Is(res.err, ErrLowDisk) {
+			// Keep the cooldown entry: a full disk won't clear soon,
+			// so a retry would only skip again.
+			w.log.Info("capture skipped: not enough free disk",
+				"condition", req.Condition, "reason", req.Reason, "minFreePercent", minFreePercent)
+			return
+		}
+		if res.err != nil {
+			w.log.Error(res.err, "failed to collect logs for capture",
+				"condition", req.Condition, "reason", req.Reason)
+			return
+		}
+		w.log.Info("capture collected",
+			"condition", req.Condition, "reason", req.Reason, "nodeDiagnostic", name,
+			"files", res.summary.Files, "bytes", res.summary.Bytes,
+			"failedCollectors", res.summary.Failed, "skippedCollectors", len(res.summary.Skipped),
+			"seconds", w.now().Sub(started).Seconds())
 	}
 }
 
