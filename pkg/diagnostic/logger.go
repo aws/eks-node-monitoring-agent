@@ -53,14 +53,41 @@ type producer struct {
 	name string
 	fn   func(context.Context) []byte
 
-	// running reports whether a previous cycle's run of this producer has not
-	// returned yet. A collector blocked in uninterruptible sleep never returns,
-	// so without this the loop would start a fresh copy every cycle and
-	// accumulate stuck processes and goroutines for the life of the node.
+	// *collectorState is shared by every logger in the agent for the same
+	// section, see sharedCollectorState.
+	*collectorState
+}
+
+// collectorState is the single-flight state of one collector.
+type collectorState struct {
+	// running reports whether a previous run of this collector has not returned
+	// yet. A collector blocked in uninterruptible sleep never returns, so
+	// without this the loop would start a fresh copy every cycle and accumulate
+	// stuck processes and goroutines for the life of the node.
 	running atomic.Bool
 	// startedAt is the unix nano timestamp of the outstanding run, and is only
 	// meaningful while running is true.
 	startedAt atomic.Int64
+}
+
+var (
+	sharedCollectorStatesMu sync.Mutex
+	sharedCollectorStates   = map[string]*collectorState{}
+)
+
+// sharedCollectorState returns the state for the named section, the same one
+// for every logger in the agent. The exit flush in main.go builds a second
+// logger; with its own state it would start a collector that is still stuck in
+// the running logger again, and wait for it, instead of skipping it.
+func sharedCollectorState(name string) *collectorState {
+	sharedCollectorStatesMu.Lock()
+	defer sharedCollectorStatesMu.Unlock()
+	state, ok := sharedCollectorStates[name]
+	if !ok {
+		state = &collectorState{}
+		sharedCollectorStates[name] = state
+	}
+	return state
 }
 
 const (
@@ -173,6 +200,9 @@ func NewDiagnosticLogger(writer io.Writer, settings Settings) diagnosticLogger {
 		{name: "kubelet", fn: func(ctx context.Context) []byte { return journalctl(ctx, "kubelet") }},
 		{name: "containerd", fn: func(ctx context.Context) []byte { return journalctl(ctx, "containerd") }},
 	}
+	for _, p := range producers {
+		p.collectorState = sharedCollectorState(p.name)
+	}
 
 	// to calculate the sections size that would best fit in the 68K buffer, we
 	// compute the remaining buffer length after subtracting out sections in
@@ -218,12 +248,15 @@ func (l diagnosticLogger) Start(ctx context.Context) error {
 
 // RunOnce writes exactly one cycle of diagnostic sections and returns. Every
 // section is emitted, whether or not its collector produced anything, and the
-// cycle is bounded by CollectorTimeout per collector.
+// cycle is bounded by CollectorTimeout per collector. When ctx has a deadline,
+// as in the exit flush, each collector also gets at most a fair share of the
+// time left, so a stuck collector cannot leave every later section empty.
 func (l diagnosticLogger) RunOnce(ctx context.Context) {
-	for _, producer := range l.producers {
+	for i, producer := range l.producers {
 		timestamp := time.Now().UTC().Format(time.RFC3339)
 		header := strings.Join([]string{sectionMarker, timestamp, producer.name}, "|")
-		data := tailx(l.collect(ctx, producer), l.sectionBytes)
+		timeout := l.collectorTimeout(ctx, len(l.producers)-i)
+		data := tailx(l.collect(ctx, producer, timeout), l.sectionBytes)
 		if _, err := fmt.Fprintf(l.writer, "%s\n%s\n", header, data); err != nil {
 			if errors.Is(err, os.ErrDeadlineExceeded) {
 				log.FromContext(ctx).Error(err, "console write timed out; skipping rest of diagnostic cycle", "section", producer.name)
@@ -234,10 +267,23 @@ func (l diagnosticLogger) RunOnce(ctx context.Context) {
 	}
 }
 
+// collectorTimeout returns CollectorTimeout, or the time left before ctx's
+// deadline divided by the sections still to write when that is shorter. Time a
+// fast collector does not use carries over to the later ones.
+func (l diagnosticLogger) collectorTimeout(ctx context.Context, sectionsLeft int) time.Duration {
+	timeout := l.settings.CollectorTimeout
+	if deadline, ok := ctx.Deadline(); ok && sectionsLeft > 0 {
+		if share := time.Until(deadline) / time.Duration(sectionsLeft); share < timeout {
+			timeout = share
+		}
+	}
+	return timeout
+}
+
 // collect returns the producer's output, or a notice to emit in its place when
 // the producer does not finish in time. It never blocks for longer than
-// CollectorTimeout, which is what keeps the cycle — and therefore every later
-// section — making progress when a collector wedges.
+// timeout, which is what keeps the cycle — and therefore every later section —
+// making progress when a collector wedges.
 //
 // The collector runs on its own goroutine, which is abandoned rather than waited
 // on once the bound is hit. The context handed to the collector is cancelled at
@@ -246,7 +292,7 @@ func (l diagnosticLogger) RunOnce(ctx context.Context) {
 // what the running flag is for: while a run is outstanding the producer is
 // skipped instead of started again, so a single permanently wedged collector
 // costs one goroutine and one process rather than a fresh pair every cycle.
-func (l diagnosticLogger) collect(ctx context.Context, p *producer) []byte {
+func (l diagnosticLogger) collect(ctx context.Context, p *producer, timeout time.Duration) []byte {
 	if !p.running.CompareAndSwap(false, true) {
 		// zero means the winning caller has claimed the slot but has not stored its
 		// start time yet, so there is no duration to report. Reporting one anyway
@@ -265,7 +311,7 @@ func (l diagnosticLogger) collect(ctx context.Context, p *producer) []byte {
 	// elapsed; the skip path above handles the not-yet-stored case instead.
 	p.startedAt.Store(time.Now().UnixNano())
 
-	collectCtx, cancel := context.WithTimeout(ctx, l.settings.CollectorTimeout)
+	collectCtx, cancel := context.WithTimeout(ctx, timeout)
 	// cancelled here rather than by the collector goroutine. Cancelling from the
 	// goroutine would make collectCtx.Done ready as soon as the collector
 	// finished, so the select below would pick between a real result and a
@@ -292,7 +338,7 @@ func (l diagnosticLogger) collect(ctx context.Context, p *producer) []byte {
 		if err := ctx.Err(); err != nil {
 			return []byte(fmt.Sprintf("collector %q did not finish before shutdown", p.name))
 		}
-		return []byte(fmt.Sprintf("collector %q timed out after %s", p.name, l.settings.CollectorTimeout))
+		return []byte(fmt.Sprintf("collector %q timed out after %s", p.name, timeout.Round(time.Millisecond)))
 	}
 }
 
