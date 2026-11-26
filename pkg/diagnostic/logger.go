@@ -68,6 +68,10 @@ type collectorState struct {
 	// startedAt is the unix nano timestamp of the outstanding run, and is only
 	// meaningful while running is true.
 	startedAt atomic.Int64
+	// abandoned is the startedAt of a run that its logger gave up on after the
+	// timeout. A run counts as stuck only while abandoned equals startedAt; a
+	// stale value never matches a later run.
+	abandoned atomic.Int64
 }
 
 var (
@@ -289,27 +293,39 @@ func (l diagnosticLogger) collectorTimeout(ctx context.Context, sectionsLeft int
 // on once the bound is hit. The context handed to the collector is cancelled at
 // the same deadline, so a killable child is terminated; a child in
 // uninterruptible sleep is not, and its goroutine stays outstanding. That is
-// what the running flag is for: while a run is outstanding the producer is
-// skipped instead of started again, so a single permanently wedged collector
-// costs one goroutine and one process rather than a fresh pair every cycle.
+// what the running flag is for: while an abandoned run is outstanding the
+// producer is skipped instead of started again, so a single permanently wedged
+// collector costs one goroutine and one process rather than a fresh pair every
+// cycle.
+//
+// The state is shared by all loggers, so a run can also be outstanding because
+// another logger has it in flight, for example the running logger's cycle when
+// the exit flush starts after a panic. Such a run is not stuck, and skipping it
+// would lose a healthy section, so an untracked copy runs instead.
 func (l diagnosticLogger) collect(ctx context.Context, p *producer, timeout time.Duration) []byte {
 	if !p.running.CompareAndSwap(false, true) {
-		// zero means the winning caller has claimed the slot but has not stored its
-		// start time yet, so there is no duration to report. Reporting one anyway
-		// would measure from the epoch.
-		if startedAt := p.startedAt.Load(); startedAt == 0 {
-			return []byte(fmt.Sprintf("collector %q has not returned and is skipped until it does", p.name))
-		} else {
+		startedAt := p.startedAt.Load()
+		if startedAt != 0 && p.abandoned.Load() == startedAt {
 			blocked := time.Since(time.Unix(0, startedAt)).Truncate(time.Second)
 			return []byte(fmt.Sprintf(
 				"collector %q has not returned after %s and is skipped until it does", p.name, blocked))
 		}
+		return l.run(ctx, p, timeout, false)
 	}
-	// stored by the caller that claimed the slot, so the timestamp belongs to the
-	// outstanding run. Storing it before the claim would let every skipped caller
-	// overwrite it with the time of its own attempt, which reads back as zero
-	// elapsed; the skip path above handles the not-yet-stored case instead.
-	p.startedAt.Store(time.Now().UnixNano())
+	return l.run(ctx, p, timeout, true)
+}
+
+// run calls the collector with the bound. When claimed, the caller owns the
+// single-flight slot: it records the start time, marks the run abandoned on
+// timeout, and the collector goroutine releases the slot when it returns.
+func (l diagnosticLogger) run(ctx context.Context, p *producer, timeout time.Duration, claimed bool) []byte {
+	var startedAt int64
+	if claimed {
+		// stored by the caller that claimed the slot, so the timestamp belongs to
+		// the outstanding run.
+		startedAt = time.Now().UnixNano()
+		p.startedAt.Store(startedAt)
+	}
 
 	collectCtx, cancel := context.WithTimeout(ctx, timeout)
 	// cancelled here rather than by the collector goroutine. Cancelling from the
@@ -323,11 +339,12 @@ func (l diagnosticLogger) collect(ctx context.Context, p *producer, timeout time
 	go func() {
 		data := p.fn(collectCtx)
 		// released before publishing, so that a caller which receives the result
-		// always observes the producer as free again. Only the goroutine that
-		// claimed the slot ever releases it, and only once, so an abandoned
-		// collector cannot free a later run's claim: while it is outstanding the
-		// flag stays set and every other caller is skipped without claiming.
-		p.running.Store(false)
+		// always observes the producer as free again. Only the goroutine of the
+		// claiming run releases the slot, and only once, so an abandoned
+		// collector cannot free a later run's claim.
+		if claimed {
+			p.running.Store(false)
+		}
 		done <- data
 	}()
 
@@ -336,7 +353,12 @@ func (l diagnosticLogger) collect(ctx context.Context, p *producer, timeout time
 		return data
 	case <-collectCtx.Done():
 		if err := ctx.Err(); err != nil {
+			// shutdown, not a stuck collector: its cancelled child usually
+			// returns soon, so the run is not marked abandoned.
 			return []byte(fmt.Sprintf("collector %q did not finish before shutdown", p.name))
+		}
+		if claimed {
+			p.abandoned.Store(startedAt)
 		}
 		return []byte(fmt.Sprintf("collector %q timed out after %s", p.name, timeout.Round(time.Millisecond)))
 	}

@@ -185,21 +185,21 @@ func TestSkipMessageReportsRealBlockDuration(t *testing.T) {
 		"a collector blocked for over a second must report at least 1s")
 }
 
-// A skip that lands before the claiming caller has stored its start time reports
-// the skip without a duration, rather than measuring from the zero value.
-func TestSkipBeforeStartedAtIsStoredOmitsDuration(t *testing.T) {
-	p := &producer{name: "blocked", fn: func(context.Context) []byte { return nil }}
+// A collector that another logger has in flight, and has not given up on, is
+// not stuck: an untracked copy runs instead of skipping the section, and the
+// slot stays with its owner.
+func TestInFlightCollectorRunsUntrackedCopy(t *testing.T) {
+	p := &producer{name: "busy", fn: func(context.Context) []byte { return []byte("copy-ran") }}
 	var buffer bytes.Buffer
 	logger := newTestLogger(&buffer, time.Second, p)
-	// the state a caller sees in the window between another caller's successful
-	// claim and its store of the start time.
+	// another logger claimed the slot and its run is in flight.
 	p.running.Store(true)
+	p.startedAt.Store(time.Now().UnixNano())
 
 	logger.RunOnce(context.Background())
 
-	out := buffer.String()
-	assert.Contains(t, out, "has not returned and is skipped until it does")
-	assert.NotContains(t, out, "after", "no duration can be reported before one is known")
+	assert.Contains(t, buffer.String(), "copy-ran")
+	assert.True(t, p.running.Load(), "the untracked copy must not release the owner's slot")
 }
 
 // A collector that returns normally is re-run every cycle, i.e. the single
@@ -717,4 +717,18 @@ func TestNewDiagnosticLoggerSharesCollectorState(t *testing.T) {
 	for i := range first.producers {
 		assert.Same(t, first.producers[i].collectorState, second.producers[i].collectorState, first.producers[i].name)
 	}
+}
+
+// A collector cancelled by shutdown is not marked abandoned, so the exit flush
+// runs its own copy of that section instead of skipping it.
+func TestShutdownDoesNotMarkCollectorAbandoned(t *testing.T) {
+	p := blockingProducer("blocked-at-shutdown", nil)
+	logger := newTestLogger(io.Discard, time.Minute, p)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	logger.RunOnce(ctx)
+
+	assert.True(t, p.running.Load())
+	assert.NotEqual(t, p.startedAt.Load(), p.abandoned.Load(), "a run cancelled by shutdown must not count as stuck")
 }
