@@ -19,7 +19,9 @@ spec:
       openAPIV3Schema:
         description: |-
           The name of the NodeDiagnostic resource is meant to match the name of the
-          node which should perform the diagnostic tasks
+          node which should perform the diagnostic tasks. The one exception is the
+          object named auto-log-capture, which holds the cluster-wide autoLogCapture
+          setting and is not tied to a node.
         properties:
           apiVersion:
             description: |-
@@ -40,6 +42,20 @@ spec:
             type: object
           spec:
             properties:
+              autoLogCapture:
+                description: |-
+                  AutoLogCapture configures automatic log capture when a node condition this
+                  agent reports fails. Only the NodeDiagnostic named auto-log-capture can set
+                  it, and that object cannot also set logCapture or packetCapture. It is not
+                  tied to a node: it applies cluster-wide.
+                properties:
+                  bucket:
+                    description: |-
+                      Bucket is the S3 bucket that receives capture bundles. It must be in
+                      the same Region as the nodes. Omit to turn automatic capture off.
+                    pattern: ^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$
+                    type: string
+                type: object
               logCapture:
                 description: |-
                   LogCapture is a definition for a diagnostic task that will package relevant
@@ -241,6 +257,15 @@ spec:
                 type: array
             type: object
         type: object
+        x-kubernetes-validations:
+        - message: spec.autoLogCapture can only be set on the NodeDiagnostic named
+            auto-log-capture
+          rule: '!has(self.spec) || !has(self.spec.autoLogCapture) || self.metadata.name
+            == ''auto-log-capture'''
+        - message: the auto-log-capture object cannot also set spec.logCapture or
+            spec.packetCapture
+          rule: '!has(self.spec) || !has(self.spec.autoLogCapture) || (!has(self.spec.logCapture)
+            && !has(self.spec.packetCapture))'
     served: true
     storage: true
     subresources:
