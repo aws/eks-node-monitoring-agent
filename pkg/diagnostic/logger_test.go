@@ -75,6 +75,12 @@ func TestAPIServerEndpointUnreachable(t *testing.T) {
 // newTestLogger builds a logger over an explicit producer set, bypassing the
 // host collectors so that blocking behaviour can be exercised directly.
 func newTestLogger(w io.Writer, timeout time.Duration, producers ...*producer) diagnosticLogger {
+	// a private state per test producer, unless the test shares one on purpose.
+	for _, p := range producers {
+		if p.collectorState == nil {
+			p.collectorState = &collectorState{}
+		}
+	}
 	return diagnosticLogger{
 		settings:     Settings{LogInterval: time.Hour, CollectorTimeout: timeout},
 		writer:       w,
@@ -179,21 +185,21 @@ func TestSkipMessageReportsRealBlockDuration(t *testing.T) {
 		"a collector blocked for over a second must report at least 1s")
 }
 
-// A skip that lands before the claiming caller has stored its start time reports
-// the skip without a duration, rather than measuring from the zero value.
-func TestSkipBeforeStartedAtIsStoredOmitsDuration(t *testing.T) {
-	p := &producer{name: "blocked", fn: func(context.Context) []byte { return nil }}
-	// the state a caller sees in the window between another caller's successful
-	// claim and its store of the start time.
-	p.running.Store(true)
-
+// A collector that another logger has in flight, and has not given up on, is
+// not stuck: an untracked copy runs instead of skipping the section, and the
+// slot stays with its owner.
+func TestInFlightCollectorRunsUntrackedCopy(t *testing.T) {
+	p := &producer{name: "busy", fn: func(context.Context) []byte { return []byte("copy-ran") }}
 	var buffer bytes.Buffer
 	logger := newTestLogger(&buffer, time.Second, p)
+	// another logger claimed the slot and its run is in flight.
+	p.running.Store(true)
+	p.startedAt.Store(time.Now().UnixNano())
+
 	logger.RunOnce(context.Background())
 
-	out := buffer.String()
-	assert.Contains(t, out, "has not returned and is skipped until it does")
-	assert.NotContains(t, out, "after", "no duration can be reported before one is known")
+	assert.Contains(t, buffer.String(), "copy-ran")
+	assert.True(t, p.running.Load(), "the untracked copy must not release the owner's slot")
 }
 
 // A collector that returns normally is re-run every cycle, i.e. the single
@@ -627,4 +633,102 @@ func TestExitFlushKeepsVmstatDelta(t *testing.T) {
 	assert.True(t, strings.HasPrefix(strings.Fields(lines[0])[2], "delta_"), "header has the interval")
 	assert.Equal(t, []string{"pgmajfault", "1600", "1500"}, strings.Fields(lines[1]))
 	assert.Equal(t, []string{"oom_kill", "3", "2"}, strings.Fields(lines[2]))
+}
+
+// The exit flush in main.go builds a second logger. It must skip a collector
+// that is still stuck in the running logger at once, instead of starting it
+// again and waiting for it.
+func TestSecondLoggerSkipsCollectorStuckInFirst(t *testing.T) {
+	const name = "test-stuck-shared"
+	t.Cleanup(func() {
+		sharedCollectorStatesMu.Lock()
+		delete(sharedCollectorStates, name)
+		sharedCollectorStatesMu.Unlock()
+	})
+
+	entered := make(chan struct{}, 1)
+	stuck := blockingProducer(name, entered)
+	stuck.collectorState = sharedCollectorState(name)
+	newTestLogger(io.Discard, 50*time.Millisecond, stuck).RunOnce(context.Background())
+	<-entered
+
+	var started atomic.Bool
+	again := &producer{name: name, fn: func(context.Context) []byte {
+		started.Store(true)
+		return nil
+	}, collectorState: sharedCollectorState(name)}
+	var buffer bytes.Buffer
+	flush := newTestLogger(&buffer, time.Minute, again,
+		&producer{name: "after", fn: func(context.Context) []byte { return []byte("after-ran") }})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	begin := time.Now()
+	flush.RunOnce(ctx)
+
+	assert.False(t, started.Load(), "the stuck collector was started again")
+	assert.Contains(t, buffer.String(), "has not returned after")
+	assert.Contains(t, buffer.String(), "after-ran")
+	assert.Less(t, time.Since(begin), time.Second, "the second logger waited for the stuck collector")
+}
+
+// In a cycle with a deadline, a collector that never returns gets only its
+// share of the time left, so the sections after it are still written.
+func TestDeadlineShareKeepsLaterSections(t *testing.T) {
+	var buffer bytes.Buffer
+	logger := newTestLogger(&buffer, time.Minute,
+		blockingProducer("blocked", nil),
+		&producer{name: "after", fn: func(context.Context) []byte { return []byte("after-ran") }},
+	)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	begin := time.Now()
+	logger.RunOnce(ctx)
+
+	out := buffer.String()
+	assert.Contains(t, out, `collector "blocked" timed out after`)
+	assert.Contains(t, out, "after-ran")
+	assert.NotContains(t, out, "did not finish before shutdown")
+	assert.Less(t, time.Since(begin), 2*time.Second)
+}
+
+// Without a deadline the bound stays CollectorTimeout; with one, it is the time
+// left divided by the sections still to write.
+func TestCollectorTimeout(t *testing.T) {
+	logger := newTestLogger(io.Discard, 30*time.Second)
+	assert.Equal(t, 30*time.Second, logger.collectorTimeout(context.Background(), 12))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	got := logger.collectorTimeout(ctx, 12)
+	assert.LessOrEqual(t, got, time.Second)
+	assert.Greater(t, got, 900*time.Millisecond)
+
+	long, cancelLong := context.WithTimeout(context.Background(), time.Hour)
+	defer cancelLong()
+	assert.Equal(t, 30*time.Second, logger.collectorTimeout(long, 2), "the share never exceeds CollectorTimeout")
+}
+
+// Every logger the agent builds uses the same state per section.
+func TestNewDiagnosticLoggerSharesCollectorState(t *testing.T) {
+	first := NewDiagnosticLogger(io.Discard, Settings{ApiServerEndpoint: "https://127.0.0.1"})
+	second := NewDiagnosticLogger(io.Discard, Settings{ApiServerEndpoint: "https://127.0.0.1"})
+	for i := range first.producers {
+		assert.Same(t, first.producers[i].collectorState, second.producers[i].collectorState, first.producers[i].name)
+	}
+}
+
+// A collector cancelled by shutdown is not marked abandoned, so the exit flush
+// runs its own copy of that section instead of skipping it.
+func TestShutdownDoesNotMarkCollectorAbandoned(t *testing.T) {
+	p := blockingProducer("blocked-at-shutdown", nil)
+	logger := newTestLogger(io.Discard, time.Minute, p)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	logger.RunOnce(ctx)
+
+	assert.True(t, p.running.Load())
+	assert.NotEqual(t, p.startedAt.Load(), p.abandoned.Load(), "a run cancelled by shutdown must not count as stuck")
 }
