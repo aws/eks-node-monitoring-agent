@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -286,6 +287,114 @@ func CountEFAPCIDevices() (EFAPCIDevices, error) {
 		}
 	}
 	return devices, nil
+}
+
+// PCIeLink is the speed and width of a PCIe link.
+type PCIeLink struct {
+	// SpeedGTs is the per-lane speed in GT/s, for example 32 for PCIe Gen5.
+	SpeedGTs float64
+	// Width is the number of lanes, for example 16.
+	Width int
+}
+
+func (l PCIeLink) String() string {
+	return fmt.Sprintf("x%d at %s GT/s", l.Width, strconv.FormatFloat(l.SpeedGTs, 'f', -1, 64))
+}
+
+// EFAPCIeLink is the PCIe link state of one EFA PCI device.
+type EFAPCIeLink struct {
+	// Address is the PCI address of the device, for example 0000:31:00.0.
+	Address string
+	// Current is the link the device trained to.
+	Current PCIeLink
+	// Capable is the best link the device can train to: the lower maximum
+	// speed and width of the device and of the port it is connected to, since
+	// a link can only be as fast as the slower of its two ends.
+	Capable PCIeLink
+}
+
+// Degraded reports whether the link trained below what it is capable of.
+func (l EFAPCIeLink) Degraded() bool {
+	return l.Current.SpeedGTs < l.Capable.SpeedGTs || l.Current.Width < l.Capable.Width
+}
+
+// EFAPCIeLinks returns the PCIe link state of each EFA PCI device. Devices
+// whose link state is not reported, or is reported as unknown, are skipped.
+func EFAPCIeLinks() ([]EFAPCIeLink, error) {
+	entries, err := os.ReadDir(config.ToHostPath(pciDevicesSysfsPath))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var links []EFAPCIeLink
+	for _, entry := range entries {
+		deviceDir := config.ToHostPath(filepath.Join(pciDevicesSysfsPath, entry.Name()))
+		vendorId, deviceId, err := readDeviceInfo(deviceDir)
+		if err != nil || vendorId != EFA_VENDOR_ID || !strings.HasPrefix(deviceId, EFA_DEVICE_ID_PREFIX) {
+			continue
+		}
+		if link, ok := readEFAPCIeLink(deviceDir); ok {
+			link.Address = entry.Name()
+			links = append(links, link)
+		}
+	}
+	return links, nil
+}
+
+// readEFAPCIeLink reads the current and capable link of the device in
+// deviceDir. It returns false when the device does not report its link.
+func readEFAPCIeLink(deviceDir string) (EFAPCIeLink, bool) {
+	current, ok := readPCIeLink(deviceDir, "current_link_speed", "current_link_width")
+	if !ok {
+		return EFAPCIeLink{}, false
+	}
+	capable, ok := readPCIeLink(deviceDir, "max_link_speed", "max_link_width")
+	if !ok {
+		return EFAPCIeLink{}, false
+	}
+	// A link is trained between the device and the port it is connected to,
+	// so it can only be as fast as the slower of the two. /sys/bus/pci/devices
+	// entries link into the device tree, where each device sits in the
+	// directory of that port. Ports further up are on separate links, which
+	// limit bandwidth but not how this link trains, so they are not used.
+	if devicePath, err := filepath.EvalSymlinks(deviceDir); err == nil {
+		if port, ok := readPCIeLink(filepath.Dir(devicePath), "max_link_speed", "max_link_width"); ok {
+			capable.SpeedGTs = min(capable.SpeedGTs, port.SpeedGTs)
+			capable.Width = min(capable.Width, port.Width)
+		}
+	}
+	return EFAPCIeLink{Current: current, Capable: capable}, true
+}
+
+// readPCIeLink reads a link speed and width from sysfs. Speeds look like
+// "32.0 GT/s PCIe", or "8 GT/s" on older kernels. It returns false when either
+// file is missing or reports an unknown value, such as "Unknown" or a width
+// of 0.
+// https://www.kernel.org/doc/Documentation/ABI/testing/sysfs-bus-pci
+func readPCIeLink(dir, speedFile, widthFile string) (PCIeLink, bool) {
+	speedData, err := os.ReadFile(filepath.Join(dir, speedFile))
+	if err != nil {
+		return PCIeLink{}, false
+	}
+	widthData, err := os.ReadFile(filepath.Join(dir, widthFile))
+	if err != nil {
+		return PCIeLink{}, false
+	}
+	speedFields := strings.Fields(string(speedData))
+	if len(speedFields) == 0 {
+		return PCIeLink{}, false
+	}
+	speed, err := strconv.ParseFloat(speedFields[0], 64)
+	if err != nil || speed <= 0 {
+		return PCIeLink{}, false
+	}
+	width, err := strconv.Atoi(strings.TrimSpace(string(widthData)))
+	if err != nil || width <= 0 {
+		return PCIeLink{}, false
+	}
+	return PCIeLink{SpeedGTs: speed, Width: width}, true
 }
 
 type deviceCounterTracker struct {

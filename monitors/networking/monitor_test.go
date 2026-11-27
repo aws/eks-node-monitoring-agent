@@ -1271,6 +1271,85 @@ func TestEFADriverNotLoadedCheck(t *testing.T) {
 	})
 }
 
+func TestEFAPCIeLinksCheck(t *testing.T) {
+	gen5x16 := efa.PCIeLink{SpeedGTs: 32, Width: 16}
+	gen5x8 := efa.PCIeLink{SpeedGTs: 32, Width: 8}
+	healthy := func(address string) efa.EFAPCIeLink {
+		return efa.EFAPCIeLink{Address: address, Current: gen5x16, Capable: gen5x16}
+	}
+	degraded := func(address string) efa.EFAPCIeLink {
+		return efa.EFAPCIeLink{Address: address, Current: gen5x8, Capable: gen5x16}
+	}
+	drain := func(mgr *mockManager) []monitor.Condition {
+		var got []monitor.Condition
+		for len(mgr.res) > 0 {
+			got = append(got, <-mgr.res)
+		}
+		return got
+	}
+
+	t.Run("ReportsAfterConsecutiveChecks", func(t *testing.T) {
+		mon, mgr := newEFATestMonitor(false)
+		now := time.Now()
+		links := []efa.EFAPCIeLink{healthy("0000:31:00.0"), degraded("0000:32:00.0")}
+		for i := 1; i < efaPCIeLinkDegradedThreshold; i++ {
+			require.NoError(t, mon.checkEFAPCIeLinks(context.TODO(), links, now))
+			assert.Empty(t, drain(mgr), "check %d should not report yet", i)
+		}
+		require.NoError(t, mon.checkEFAPCIeLinks(context.TODO(), links, now))
+		got := drain(mgr)
+		require.Len(t, got, 1)
+		assert.Equal(t, "EFAPCIeLinkDegraded", got[0].Reason)
+		assert.Equal(t, monitor.SeverityWarning, got[0].Severity)
+		assert.Equal(t, "EFA PCIe link degraded: 0000:32:00.0 is x8 at 32 GT/s, capable of x16 at 32 GT/s", got[0].Message)
+	})
+
+	t.Run("RecoveryRestartsTheCount", func(t *testing.T) {
+		mon, mgr := newEFATestMonitor(false)
+		now := time.Now()
+		for i := 1; i < efaPCIeLinkDegradedThreshold; i++ {
+			require.NoError(t, mon.checkEFAPCIeLinks(context.TODO(), []efa.EFAPCIeLink{degraded("0000:31:00.0")}, now))
+		}
+		require.NoError(t, mon.checkEFAPCIeLinks(context.TODO(), []efa.EFAPCIeLink{healthy("0000:31:00.0")}, now))
+		require.NoError(t, mon.checkEFAPCIeLinks(context.TODO(), []efa.EFAPCIeLink{degraded("0000:31:00.0")}, now))
+		assert.Empty(t, drain(mgr), "a link that recovered should need consecutive checks again")
+	})
+
+	t.Run("RateLimitsUnchangedReport", func(t *testing.T) {
+		mon, mgr := newEFATestMonitor(false)
+		now := time.Now()
+		links := []efa.EFAPCIeLink{degraded("0000:31:00.0")}
+		for i := 0; i < efaPCIeLinkDegradedThreshold; i++ {
+			require.NoError(t, mon.checkEFAPCIeLinks(context.TODO(), links, now))
+		}
+		require.Len(t, drain(mgr), 1)
+
+		now = now.Add(5 * time.Minute)
+		require.NoError(t, mon.checkEFAPCIeLinks(context.TODO(), links, now))
+		assert.Empty(t, drain(mgr), "an unchanged report should wait for the re-notify interval")
+
+		// a second device crossing the threshold changes the report.
+		links = append(links, degraded("0000:32:00.0"))
+		for i := 0; i < efaPCIeLinkDegradedThreshold; i++ {
+			require.NoError(t, mon.checkEFAPCIeLinks(context.TODO(), links, now))
+		}
+		got := drain(mgr)
+		require.Len(t, got, 1, "a change in the degraded devices should be reported right away")
+		assert.Contains(t, got[0].Message, "0000:31:00.0")
+		assert.Contains(t, got[0].Message, "0000:32:00.0")
+
+		now = now.Add(efaReNotifyInterval)
+		require.NoError(t, mon.checkEFAPCIeLinks(context.TODO(), links, now))
+		assert.Len(t, drain(mgr), 1, "an unchanged report should be sent again after the re-notify interval")
+	})
+
+	t.Run("NoLinks", func(t *testing.T) {
+		mon, mgr := newEFATestMonitor(false)
+		require.NoError(t, mon.checkEFAPCIeLinks(context.TODO(), nil, time.Now()))
+		assert.Empty(t, drain(mgr))
+	})
+}
+
 func TestHandleEFADevices(t *testing.T) {
 	// setupHostRoot points the host root at a temp dir and replaces each of
 	// the given sysfs directories with a file, so reading it fails.
@@ -1317,6 +1396,34 @@ func TestHandleEFADevices(t *testing.T) {
 
 		assert.NoError(t, mon.handleEFADevices(context.TODO(), time.Now()))
 		assert.Empty(t, mgr.res)
+	})
+
+	t.Run("ReportsDegradedPCIeLinkWhenOtherReadsFail", func(t *testing.T) {
+		// infiniband is unreadable, so the device counts fail, but the PCIe
+		// link check does not depend on them and still reports.
+		setupHostRoot(t, "/sys/class/infiniband")
+		deviceDir := filepath.Join(config.HostRoot(), "/sys/bus/pci/devices/0000:7d:00.0")
+		require.NoError(t, os.MkdirAll(deviceDir, 0755))
+		for name, value := range map[string]string{
+			"vendor":             efa.EFA_VENDOR_ID,
+			"device":             "0xefa0",
+			"current_link_speed": "8.0 GT/s PCIe",
+			"current_link_width": "8",
+			"max_link_speed":     "8.0 GT/s PCIe",
+			"max_link_width":     "16",
+		} {
+			require.NoError(t, os.WriteFile(filepath.Join(deviceDir, name), []byte(value+"\n"), 0644))
+		}
+		mon, mgr := newEFATestMonitor(false)
+
+		now := time.Now()
+		for i := 0; i < efaPCIeLinkDegradedThreshold; i++ {
+			assert.ErrorContains(t, mon.handleEFADevices(context.TODO(), now), "failed to count active EFA devices")
+		}
+		require.Len(t, mgr.res, 1)
+		condition := <-mgr.res
+		assert.Equal(t, "EFAPCIeLinkDegraded", condition.Reason)
+		assert.Equal(t, "EFA PCIe link degraded: 0000:7d:00.0 is x8 at 8 GT/s, capable of x16 at 8 GT/s", condition.Message)
 	})
 }
 
