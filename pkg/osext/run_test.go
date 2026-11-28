@@ -50,6 +50,25 @@ func TestOutput(t *testing.T) {
 	})
 }
 
+func TestOutputTracked(t *testing.T) {
+	// A grandchild holding stdout open outlives the timeout, like a process
+	// stuck in the kernel; exited stays open until it is gone.
+	t.Run("ExitedOpenWhileCommandOutstanding", func(t *testing.T) {
+		_, exited, err := osext.NewExec("/").OutputTracked(context.Background(), 100*time.Millisecond, "sh", "-c", "sleep 2 & wait")
+		require.ErrorIs(t, err, osext.ErrTimeout)
+		select {
+		case <-exited:
+			t.Fatal("exited was closed while the command's output was still open")
+		default:
+		}
+		select {
+		case <-exited:
+		case <-time.After(10 * time.Second):
+			t.Fatal("exited was not closed after the command ended")
+		}
+	})
+}
+
 func TestCombinedOutput(t *testing.T) {
 	t.Run("IncludesStderr", func(t *testing.T) {
 		out, err := osext.NewExec("/").CombinedOutput(context.Background(), time.Minute, "sh", "-c", "echo out; echo err >&2")

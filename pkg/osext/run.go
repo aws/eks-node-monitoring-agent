@@ -26,13 +26,21 @@ type CommandFunc func(context.Context) *exec.Cmd
 
 // Output runs a command bounded by timeout and returns its standard output.
 func Output(ctx context.Context, timeout time.Duration, newCmd CommandFunc) ([]byte, error) {
+	output, _, err := run(ctx, timeout, newCmd, false)
+	return output, err
+}
+
+// OutputTracked is Output, plus a channel that is closed once the command has
+// exited, which can be after a timeout returns (see run).
+func OutputTracked(ctx context.Context, timeout time.Duration, newCmd CommandFunc) ([]byte, <-chan struct{}, error) {
 	return run(ctx, timeout, newCmd, false)
 }
 
 // CombinedOutput runs a command bounded by timeout and returns its standard
 // output and standard error interleaved.
 func CombinedOutput(ctx context.Context, timeout time.Duration, newCmd CommandFunc) ([]byte, error) {
-	return run(ctx, timeout, newCmd, true)
+	output, _, err := run(ctx, timeout, newCmd, true)
+	return output, err
 }
 
 // run executes the command and returns once it completes, the timeout elapses,
@@ -47,8 +55,8 @@ func CombinedOutput(ctx context.Context, timeout time.Duration, newCmd CommandFu
 // An abandoned goroutine holds its command and output buffer until the child
 // finally exits, if it ever does. Callers that run the same command repeatedly
 // should therefore avoid launching a fresh copy while a previous one is still
-// outstanding.
-func run(ctx context.Context, timeout time.Duration, newCmd CommandFunc, combined bool) ([]byte, error) {
+// outstanding; the returned channel tells them when it is gone.
+func run(ctx context.Context, timeout time.Duration, newCmd CommandFunc, combined bool) ([]byte, <-chan struct{}, error) {
 	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -62,7 +70,9 @@ func run(ctx context.Context, timeout time.Duration, newCmd CommandFunc, combine
 	// Buffered so the goroutine can always publish its result and exit, even
 	// when nobody is left to receive it.
 	done := make(chan result, 1)
+	exited := make(chan struct{})
 	go func() {
+		defer close(exited)
 		var r result
 		if combined {
 			r.output, r.err = cmd.CombinedOutput()
@@ -74,14 +84,14 @@ func run(ctx context.Context, timeout time.Duration, newCmd CommandFunc, combine
 
 	select {
 	case r := <-done:
-		return r.output, r.err
+		return r.output, exited, r.err
 	case <-runCtx.Done():
 		// Report the parent's error when it is the parent that ended, so that
 		// shutdown is not reported as a command timeout.
 		if err := ctx.Err(); err != nil {
-			return nil, fmt.Errorf("running %q: %w", commandName(cmd), err)
+			return nil, exited, fmt.Errorf("running %q: %w", commandName(cmd), err)
 		}
-		return nil, fmt.Errorf("running %q: %w after %s", commandName(cmd), ErrTimeout, timeout)
+		return nil, exited, fmt.Errorf("running %q: %w after %s", commandName(cmd), ErrTimeout, timeout)
 	}
 }
 
@@ -97,6 +107,14 @@ func commandName(cmd *exec.Cmd) string {
 // bounded by timeout, and returns its standard output.
 func (a *execExt) Output(ctx context.Context, timeout time.Duration, name string, arg ...string) ([]byte, error) {
 	return Output(ctx, timeout, func(ctx context.Context) *exec.Cmd {
+		return a.CommandContext(ctx, name, arg...)
+	})
+}
+
+// OutputTracked is Output plus the exit channel (see the package-level
+// OutputTracked).
+func (a *execExt) OutputTracked(ctx context.Context, timeout time.Duration, name string, arg ...string) ([]byte, <-chan struct{}, error) {
+	return OutputTracked(ctx, timeout, func(ctx context.Context) *exec.Cmd {
 		return a.CommandContext(ctx, name, arg...)
 	})
 }
